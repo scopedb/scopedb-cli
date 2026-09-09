@@ -184,7 +184,7 @@ func (c *Client) doJSON(ctx context.Context, method, path, token string, input, 
 		}
 		return &Error{Message: "cannot reach ScopeDB control plane", Retryable: true, Err: err}
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return decodeError(response)

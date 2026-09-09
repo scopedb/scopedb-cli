@@ -90,8 +90,8 @@ func (a *app) newQueryCommand() *cobra.Command {
 			}); err != nil {
 				return NormalizeError(err)
 			}
-			fmt.Fprintf(a.errOut, "Wrote %d row(s) to %s.\n", result.TotalRows, outputPath)
-			return nil
+			_, err = fmt.Fprintf(a.errOut, "Wrote %d row(s) to %s.\n", result.TotalRows, outputPath)
+			return NormalizeError(err)
 		},
 	}
 	command.Flags().StringVar(&statementFile, "file", "", "read ScopeQL from a file; use - for stdin")
@@ -144,8 +144,11 @@ func readLimitedFile(path string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open statement file: %w", err)
 	}
-	defer file.Close()
-	return readLimited(file, limit)
+	data, readErr := readLimited(file, limit)
+	if closeErr := file.Close(); readErr == nil && closeErr != nil {
+		return nil, fmt.Errorf("close statement file: %w", closeErr)
+	}
+	return data, readErr
 }
 
 func readLimited(reader io.Reader, limit int64) ([]byte, error) {
@@ -175,17 +178,17 @@ func writeResultFile(path string, force bool, render func(io.Writer) error) erro
 		return fmt.Errorf("create temporary output file: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err := temporary.Chmod(0o644); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return fmt.Errorf("set output file permissions: %w", err)
 	}
 	if err := render(temporary); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err := temporary.Sync(); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return fmt.Errorf("sync output file: %w", err)
 	}
 	if err := temporary.Close(); err != nil {

@@ -1,4 +1,6 @@
-# Repository Working Agreements
+# ScopeDB CLI Repository Notes
+
+The global working agreements apply. Keep this file limited to constraints specific to this repository.
 
 ## Product boundaries
 
@@ -19,7 +21,8 @@
 
 ## Code and tests
 
+- Keep Apache-2.0 headers on Go, TOML, and YAML files; `mise run fix` applies missing or stale headers.
 - Construct Cobra commands through constructors and injected dependencies; do not register commands through package `init` functions or mutable globals.
 - Keep domain and transport errors structured until the process boundary in `cmd/scope`.
 - Add tests at observable boundaries: HTTP contracts, credential safety, auth resolution, cancellation, and rendered output. Avoid tests that merely mirror command registration or static literals.
-- Run `make check` and `make test-race` before merging behavior changes.
+- Run `mise run check` and `mise run test:race` before merging behavior changes.

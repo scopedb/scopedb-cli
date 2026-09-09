@@ -44,14 +44,14 @@ func (a *app) newOpenCommand() *cobra.Command {
 			}
 			target := strings.TrimRight(cfg.ConsoleURL, "/") + "/" + page
 			if printOnly {
-				fmt.Fprintln(a.out, target)
-				return nil
+				_, err := fmt.Fprintln(a.out, target)
+				return NormalizeError(err)
 			}
 			if err := a.openURL(target); err != nil {
 				return NormalizeError(err)
 			}
-			fmt.Fprintf(a.out, "Opened %s.\n", target)
-			return nil
+			_, err = fmt.Fprintf(a.out, "Opened %s.\n", target)
+			return NormalizeError(err)
 		},
 	}
 	command.Flags().BoolVar(&printOnly, "print", false, "print the URL without opening a browser")
