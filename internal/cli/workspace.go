@@ -26,10 +26,9 @@ import (
 
 func (a *app) newWorkspaceCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:     "workspace",
-		Aliases: []string{"ws"},
-		Short:   "Inspect or select a workspace",
-		Args:    cobra.NoArgs,
+		Use:   "workspace",
+		Short: "Inspect or select a workspace",
+		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return command.Help()
 		},
