@@ -4,7 +4,7 @@
 
 ## Install
 
-Install from source with Go 1.25 or newer:
+Install from source with Go 1.27 or newer:
 
 ```sh
 go install github.com/scopedb/scopedb-cli/cmd/scope@latest

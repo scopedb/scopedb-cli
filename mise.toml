@@ -14,9 +14,9 @@
 
 [tools]
 "github:fast/hawkeye" = "7.1.0"
-go = "1.26.5"
-golangci-lint = "2.12.2"
-typos = "1.44.0"
+go = "1.27.1"
+golangci-lint = "2.13.2"
+typos = "1.50.1"
 
 [tasks.scope]
 description = "Run the repository-local ScopeDB CLI"
