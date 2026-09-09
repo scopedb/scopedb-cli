@@ -51,7 +51,9 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			if cfg.CredentialStore == config.CredentialStorePlaintext {
-				fmt.Fprintln(a.errOut, "Warning: credentials will be stored unencrypted in a permission-restricted file.")
+				if _, err := fmt.Fprintln(a.errOut, "Warning: credentials will be stored unencrypted in a permission-restricted file."); err != nil {
+					return NormalizeError(err)
+				}
 			}
 			runtime, err := a.newRuntime(paths, cfg)
 			if err != nil {
@@ -79,7 +81,9 @@ func (a *app) newLoginCommand() *cobra.Command {
 			if begin.LoginChallenge == "" {
 				return NormalizeError(errors.New("ScopeDB returned an empty login challenge"))
 			}
-			fmt.Fprintln(a.errOut, "A verification code has been sent if this email can sign in.")
+			if _, err := fmt.Fprintln(a.errOut, "A verification code has been sent if this email can sign in."); err != nil {
+				return NormalizeError(err)
+			}
 
 			code = strings.TrimSpace(code)
 			if code == "" {
@@ -110,8 +114,8 @@ func (a *app) newLoginCommand() *cobra.Command {
 				}
 				return result
 			}
-			fmt.Fprintf(a.out, "Logged in as %s. Current workspace: %s\n", email, response.WorkspaceID)
-			return nil
+			_, err = fmt.Fprintf(a.out, "Logged in as %s. Current workspace: %s\n", email, response.WorkspaceID)
+			return NormalizeError(err)
 		},
 	}
 	command.Flags().StringVar(&email, "email", "", "email address")
@@ -138,8 +142,8 @@ func (a *app) newLogoutCommand() *cobra.Command {
 
 			state, err := runtime.credentials.Load(runtime.config.ControlURL)
 			if errors.Is(err, credential.ErrNotFound) {
-				fmt.Fprintln(a.out, "Not logged in.")
-				return nil
+				_, err := fmt.Fprintln(a.out, "Not logged in.")
+				return NormalizeError(err)
 			}
 			if err != nil {
 				return NormalizeError(err)
@@ -157,8 +161,8 @@ func (a *app) newLogoutCommand() *cobra.Command {
 				}
 				return result
 			}
-			fmt.Fprintln(a.out, "Logged out.")
-			return nil
+			_, err = fmt.Fprintln(a.out, "Logged out.")
+			return NormalizeError(err)
 		},
 	}
 }

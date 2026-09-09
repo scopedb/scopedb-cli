@@ -114,14 +114,14 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 				return err
 			}
 			if workspace.ID == session.CurrentWorkspaceID {
-				fmt.Fprintf(a.out, "Already using workspace %s (%s).\n", workspace.Name(), workspace.ID)
-				return nil
+				_, err := fmt.Fprintf(a.out, "Already using workspace %s (%s).\n", workspace.Name(), workspace.ID)
+				return NormalizeError(err)
 			}
 			if err := runtime.auth.SelectWorkspace(command.Context(), state, workspace.ID); err != nil {
 				return NormalizeError(err)
 			}
-			fmt.Fprintf(a.out, "Now using workspace %s (%s).\n", workspace.Name(), workspace.ID)
-			return nil
+			_, err = fmt.Fprintf(a.out, "Now using workspace %s (%s).\n", workspace.Name(), workspace.ID)
+			return NormalizeError(err)
 		},
 	}
 }

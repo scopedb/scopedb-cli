@@ -129,8 +129,12 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, created)
 			}
-			fmt.Fprintln(a.out, created.Key)
-			fmt.Fprintf(a.errOut, "Created API key %s. This secret is shown only once.\n", created.Name)
+			if _, err := fmt.Fprintln(a.out, created.Key); err != nil {
+				return NormalizeError(err)
+			}
+			if _, err := fmt.Fprintf(a.errOut, "Created API key %s. This secret is shown only once.\n", created.Name); err != nil {
+				return NormalizeError(err)
+			}
 			return nil
 		},
 	}
@@ -188,8 +192,8 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 					return NormalizeError(err)
 				}
 				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
-					fmt.Fprintln(a.out, "Cancelled.")
-					return nil
+					_, err := fmt.Fprintln(a.out, "Cancelled.")
+					return NormalizeError(err)
 				}
 			}
 			runtime, err := a.runtime(command)
@@ -203,8 +207,8 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			if err := runtime.control.RevokeAPIKey(command.Context(), state.SessionToken, state.WorkspaceID, name); err != nil {
 				return NormalizeError(err)
 			}
-			fmt.Fprintf(a.out, "Revoked API key %s.\n", name)
-			return nil
+			_, err = fmt.Fprintf(a.out, "Revoked API key %s.\n", name)
+			return NormalizeError(err)
 		},
 	}
 	command.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation")

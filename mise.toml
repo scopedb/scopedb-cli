@@ -1,0 +1,50 @@
+[tools]
+go = "1.26.5"
+golangci-lint = "2.12.2"
+
+[tasks.scope]
+description = "Run the repository-local ScopeDB CLI"
+run = "go run ./cmd/scope"
+
+[tasks.fix]
+description = "Format source files and tidy Go modules"
+run = '''
+go fmt ./...
+go mod tidy
+'''
+
+[tasks.check]
+description = "Check formatting, Go module metadata, and static analysis"
+run = '''
+unformatted="$(
+  git ls-files -z --cached --others --exclude-standard -- '*.go' |
+    while IFS= read -r -d '' file; do
+      if [[ -f "$file" ]]; then
+        gofmt -l "$file"
+      fi
+    done
+)"
+if [[ -n "$unformatted" ]]; then
+  echo "The following Go files need formatting:" >&2
+  echo "$unformatted" >&2
+  exit 1
+fi
+
+go mod tidy -diff
+golangci-lint run
+'''
+
+[tasks.build]
+description = "Build the ScopeDB CLI"
+run = '''
+mkdir -p bin
+CGO_ENABLED=0 go build -trimpath -o bin/scope ./cmd/scope
+'''
+
+[tasks.test]
+description = "Run all tests"
+run = "go test ./..."
+
+[tasks."test:race"]
+description = "Run all tests with the race detector"
+run = "go test -race ./..."

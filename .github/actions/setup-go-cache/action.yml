@@ -1,0 +1,39 @@
+name: Setup Go cache
+description: Restore the Go module and build caches after mise installs the toolchain.
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve Go cache inputs
+      id: inputs
+      shell: bash
+      env:
+        DEPENDENCY_HASH: ${{ hashFiles('go.mod', 'go.sum') }}
+      run: |
+        set -euo pipefail
+
+        go_version=$(go env GOVERSION)
+        build_cache=$(go env GOCACHE)
+        module_cache=$(go env GOMODCACHE)
+
+        echo "go-version=$go_version" >> "$GITHUB_OUTPUT"
+        echo "build-cache=$build_cache" >> "$GITHUB_OUTPUT"
+        echo "module-cache=$module_cache" >> "$GITHUB_OUTPUT"
+        echo "dependency-hash=$DEPENDENCY_HASH" >> "$GITHUB_OUTPUT"
+
+        echo "Go version: $go_version"
+        echo "Go build cache: $build_cache"
+        echo "Go module cache: $module_cache"
+        echo "Go dependency hash: $DEPENDENCY_HASH"
+
+    - name: Restore Go cache
+      id: cache
+      uses: actions/cache@v5
+      with:
+        path: |
+          ${{ steps.inputs.outputs.build-cache }}
+          ${{ steps.inputs.outputs.module-cache }}
+        # go.mod and go.sum define the dependency graph; Go validates source inputs inside GOCACHE.
+        key: go-cache-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.inputs.outputs.go-version }}-${{ steps.inputs.outputs.dependency-hash }}
+        restore-keys: |
+          go-cache-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.inputs.outputs.go-version }}-

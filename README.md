@@ -10,16 +10,17 @@ The product name remains ScopeDB; the command is deliberately shorter. A generic
 
 ## Install from source
 
-Go 1.25 or newer is required when building locally:
+Go 1.25 or newer is required when installing directly from source:
 
 ```sh
 go install github.com/scopedb/scopedb-cli/cmd/scope@latest
 ```
 
-During private review, build from a checkout instead:
+Development tool versions are pinned with [mise](https://mise.jdx.dev/). During private review, build from a checkout instead:
 
 ```sh
-make build
+mise install
+mise run build
 ./bin/scope version
 ```
 
@@ -128,12 +129,13 @@ The control-plane client is handwritten and isolated because the service does no
 ## Development
 
 ```sh
-make check
-make test-race
-make build
+mise install
+mise run check
+mise run test:race
+mise run build
 ```
 
-`make check` runs formatting verification, `go vet`, and the test suite. Network-facing tests use local `httptest` servers and do not require a ScopeDB account.
+`mise run check` verifies formatting and module metadata, then runs `golangci-lint`. Network-facing tests use local `httptest` servers and do not require a ScopeDB account.
 
 ## License
 
