@@ -39,9 +39,8 @@ func (a *app) newQueryCommand() *cobra.Command {
 	var force bool
 	var timeout time.Duration
 	command := &cobra.Command{
-		Use:     "query [scopeql]",
-		Aliases: []string{"q"},
-		Short:   "Execute a ScopeQL statement",
+		Use:   "query [scopeql]",
+		Short: "Execute a ScopeQL statement",
 		Args: func(_ *cobra.Command, args []string) error {
 			if len(args) > 1 {
 				return usageError("query accepts at most one inline statement")

@@ -12,7 +12,7 @@ go install github.com/scopedb/scopedb-cli/cmd/scope@latest
 
 ## Get started
 
-Sign in to ScopeDB Cloud, inspect the current workspace, and run a query:
+Sign in to ScopeDB Cloud and run a query:
 
 ```sh
 scope login
@@ -21,17 +21,13 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-For CI and other non-interactive environments, set the data-plane endpoint and API key:
+`scope login` prompts for an email address and verification code, then stores the session in the operating system keyring. To select another workspace:
 
 ```sh
-export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
-export SCOPEDB_API_KEY="your-api-key"
-
-scope doctor
-scope query --format json 'SELECT 1 AS ready'
+scope workspace list
+scope workspace use <id-or-name>
+scope status
 ```
-
-Both variables are required. Interactive login stores credentials in the operating system keyring by default.
 
 ## Query output
 
@@ -43,6 +39,20 @@ scope query 'FROM system.tables LIMIT 10' --format csv --output tables.csv
 ```
 
 Run `scope --help` or `scope <command> --help` for the complete command reference. See the [ScopeDB documentation](https://docs.scopedb.io/) for ScopeQL and service documentation.
+
+## Automation
+
+For CI and other non-interactive environments, set the data-plane endpoint and API key:
+
+```sh
+export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
+export SCOPEDB_API_KEY="your-api-key"
+
+scope doctor
+scope query --format json 'SELECT 1 AS ready'
+```
+
+Both variables are required.
 
 ## Development
 
