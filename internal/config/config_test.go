@@ -70,6 +70,21 @@ func TestResolvePathsUsesOverride(t *testing.T) {
 	}
 }
 
+func TestResolvePathsUsesPlatformConfigDirectory(t *testing.T) {
+	t.Setenv("SCOPEDB_CONFIG_DIR", "")
+	base, err := os.UserConfigDir()
+	if err != nil {
+		t.Fatalf("UserConfigDir() error = %v", err)
+	}
+	paths, err := ResolvePaths()
+	if err != nil {
+		t.Fatalf("ResolvePaths() error = %v", err)
+	}
+	if got, want := paths.Directory, filepath.Join(base, "scopedb"); got != want {
+		t.Errorf("Directory = %q, want %q", got, want)
+	}
+}
+
 func TestSaveRestrictsPermissions(t *testing.T) {
 	directory := t.TempDir()
 	paths := Paths{Directory: directory, Config: filepath.Join(directory, "config.toml")}

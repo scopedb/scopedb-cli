@@ -27,7 +27,7 @@ import (
 func (a *app) newAPIKeyCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:     "api-key",
-		Aliases: []string{"api-keys", "key"},
+		Aliases: []string{"api-keys"},
 		Short:   "Manage workspace API keys",
 		Args:    cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {

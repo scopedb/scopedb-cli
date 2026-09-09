@@ -62,7 +62,7 @@ func ResolvePaths() (Paths, error) {
 		if err != nil {
 			return Paths{}, fmt.Errorf("resolve user config directory: %w", err)
 		}
-		directory = filepath.Join(base, "scopedb", "cli")
+		directory = filepath.Join(base, "scopedb")
 	}
 	directory, err := filepath.Abs(directory)
 	if err != nil {
