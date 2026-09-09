@@ -37,9 +37,6 @@ jobs:
 
       - name: Setup mise
         uses: jdx/mise-action@v4
-        with:
-          # mise "latest" resolves to the v2026.9.3 tag, whose release assets were never published.
-          version: 2026.9.2
 
       - name: Setup Go cache
         uses: ./.github/actions/setup-go-cache
