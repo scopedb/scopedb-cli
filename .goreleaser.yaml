@@ -1,0 +1,54 @@
+version: 2
+
+project_name: scopedb-cli
+
+builds:
+  - id: scope
+    main: ./cmd/scope
+    binary: scope
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - >-
+        -s -w
+        -X github.com/scopedb/scopedb-cli/internal/version.version={{ .Version }}
+        -X github.com/scopedb/scopedb-cli/internal/version.commit={{ .Commit }}
+        -X github.com/scopedb/scopedb-cli/internal/version.date={{ .CommitDate }}
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - ids:
+      - scope
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      scope_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  draft: true
