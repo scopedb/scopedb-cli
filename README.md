@@ -135,7 +135,7 @@ mise run test:race
 mise run build
 ```
 
-`mise run check` verifies formatting and module metadata, then runs `golangci-lint`. Network-facing tests use local `httptest` servers and do not require a ScopeDB account.
+`mise run check` verifies Apache license headers, formatting, and module metadata, then runs `golangci-lint`. Network-facing tests use local `httptest` servers and do not require a ScopeDB account.
 
 ## License
 

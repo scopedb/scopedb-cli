@@ -12,9 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-version: "2"
+[header]
+builtin = "Apache-2.0"
 
-linters:
-  default: standard
-  enable:
-    - testifylint
+[files]
+includes = ['*.go', '*.toml', '*.yml', '*.yaml']
+
+[[rules]]
+extensions = ["go"]
+style_out = "doubleslash"
+styles_in = ["doubleslash", "slashstar"]
+
+[props]
+copyright_owner = "ScopeDB, Inc."
+inception_year = 2026
