@@ -37,6 +37,8 @@ type doctorReport struct {
 	Checks []doctorCheck `json:"checks"`
 }
 
+const doctorStatement = "SELECT 1 AS ready"
+
 func (a *app) newDoctorCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
@@ -56,16 +58,6 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				{Name: "credential store", Status: "pass", Details: runtime.config.CredentialStore},
 			}}
 
-			healthCtx, cancel := context.WithTimeout(command.Context(), 5*time.Second)
-			healthErr := runtime.control.Health(healthCtx)
-			cancel()
-			if healthErr != nil {
-				report.OK = false
-				report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "fail", Details: healthErr.Error()})
-			} else {
-				report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "pass", Details: runtime.config.ControlURL})
-			}
-
 			access, machine, machineErr := runtime.auth.MachineAccess()
 			switch {
 			case machineErr != nil:
@@ -73,7 +65,26 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: machineErr.Error()})
 			case machine:
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "API key from environment for " + access.Endpoint})
+				queryCtx, queryCancel := context.WithTimeout(command.Context(), 5*time.Second)
+				_, queryErr := a.query.Execute(queryCtx, access, doctorStatement)
+				queryCancel()
+				if queryErr != nil {
+					report.OK = false
+					report.Checks = append(report.Checks, doctorCheck{Name: "data plane", Status: "fail", Details: NormalizeError(queryErr).Error()})
+				} else {
+					report.Checks = append(report.Checks, doctorCheck{Name: "data plane", Status: "pass", Details: access.Endpoint})
+				}
 			default:
+				healthCtx, cancel := context.WithTimeout(command.Context(), 5*time.Second)
+				healthErr := runtime.control.Health(healthCtx)
+				cancel()
+				if healthErr != nil {
+					report.OK = false
+					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "fail", Details: healthErr.Error()})
+				} else {
+					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "pass", Details: runtime.config.ControlURL})
+				}
+
 				state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
 				if errors.Is(loadErr, credential.ErrNotFound) {
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in"})

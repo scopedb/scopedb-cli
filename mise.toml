@@ -16,6 +16,7 @@
 "github:fast/hawkeye" = "7.1.0"
 go = "1.26.5"
 golangci-lint = "2.12.2"
+typos = "1.44.0"
 
 [tasks.scope]
 description = "Run the repository-local ScopeDB CLI"
@@ -30,9 +31,10 @@ go mod tidy
 '''
 
 [tasks.check]
-description = "Check license headers, formatting, Go module metadata, and static analysis"
+description = "Check license headers, spelling, formatting, Go module metadata, and static analysis"
 run = '''
 hawkeye check
+typos
 
 unformatted="$(
   git ls-files -z --cached --others --exclude-standard -- '*.go' |

@@ -21,8 +21,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	scopedb "github.com/scopedb/goscopedb"
+	"github.com/scopedb/scopedb-cli/internal/auth"
 )
+
+type queryExecutorFunc func(context.Context, auth.Access, string) (*scopedb.ResultSet, error)
+
+func (f queryExecutorFunc) Execute(ctx context.Context, access auth.Access, statement string) (*scopedb.ResultSet, error) {
+	return f(ctx, access, statement)
+}
 
 func TestLoginThenStatusAgainstControlPlane(t *testing.T) {
 	const sessionSecret = "session-super-secret"
@@ -155,5 +165,74 @@ func TestQueryUsesMachineCredentialsAndPublicSDK(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), apiKey) || strings.Contains(stderr.String(), apiKey) {
 		t.Fatal("query output exposed the API key")
+	}
+}
+
+func TestDoctorWithMachineCredentialsChecksDataPlaneOnly(t *testing.T) {
+	const (
+		apiKey   = "machine-super-secret"
+		endpoint = "https://data.example.com"
+	)
+	var queryCalls atomic.Int64
+	query := queryExecutorFunc(func(_ context.Context, access auth.Access, statement string) (*scopedb.ResultSet, error) {
+		queryCalls.Add(1)
+		if access.Endpoint != endpoint || access.APIKey != apiKey {
+			t.Errorf("data-plane access = %#v", access)
+		}
+		if statement != doctorStatement {
+			t.Errorf("statement = %q, want %q", statement, doctorStatement)
+		}
+		return &scopedb.ResultSet{}, nil
+	})
+
+	var controlRequests atomic.Int64
+	controlServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		controlRequests.Add(1)
+		writer.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer controlServer.Close()
+
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_ENDPOINT", endpoint)
+	t.Setenv("SCOPEDB_API_KEY", apiKey)
+	t.Setenv("SCOPEDB_CONTROL_URL", "")
+	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
+
+	var stdout, stderr bytes.Buffer
+	command := NewRootCommand(Dependencies{
+		In:              strings.NewReader(""),
+		Out:             &stdout,
+		ErrOut:          &stderr,
+		HTTPClient:      controlServer.Client(),
+		QueryExecutor:   query,
+		IsInputTerminal: func() bool { return false },
+	})
+	command.SetArgs([]string{"--control-url", controlServer.URL, "doctor", "--format", "json"})
+	if err := NormalizeError(command.ExecuteContext(context.Background())); err != nil {
+		t.Fatalf("doctor error = %v; output = %s; stderr = %s", err, stdout.String(), stderr.String())
+	}
+
+	var report doctorReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode doctor report: %v; output = %s", err, stdout.String())
+	}
+	checks := make(map[string]string, len(report.Checks))
+	for _, check := range report.Checks {
+		checks[check.Name] = check.Status
+	}
+	if !report.OK || checks["authentication"] != "pass" || checks["data plane"] != "pass" {
+		t.Errorf("doctor report = %#v", report)
+	}
+	if _, exists := checks["control plane"]; exists {
+		t.Errorf("machine-mode report unexpectedly checked the control plane: %#v", report)
+	}
+	if got := queryCalls.Load(); got != 1 {
+		t.Errorf("data-plane queries = %d, want 1", got)
+	}
+	if got := controlRequests.Load(); got != 0 {
+		t.Errorf("control-plane requests = %d, want 0", got)
+	}
+	if strings.Contains(stdout.String(), apiKey) || strings.Contains(stderr.String(), apiKey) {
+		t.Fatal("doctor output exposed the API key")
 	}
 }
