@@ -55,6 +55,34 @@ func TestLoadPrecedence(t *testing.T) {
 	}
 }
 
+func TestLoadExistingConfig(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.toml")
+	contents := []byte(`control_url = "https://control.example.com"
+console_url = "https://console.example.com"
+credential_store = "plaintext"
+`)
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	t.Setenv("SCOPEDB_CONTROL_URL", "")
+	t.Setenv("SCOPEDB_CONSOLE_URL", "")
+	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
+	cfg, err := Load(Paths{Directory: directory, Config: path}, Overrides{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if got, want := cfg.ControlURL, "https://control.example.com"; got != want {
+		t.Errorf("ControlURL = %q, want %q", got, want)
+	}
+	if got, want := cfg.ConsoleURL, "https://console.example.com"; got != want {
+		t.Errorf("ConsoleURL = %q, want %q", got, want)
+	}
+	if got, want := cfg.CredentialStore, CredentialStorePlaintext; got != want {
+		t.Errorf("CredentialStore = %q, want %q", got, want)
+	}
+}
+
 func TestResolvePathsUsesOverride(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "nested")
 	t.Setenv("SCOPEDB_CONFIG_DIR", directory)

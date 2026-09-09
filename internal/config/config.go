@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/BurntSushi/toml"
+	"github.com/pelletier/go-toml/v2"
 	"github.com/scopedb/scopedb-cli/internal/fileutil"
 )
 
@@ -84,7 +84,12 @@ func Load(paths Paths, overrides Overrides) (Config, error) {
 		CredentialStore: CredentialStoreKeyring,
 	}
 
-	if _, err := toml.DecodeFile(paths.Config, &cfg); err != nil && !errors.Is(err, os.ErrNotExist) {
+	data, err := os.ReadFile(paths.Config)
+	if err == nil {
+		if err := toml.Unmarshal(data, &cfg); err != nil {
+			return Config{}, fmt.Errorf("read config %s: %w", paths.Config, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return Config{}, fmt.Errorf("read config %s: %w", paths.Config, err)
 	}
 	applyEnv(&cfg)
