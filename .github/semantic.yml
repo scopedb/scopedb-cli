@@ -26,8 +26,6 @@ enabled: true
 
 titleOnly: true
 
-scopes: []
-
 types:
   - feat
   - fix
