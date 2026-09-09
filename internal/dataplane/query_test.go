@@ -55,7 +55,7 @@ func TestExecuteCancelsSubmittedStatementOnInterrupt(t *testing.T) {
 		cancel()
 	}()
 	service := QueryService{HTTPClient: server.Client()}
-	_, err := service.Execute(ctx, auth.Access{Endpoint: server.URL, APIKey: "secret"}, "FROM events")
+	_, err := service.Execute(ctx, auth.Access{Endpoint: server.URL, APIKey: "secret"}, "SELECT 1 AS ready")
 	var interrupted *InterruptedError
 	if !errors.As(err, &interrupted) {
 		t.Fatalf("Execute() error = %T %v, want *InterruptedError", err, err)

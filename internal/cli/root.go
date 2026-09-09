@@ -18,6 +18,7 @@ import (
 	"fmt"
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
+	"github.com/scopedb/scopedb-cli/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -34,6 +35,8 @@ func NewRootCommand(deps Dependencies) *cobra.Command {
 			return command.Help()
 		},
 	}
+	root.Version = version.Current().Version
+	root.SetVersionTemplate("scope {{.Version}}\n")
 	root.SetIn(a.in)
 	root.SetOut(a.out)
 	root.SetErr(a.errOut)

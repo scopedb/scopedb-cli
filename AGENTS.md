@@ -26,3 +26,14 @@ The global working agreements apply. Keep this file limited to constraints speci
 - Keep domain and transport errors structured until the process boundary in `cmd/scope`.
 - Add tests at observable boundaries: HTTP contracts, credential safety, auth resolution, cancellation, and rendered output. Avoid tests that merely mirror command registration or static literals.
 - Run `mise run check` and `mise run test:race` before merging behavior changes.
+
+## Documentation
+
+- Keep the README concise and user-facing. Leave private review status, naming rationale, internal architecture, and implementation notes out of it.
+- Take ScopeQL examples from ScopeDB documentation or tests instead of inventing syntax.
+- Keep each semantic prose paragraph and each list item on one source line; do not hard-wrap them.
+
+## Pull requests
+
+- Use the semantic title format defined in `.github/semantic.yml`, write the entire title in lowercase, and keep the description concise.
+- Use a `Summary` section for simple pull requests. Add `Design Notes` only when needed, and do not list test commands in the pull request description.

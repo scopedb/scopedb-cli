@@ -18,13 +18,15 @@
 #
 # ... where valid types and scopes can be found below; for example:
 #
-#     build(maven): One level down for native profile
+#     build: align development tooling
 #
 # More about configurations on https://github.com/Ezard/semantic-prs#configuration
 
 enabled: true
 
 titleOnly: true
+
+scopes: []
 
 types:
   - feat
