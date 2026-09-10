@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cli
+package command
 
 import (
 	"bytes"
@@ -23,7 +23,7 @@ import (
 
 func TestRootVersionFlag(t *testing.T) {
 	var stdout bytes.Buffer
-	command := NewRootCommand(Dependencies{Out: &stdout})
+	command := NewRoot(Dependencies{Out: &stdout})
 	command.SetArgs([]string{"--version"})
 
 	if err := command.ExecuteContext(context.Background()); err != nil {

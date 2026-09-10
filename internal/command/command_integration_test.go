@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cli
+package command
 
 import (
 	"bytes"
@@ -78,7 +78,7 @@ func TestLoginThenStatusAgainstControlPlane(t *testing.T) {
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
 
 	var loginOut, loginErr bytes.Buffer
-	login := NewRootCommand(Dependencies{
+	login := NewRoot(Dependencies{
 		In:              strings.NewReader(""),
 		Out:             &loginOut,
 		ErrOut:          &loginErr,
@@ -97,7 +97,7 @@ func TestLoginThenStatusAgainstControlPlane(t *testing.T) {
 	}
 
 	var statusOut, statusErr bytes.Buffer
-	status := NewRootCommand(Dependencies{
+	status := NewRoot(Dependencies{
 		In:              strings.NewReader(""),
 		Out:             &statusOut,
 		ErrOut:          &statusErr,
@@ -148,7 +148,7 @@ func TestQueryUsesMachineCredentialsAndPublicSDK(t *testing.T) {
 	t.Setenv("SCOPEDB_ENDPOINT", server.URL)
 	t.Setenv("SCOPEDB_API_KEY", apiKey)
 	var stdout, stderr bytes.Buffer
-	command := NewRootCommand(Dependencies{
+	command := NewRoot(Dependencies{
 		In:              strings.NewReader(""),
 		Out:             &stdout,
 		ErrOut:          &stderr,
@@ -199,7 +199,7 @@ func TestDoctorWithMachineCredentialsChecksDataPlaneOnly(t *testing.T) {
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
 
 	var stdout, stderr bytes.Buffer
-	command := NewRootCommand(Dependencies{
+	command := NewRoot(Dependencies{
 		In:              strings.NewReader(""),
 		Out:             &stdout,
 		ErrOut:          &stderr,

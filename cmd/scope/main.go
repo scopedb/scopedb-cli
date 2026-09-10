@@ -21,8 +21,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/scopedb/scopedb-cli/internal/cli"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
+	"github.com/scopedb/scopedb-cli/internal/command"
 )
 
 func main() {
@@ -33,12 +33,12 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	command := cli.NewRootCommand(cli.Dependencies{
+	root := command.NewRoot(command.Dependencies{
 		In:     os.Stdin,
 		Out:    os.Stdout,
 		ErrOut: os.Stderr,
 	})
-	err := cli.NormalizeError(command.ExecuteContext(ctx))
+	err := command.NormalizeError(root.ExecuteContext(ctx))
 	if err == nil {
 		return clierror.ExitOK
 	}
