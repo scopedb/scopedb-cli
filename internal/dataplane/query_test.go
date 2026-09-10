@@ -16,7 +16,6 @@ package dataplane
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -24,6 +23,8 @@ import (
 	"testing"
 
 	"github.com/scopedb/scopedb-cli/internal/auth"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestExecuteCancelsSubmittedStatementOnInterrupt(t *testing.T) {
@@ -47,9 +48,9 @@ func TestExecuteCancelsSubmittedStatementOnInterrupt(t *testing.T) {
 			writer.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
 		<-getStarted
 		cancel()
@@ -57,13 +58,8 @@ func TestExecuteCancelsSubmittedStatementOnInterrupt(t *testing.T) {
 	service := QueryService{HTTPClient: server.Client()}
 	_, err := service.Execute(ctx, auth.Access{Endpoint: server.URL, APIKey: "secret"}, "SELECT 1 AS ready")
 	var interrupted *InterruptedError
-	if !errors.As(err, &interrupted) {
-		t.Fatalf("Execute() error = %T %v, want *InterruptedError", err, err)
-	}
-	if interrupted.StatementID != statementID || interrupted.CancelErr != nil {
-		t.Errorf("interrupted error = %#v", interrupted)
-	}
-	if !cancelCalled.Load() {
-		t.Fatal("server-side cancel endpoint was not called")
-	}
+	require.ErrorAs(t, err, &interrupted)
+	assert.Equal(t, statementID, interrupted.StatementID)
+	require.NoError(t, interrupted.CancelErr)
+	assert.True(t, cancelCalled.Load(), "server-side cancel endpoint was not called")
 }

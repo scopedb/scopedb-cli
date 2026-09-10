@@ -16,12 +16,13 @@ package auth
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type memoryStore struct {
@@ -83,17 +84,14 @@ func TestMachineAccessRequiresCompletePair(t *testing.T) {
 	values := map[string]string{"SCOPEDB_ENDPOINT": "https://data.example.com"}
 	manager := Manager{Getenv: func(key string) string { return values[key] }}
 	_, active, err := manager.MachineAccess()
-	if active || !errors.Is(err, ErrInvalidMachineEnv) {
-		t.Fatalf("MachineAccess() = active %v, err %v", active, err)
-	}
+	assert.False(t, active)
+	require.ErrorIs(t, err, ErrInvalidMachineEnv)
+
 	values["SCOPEDB_API_KEY"] = "secret"
 	access, active, err := manager.MachineAccess()
-	if err != nil || !active {
-		t.Fatalf("MachineAccess() = %#v, %v, %v", access, active, err)
-	}
-	if access.Endpoint != "https://data.example.com" || access.APIKey != "secret" || access.Mode != "api_key" {
-		t.Errorf("access = %#v", access)
-	}
+	require.NoError(t, err)
+	assert.True(t, active)
+	assert.Equal(t, Access{Endpoint: "https://data.example.com", APIKey: "secret", Mode: "api_key"}, access)
 }
 
 func TestResolveDataAccessUsesCachedToken(t *testing.T) {
@@ -120,16 +118,15 @@ func TestResolveDataAccessUsesCachedToken(t *testing.T) {
 		Now:         func() time.Time { return now },
 		Getenv:      func(string) string { return "" },
 	}
-	access, err := manager.ResolveDataAccess(context.Background())
-	if err != nil {
-		t.Fatalf("ResolveDataAccess() error = %v", err)
-	}
-	if access.APIKey != "cached-data-token" || access.WorkspaceID != "ws-1" {
-		t.Errorf("access = %#v", access)
-	}
-	if control.exchangeCalls != 0 {
-		t.Errorf("exchange calls = %d, want 0", control.exchangeCalls)
-	}
+	access, err := manager.ResolveDataAccess(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, Access{
+		Endpoint:    "https://data.example.com",
+		APIKey:      "cached-data-token",
+		WorkspaceID: "ws-1",
+		Mode:        "session",
+	}, access)
+	assert.Zero(t, control.exchangeCalls)
 }
 
 func TestResolveDataAccessExchangesExpiringToken(t *testing.T) {
@@ -160,16 +157,23 @@ func TestResolveDataAccessExchangesExpiringToken(t *testing.T) {
 		Now:         func() time.Time { return now },
 		Getenv:      func(string) string { return "" },
 	}
-	access, err := manager.ResolveDataAccess(context.Background())
-	if err != nil {
-		t.Fatalf("ResolveDataAccess() error = %v", err)
-	}
-	if access.APIKey != "fresh-data-token" || store.state.DataToken != "fresh-data-token" {
-		t.Errorf("access = %#v, state = %#v", access, store.state)
-	}
-	if control.exchangeCalls != 1 || store.saves != 1 {
-		t.Errorf("exchange calls = %d, saves = %d", control.exchangeCalls, store.saves)
-	}
+	access, err := manager.ResolveDataAccess(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, Access{
+		Endpoint:    "https://data.example.com",
+		APIKey:      "fresh-data-token",
+		WorkspaceID: "ws-1",
+		Mode:        "session",
+	}, access)
+	assert.Equal(t, credential.State{
+		SessionToken:         "session",
+		WorkspaceID:          "ws-1",
+		DataToken:            "fresh-data-token",
+		DataTokenWorkspaceID: "ws-1",
+		DataTokenExpiresAt:   now.Add(time.Hour),
+	}, store.state)
+	assert.Equal(t, 1, control.exchangeCalls)
+	assert.Equal(t, 1, store.saves)
 }
 
 func TestSelectWorkspaceClearsDataCredential(t *testing.T) {
@@ -183,18 +187,12 @@ func TestSelectWorkspaceClearsDataCredential(t *testing.T) {
 		DataTokenWorkspaceID: "ws-1",
 		DataTokenExpiresAt:   time.Now().Add(time.Hour),
 	}
-	if err := manager.SelectWorkspace(context.Background(), state, "ws-2"); err != nil {
-		t.Fatalf("SelectWorkspace() error = %v", err)
-	}
-	if store.state.SessionToken != "rotated" || store.state.WorkspaceID != "ws-2" || store.state.DataToken != "" || !store.state.DataTokenExpiresAt.IsZero() {
-		t.Errorf("saved state = %#v", store.state)
-	}
+	require.NoError(t, manager.SelectWorkspace(t.Context(), state, "ws-2"))
+	assert.Equal(t, credential.State{SessionToken: "rotated", WorkspaceID: "ws-2"}, store.state)
 }
 
 func TestLoadSessionWithoutCredentials(t *testing.T) {
 	manager := Manager{ControlURL: "https://control.example.com", Credentials: &memoryStore{}}
-	_, _, err := manager.LoadSession(context.Background())
-	if !errors.Is(err, ErrNotLoggedIn) {
-		t.Fatalf("LoadSession() error = %v, want ErrNotLoggedIn", err)
-	}
+	_, _, err := manager.LoadSession(t.Context())
+	assert.ErrorIs(t, err, ErrNotLoggedIn)
 }

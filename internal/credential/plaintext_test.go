@@ -15,12 +15,14 @@
 package credential
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPlaintextStoreRoundTripAndDelete(t *testing.T) {
@@ -34,48 +36,32 @@ func TestPlaintextStoreRoundTripAndDelete(t *testing.T) {
 		DataTokenWorkspaceID: "ws-1",
 		DataTokenExpiresAt:   now,
 	}
-	if err := store.Save("https://control.example.com", want); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	got, err := store.Load("https://control.example.com")
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if got.SessionToken != want.SessionToken || got.DataToken != want.DataToken || got.WorkspaceID != want.WorkspaceID || !got.DataTokenExpiresAt.Equal(now) {
-		t.Errorf("Load() = %#v, want %#v", got, want)
-	}
+	const controlURL = "https://control.example.com"
+	require.NoError(t, store.Save(controlURL, want))
+	got, err := store.Load(controlURL)
+	require.NoError(t, err)
+	want.Version = currentStateVersion
+	want.ControlURL = controlURL
+	assert.Equal(t, want, got)
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatalf("Stat() error = %v", err)
-		}
-		if gotMode, wantMode := info.Mode().Perm(), os.FileMode(0o600); gotMode != wantMode {
-			t.Errorf("mode = %03o, want %03o", gotMode, wantMode)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	}
-	if err := store.Delete("https://control.example.com"); err != nil {
-		t.Fatalf("Delete() error = %v", err)
-	}
-	if _, err := store.Load("https://control.example.com"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Load() after delete error = %v, want ErrNotFound", err)
-	}
+	require.NoError(t, store.Delete(controlURL))
+	_, err = store.Load(controlURL)
+	assert.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestPlaintextStoreSeparatesOrigins(t *testing.T) {
 	store := NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
 	for _, origin := range []string{"https://one.example.com", "https://two.example.com"} {
-		if err := store.Save(origin, State{SessionToken: origin, WorkspaceID: "ws"}); err != nil {
-			t.Fatalf("Save(%q) error = %v", origin, err)
-		}
+		require.NoError(t, store.Save(origin, State{SessionToken: origin, WorkspaceID: "ws"}))
 	}
 	for _, origin := range []string{"https://one.example.com", "https://two.example.com"} {
 		state, err := store.Load(origin)
-		if err != nil {
-			t.Fatalf("Load(%q) error = %v", origin, err)
-		}
-		if state.SessionToken != origin {
-			t.Errorf("Load(%q).SessionToken = %q", origin, state.SessionToken)
-		}
+		require.NoError(t, err)
+		assert.Equal(t, origin, state.SessionToken)
 	}
 }
 
@@ -84,11 +70,7 @@ func TestPlaintextStoreRejectsBroadPermissions(t *testing.T) {
 		t.Skip("POSIX permission check")
 	}
 	path := filepath.Join(t.TempDir(), "credentials.json")
-	if err := os.WriteFile(path, []byte(`{"version":1,"profiles":{}}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(`{"version":1,"profiles":{}}`), 0o644))
 	_, err := NewPlaintextStore(path).Load("https://control.example.com")
-	if err == nil {
-		t.Fatal("Load() error = nil, want unsafe permissions error")
-	}
+	assert.ErrorContains(t, err, "unsafe permissions")
 }

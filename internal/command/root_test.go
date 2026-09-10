@@ -16,9 +16,10 @@ package command
 
 import (
 	"bytes"
-	"context"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRootVersionFlag(t *testing.T) {
@@ -26,10 +27,6 @@ func TestRootVersionFlag(t *testing.T) {
 	command := NewRoot(Dependencies{Out: &stdout})
 	command.SetArgs([]string{"--version"})
 
-	if err := command.ExecuteContext(context.Background()); err != nil {
-		t.Fatalf("ExecuteContext() error = %v", err)
-	}
-	if output := stdout.String(); !strings.HasPrefix(output, "scope ") || !strings.HasSuffix(output, "\n") {
-		t.Errorf("version output = %q", output)
-	}
+	require.NoError(t, command.ExecuteContext(t.Context()))
+	assert.Regexp(t, `^scope .+\n$`, stdout.String())
 }

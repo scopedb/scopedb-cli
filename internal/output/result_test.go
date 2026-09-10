@@ -16,11 +16,12 @@ package output
 
 import (
 	"bytes"
-	"strings"
 	"testing"
 	"time"
 
 	scopedb "github.com/scopedb/goscopedb"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRenderJSONPreservesColumnOrderAndTypes(t *testing.T) {
@@ -37,13 +38,9 @@ func TestRenderJSONPreservesColumnOrderAndTypes(t *testing.T) {
 		[]byte{0xde, 0xad},
 	}}
 	var output bytes.Buffer
-	if err := renderJSON(&output, schema, rows, false); err != nil {
-		t.Fatalf("renderJSON() error = %v", err)
-	}
+	require.NoError(t, renderJSON(&output, schema, rows, false))
 	want := "[\n  {\n    \"id\": 42,\n    \"payload\": {\n      \"ready\": true\n    },\n    \"created\": \"2026-09-09T00:02:03.000000004Z\",\n    \"bytes\": \"0xdead\"\n  }\n]\n"
-	if got := output.String(); got != want {
-		t.Errorf("JSON output:\n%s\nwant:\n%s", got, want)
-	}
+	assert.Equal(t, want, output.String())
 }
 
 func TestRenderCSVAndTableNulls(t *testing.T) {
@@ -53,19 +50,13 @@ func TestRenderCSVAndTableNulls(t *testing.T) {
 	}
 	rows := [][]scopedb.Value{{"alpha", nil}}
 	var csvOutput bytes.Buffer
-	if err := renderCSV(&csvOutput, schema, rows); err != nil {
-		t.Fatalf("renderCSV() error = %v", err)
-	}
-	if got, want := csvOutput.String(), "name,value\nalpha,\n"; got != want {
-		t.Errorf("CSV = %q, want %q", got, want)
-	}
+	require.NoError(t, renderCSV(&csvOutput, schema, rows))
+	assert.Equal(t, "name,value\nalpha,\n", csvOutput.String())
+
 	var tableOutput bytes.Buffer
-	if err := renderTable(&tableOutput, schema, rows); err != nil {
-		t.Fatalf("renderTable() error = %v", err)
-	}
-	if !strings.Contains(tableOutput.String(), "NULL") || !strings.Contains(tableOutput.String(), "alpha") {
-		t.Errorf("table output = %q", tableOutput.String())
-	}
+	require.NoError(t, renderTable(&tableOutput, schema, rows))
+	assert.Contains(t, tableOutput.String(), "NULL")
+	assert.Contains(t, tableOutput.String(), "alpha")
 }
 
 func TestRenderJSONRejectsDuplicateColumns(t *testing.T) {
@@ -74,7 +65,5 @@ func TestRenderJSONRejectsDuplicateColumns(t *testing.T) {
 		&scopedb.FieldSchema{Name: "value", Type: scopedb.IntDataType},
 	}
 	err := renderJSON(&bytes.Buffer{}, schema, [][]scopedb.Value{{int64(1), int64(2)}}, false)
-	if err == nil || !strings.Contains(err.Error(), "unique column names") {
-		t.Fatalf("renderJSON() error = %v", err)
-	}
+	assert.ErrorContains(t, err, "unique column names")
 }
