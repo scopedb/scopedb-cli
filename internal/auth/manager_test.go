@@ -21,7 +21,6 @@ import (
 
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,14 +83,14 @@ func TestMachineAccessRequiresCompletePair(t *testing.T) {
 	values := map[string]string{"SCOPEDB_ENDPOINT": "https://data.example.com"}
 	manager := Manager{Getenv: func(key string) string { return values[key] }}
 	_, active, err := manager.MachineAccess()
-	assert.False(t, active)
+	require.False(t, active)
 	require.ErrorIs(t, err, ErrInvalidMachineEnv)
 
 	values["SCOPEDB_API_KEY"] = "secret"
 	access, active, err := manager.MachineAccess()
 	require.NoError(t, err)
-	assert.True(t, active)
-	assert.Equal(t, Access{Endpoint: "https://data.example.com", APIKey: "secret", Mode: "api_key"}, access)
+	require.True(t, active)
+	require.Equal(t, Access{Endpoint: "https://data.example.com", APIKey: "secret", Mode: "api_key"}, access)
 }
 
 func TestResolveDataAccessUsesCachedToken(t *testing.T) {
@@ -120,13 +119,13 @@ func TestResolveDataAccessUsesCachedToken(t *testing.T) {
 	}
 	access, err := manager.ResolveDataAccess(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, Access{
+	require.Equal(t, Access{
 		Endpoint:    "https://data.example.com",
 		APIKey:      "cached-data-token",
 		WorkspaceID: "ws-1",
 		Mode:        "session",
 	}, access)
-	assert.Zero(t, control.exchangeCalls)
+	require.Zero(t, control.exchangeCalls)
 }
 
 func TestResolveDataAccessExchangesExpiringToken(t *testing.T) {
@@ -159,21 +158,21 @@ func TestResolveDataAccessExchangesExpiringToken(t *testing.T) {
 	}
 	access, err := manager.ResolveDataAccess(t.Context())
 	require.NoError(t, err)
-	assert.Equal(t, Access{
+	require.Equal(t, Access{
 		Endpoint:    "https://data.example.com",
 		APIKey:      "fresh-data-token",
 		WorkspaceID: "ws-1",
 		Mode:        "session",
 	}, access)
-	assert.Equal(t, credential.State{
+	require.Equal(t, credential.State{
 		SessionToken:         "session",
 		WorkspaceID:          "ws-1",
 		DataToken:            "fresh-data-token",
 		DataTokenWorkspaceID: "ws-1",
 		DataTokenExpiresAt:   now.Add(time.Hour),
 	}, store.state)
-	assert.Equal(t, 1, control.exchangeCalls)
-	assert.Equal(t, 1, store.saves)
+	require.Equal(t, 1, control.exchangeCalls)
+	require.Equal(t, 1, store.saves)
 }
 
 func TestSelectWorkspaceClearsDataCredential(t *testing.T) {
@@ -188,11 +187,11 @@ func TestSelectWorkspaceClearsDataCredential(t *testing.T) {
 		DataTokenExpiresAt:   time.Now().Add(time.Hour),
 	}
 	require.NoError(t, manager.SelectWorkspace(t.Context(), state, "ws-2"))
-	assert.Equal(t, credential.State{SessionToken: "rotated", WorkspaceID: "ws-2"}, store.state)
+	require.Equal(t, credential.State{SessionToken: "rotated", WorkspaceID: "ws-2"}, store.state)
 }
 
 func TestLoadSessionWithoutCredentials(t *testing.T) {
 	manager := Manager{ControlURL: "https://control.example.com", Credentials: &memoryStore{}}
 	_, _, err := manager.LoadSession(t.Context())
-	assert.ErrorIs(t, err, ErrNotLoggedIn)
+	require.ErrorIs(t, err, ErrNotLoggedIn)
 }

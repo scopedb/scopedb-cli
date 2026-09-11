@@ -20,7 +20,6 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,9 +42,9 @@ func TestLoadPrecedence(t *testing.T) {
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", CredentialStoreKeyring)
 	cfg, err := Load(paths, Overrides{ControlURL: "https://flag-control.example.com/"})
 	require.NoError(t, err)
-	assert.Equal(t, "https://flag-control.example.com", cfg.ControlURL)
-	assert.Equal(t, "https://env-console.example.com", cfg.ConsoleURL)
-	assert.Equal(t, CredentialStoreKeyring, cfg.CredentialStore)
+	require.Equal(t, "https://flag-control.example.com", cfg.ControlURL)
+	require.Equal(t, "https://env-console.example.com", cfg.ConsoleURL)
+	require.Equal(t, CredentialStoreKeyring, cfg.CredentialStore)
 }
 
 func TestLoadExistingConfig(t *testing.T) {
@@ -61,9 +60,9 @@ credential_store = "plaintext"
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
 	cfg, err := Load(Paths{Directory: directory, Config: path}, Overrides{})
 	require.NoError(t, err)
-	assert.Equal(t, "https://control.example.com", cfg.ControlURL)
-	assert.Equal(t, "https://console.example.com", cfg.ConsoleURL)
-	assert.Equal(t, CredentialStorePlaintext, cfg.CredentialStore)
+	require.Equal(t, "https://control.example.com", cfg.ControlURL)
+	require.Equal(t, "https://console.example.com", cfg.ConsoleURL)
+	require.Equal(t, CredentialStorePlaintext, cfg.CredentialStore)
 }
 
 func TestResolvePathsUsesOverride(t *testing.T) {
@@ -71,8 +70,8 @@ func TestResolvePathsUsesOverride(t *testing.T) {
 	t.Setenv("SCOPEDB_CONFIG_DIR", directory)
 	paths, err := ResolvePaths()
 	require.NoError(t, err)
-	assert.Equal(t, directory, paths.Directory)
-	assert.Equal(t, filepath.Join(directory, "config.toml"), paths.Config)
+	require.Equal(t, directory, paths.Directory)
+	require.Equal(t, filepath.Join(directory, "config.toml"), paths.Config)
 }
 
 func TestResolvePathsUsesPlatformConfigDirectory(t *testing.T) {
@@ -81,7 +80,7 @@ func TestResolvePathsUsesPlatformConfigDirectory(t *testing.T) {
 	require.NoError(t, err)
 	paths, err := ResolvePaths()
 	require.NoError(t, err)
-	assert.Equal(t, filepath.Join(base, "scopedb"), paths.Directory)
+	require.Equal(t, filepath.Join(base, "scopedb"), paths.Directory)
 }
 
 func TestSaveRestrictsPermissions(t *testing.T) {
@@ -97,11 +96,11 @@ func TestSaveRestrictsPermissions(t *testing.T) {
 	}
 	info, err := os.Stat(paths.Config)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
 
 func TestLoadRejectsUnsafeURL(t *testing.T) {
 	paths := Paths{Config: filepath.Join(t.TempDir(), "missing.toml")}
 	_, err := Load(paths, Overrides{ControlURL: "https://user:secret@example.com"})
-	assert.Error(t, err)
+	require.Error(t, err)
 }

@@ -20,7 +20,6 @@ import (
 	"time"
 
 	scopedb "github.com/scopedb/goscopedb"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +39,7 @@ func TestRenderJSONPreservesColumnOrderAndTypes(t *testing.T) {
 	var output bytes.Buffer
 	require.NoError(t, renderJSON(&output, schema, rows, false))
 	want := "[\n  {\n    \"id\": 42,\n    \"payload\": {\n      \"ready\": true\n    },\n    \"created\": \"2026-09-09T00:02:03.000000004Z\",\n    \"bytes\": \"0xdead\"\n  }\n]\n"
-	assert.Equal(t, want, output.String())
+	require.Equal(t, want, output.String())
 }
 
 func TestRenderCSVAndTableNulls(t *testing.T) {
@@ -51,12 +50,12 @@ func TestRenderCSVAndTableNulls(t *testing.T) {
 	rows := [][]scopedb.Value{{"alpha", nil}}
 	var csvOutput bytes.Buffer
 	require.NoError(t, renderCSV(&csvOutput, schema, rows))
-	assert.Equal(t, "name,value\nalpha,\n", csvOutput.String())
+	require.Equal(t, "name,value\nalpha,\n", csvOutput.String())
 
 	var tableOutput bytes.Buffer
 	require.NoError(t, renderTable(&tableOutput, schema, rows))
-	assert.Contains(t, tableOutput.String(), "NULL")
-	assert.Contains(t, tableOutput.String(), "alpha")
+	require.Contains(t, tableOutput.String(), "NULL")
+	require.Contains(t, tableOutput.String(), "alpha")
 }
 
 func TestRenderJSONRejectsDuplicateColumns(t *testing.T) {
@@ -65,5 +64,5 @@ func TestRenderJSONRejectsDuplicateColumns(t *testing.T) {
 		&scopedb.FieldSchema{Name: "value", Type: scopedb.IntDataType},
 	}
 	err := renderJSON(&bytes.Buffer{}, schema, [][]scopedb.Value{{int64(1), int64(2)}}, false)
-	assert.ErrorContains(t, err, "unique column names")
+	require.ErrorContains(t, err, "unique column names")
 }

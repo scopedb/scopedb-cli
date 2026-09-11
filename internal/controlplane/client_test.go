@@ -40,9 +40,9 @@ func TestClientSessionRequest(t *testing.T) {
 	require.NoError(t, err)
 	session, err := client.GetSession(t.Context(), "session-secret")
 	require.NoError(t, err)
-	assert.Equal(t, "dev@example.com", session.User.Email)
-	assert.Equal(t, "ws-1", session.CurrentWorkspaceID)
-	assert.Len(t, session.Workspaces, 1)
+	require.Equal(t, "dev@example.com", session.User.Email)
+	require.Equal(t, "ws-1", session.CurrentWorkspaceID)
+	require.Len(t, session.Workspaces, 1)
 }
 
 func TestClientSendsLoginVerificationContract(t *testing.T) {
@@ -61,7 +61,7 @@ func TestClientSendsLoginVerificationContract(t *testing.T) {
 	require.NoError(t, err)
 	response, err := client.VerifyLogin(t.Context(), "challenge-1", "123456")
 	require.NoError(t, err)
-	assert.Equal(t, LoginResponse{Token: "session-secret", WorkspaceID: "ws-1"}, response)
+	require.Equal(t, LoginResponse{Token: "session-secret", WorkspaceID: "ws-1"}, response)
 }
 
 func TestClientPreservesStructuredHTTPError(t *testing.T) {
@@ -79,7 +79,7 @@ func TestClientPreservesStructuredHTTPError(t *testing.T) {
 	err = client.Health(t.Context())
 	var apiErr *Error
 	require.ErrorAs(t, err, &apiErr)
-	assert.Equal(t, &Error{
+	require.Equal(t, &Error{
 		Status:     http.StatusTooManyRequests,
 		Message:    "slow down",
 		RequestID:  "body-request",

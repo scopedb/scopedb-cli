@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +34,7 @@ func TestWriteResultFileDoesNotOverwriteByDefault(t *testing.T) {
 	require.Error(t, err)
 	data, readErr := os.ReadFile(path)
 	require.NoError(t, readErr)
-	assert.Equal(t, "original", string(data))
+	require.Equal(t, "original", string(data))
 }
 
 func TestWriteResultFileRemovesPartialRender(t *testing.T) {
@@ -46,5 +45,5 @@ func TestWriteResultFileRemovesPartialRender(t *testing.T) {
 		return wantErr
 	})
 	require.ErrorIs(t, err, wantErr)
-	assert.NoFileExists(t, path)
+	require.NoFileExists(t, path)
 }

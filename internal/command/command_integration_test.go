@@ -57,7 +57,7 @@ func TestLoginThenStatusAgainstControlPlane(t *testing.T) {
 		case http.MethodGet + " /api/workspaces/ws-1":
 			_, _ = writer.Write([]byte(`{"workspace":{"id":"ws-1","display_name":"Production","role":"owner"},"connection":{"api_base_url":"https://data.example.com","auth_scheme":"api_key"},"placement":{"provider":"aws","region":"us-east-1"},"provisioning":{"status":"ready"}}`))
 		default:
-			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+			assert.Failf(t, "unexpected request", "%s %s", request.Method, request.URL.Path)
 			writer.WriteHeader(http.StatusNotFound)
 		}
 	}))
@@ -79,9 +79,9 @@ func TestLoginThenStatusAgainstControlPlane(t *testing.T) {
 	})
 	login.SetArgs([]string{"--control-url", server.URL, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage"})
 	require.NoError(t, NormalizeError(login.ExecuteContext(t.Context())))
-	assert.NotContains(t, loginOut.String(), sessionSecret)
-	assert.NotContains(t, loginErr.String(), sessionSecret)
-	assert.Contains(t, loginOut.String(), "Logged in as dev@example.com")
+	require.NotContains(t, loginOut.String(), sessionSecret)
+	require.NotContains(t, loginErr.String(), sessionSecret)
+	require.Contains(t, loginOut.String(), "Logged in as dev@example.com")
 
 	var statusOut, statusErr bytes.Buffer
 	status := NewRoot(Dependencies{
@@ -95,11 +95,11 @@ func TestLoginThenStatusAgainstControlPlane(t *testing.T) {
 	require.NoError(t, NormalizeError(status.ExecuteContext(t.Context())), "stderr: %s", statusErr.String())
 	var view statusView
 	require.NoError(t, json.Unmarshal(statusOut.Bytes(), &view), "output: %s", statusOut.String())
-	assert.Equal(t, "dev@example.com", view.User)
-	assert.Equal(t, "ws-1", view.WorkspaceID)
-	assert.Equal(t, "Production", view.WorkspaceName)
-	assert.Equal(t, "ready", view.ProvisioningState)
-	assert.NotContains(t, statusOut.String(), sessionSecret)
+	require.Equal(t, "dev@example.com", view.User)
+	require.Equal(t, "ws-1", view.WorkspaceID)
+	require.Equal(t, "Production", view.WorkspaceName)
+	require.Equal(t, "ready", view.ProvisioningState)
+	require.NotContains(t, statusOut.String(), sessionSecret)
 }
 
 func TestQueryUsesMachineCredentialsAndPublicSDK(t *testing.T) {
@@ -137,9 +137,9 @@ func TestQueryUsesMachineCredentialsAndPublicSDK(t *testing.T) {
 	command.SetArgs([]string{"query", "SELECT 1 AS ready", "--format", "json"})
 	require.NoError(t, NormalizeError(command.ExecuteContext(t.Context())), "stderr: %s", stderr.String())
 	want := "[\n  {\n    \"ready\": 1\n  }\n]\n"
-	assert.Equal(t, want, stdout.String())
-	assert.NotContains(t, stdout.String(), apiKey)
-	assert.NotContains(t, stderr.String(), apiKey)
+	require.Equal(t, want, stdout.String())
+	require.NotContains(t, stdout.String(), apiKey)
+	require.NotContains(t, stderr.String(), apiKey)
 }
 
 func TestDoctorWithMachineCredentialsChecksDataPlaneOnly(t *testing.T) {
@@ -150,9 +150,9 @@ func TestDoctorWithMachineCredentialsChecksDataPlaneOnly(t *testing.T) {
 	var queryCalls atomic.Int64
 	query := queryExecutorFunc(func(_ context.Context, access auth.Access, statement string) (*scopedb.ResultSet, error) {
 		queryCalls.Add(1)
-		assert.Equal(t, endpoint, access.Endpoint)
-		assert.Equal(t, apiKey, access.APIKey)
-		assert.Equal(t, doctorStatement, statement)
+		require.Equal(t, endpoint, access.Endpoint)
+		require.Equal(t, apiKey, access.APIKey)
+		require.Equal(t, doctorStatement, statement)
 		return &scopedb.ResultSet{}, nil
 	})
 
@@ -187,12 +187,12 @@ func TestDoctorWithMachineCredentialsChecksDataPlaneOnly(t *testing.T) {
 	for _, check := range report.Checks {
 		checks[check.Name] = check.Status
 	}
-	assert.True(t, report.OK)
-	assert.Equal(t, "pass", checks["authentication"])
-	assert.Equal(t, "pass", checks["data plane"])
-	assert.NotContains(t, checks, "control plane")
-	assert.EqualValues(t, 1, queryCalls.Load())
-	assert.Zero(t, controlRequests.Load())
-	assert.NotContains(t, stdout.String(), apiKey)
-	assert.NotContains(t, stderr.String(), apiKey)
+	require.True(t, report.OK)
+	require.Equal(t, "pass", checks["authentication"])
+	require.Equal(t, "pass", checks["data plane"])
+	require.NotContains(t, checks, "control plane")
+	require.EqualValues(t, 1, queryCalls.Load())
+	require.Zero(t, controlRequests.Load())
+	require.NotContains(t, stdout.String(), apiKey)
+	require.NotContains(t, stderr.String(), apiKey)
 }

@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,15 +41,15 @@ func TestPlaintextStoreRoundTripAndDelete(t *testing.T) {
 	require.NoError(t, err)
 	want.Version = currentStateVersion
 	want.ControlURL = controlURL
-	assert.Equal(t, want, got)
+	require.Equal(t, want, got)
 	if runtime.GOOS != "windows" {
 		info, err := os.Stat(path)
 		require.NoError(t, err)
-		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	}
 	require.NoError(t, store.Delete(controlURL))
 	_, err = store.Load(controlURL)
-	assert.ErrorIs(t, err, ErrNotFound)
+	require.ErrorIs(t, err, ErrNotFound)
 }
 
 func TestPlaintextStoreSeparatesOrigins(t *testing.T) {
@@ -61,7 +60,7 @@ func TestPlaintextStoreSeparatesOrigins(t *testing.T) {
 	for _, origin := range []string{"https://one.example.com", "https://two.example.com"} {
 		state, err := store.Load(origin)
 		require.NoError(t, err)
-		assert.Equal(t, origin, state.SessionToken)
+		require.Equal(t, origin, state.SessionToken)
 	}
 }
 
@@ -72,5 +71,5 @@ func TestPlaintextStoreRejectsBroadPermissions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	require.NoError(t, os.WriteFile(path, []byte(`{"version":1,"profiles":{}}`), 0o644))
 	_, err := NewPlaintextStore(path).Load("https://control.example.com")
-	assert.ErrorContains(t, err, "unsafe permissions")
+	require.ErrorContains(t, err, "unsafe permissions")
 }

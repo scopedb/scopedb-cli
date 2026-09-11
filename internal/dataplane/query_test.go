@@ -44,7 +44,7 @@ func TestExecuteCancelsSubmittedStatementOnInterrupt(t *testing.T) {
 			cancelCalled.Store(true)
 			_, _ = writer.Write([]byte(`{"statement_id":"` + statementID + `","status":"cancelled","created_at":"2026-09-09T00:00:00Z","message":"cancelled by client"}`))
 		default:
-			t.Errorf("unexpected request: %s %s", request.Method, request.URL.Path)
+			assert.Failf(t, "unexpected request", "%s %s", request.Method, request.URL.Path)
 			writer.WriteHeader(http.StatusNotFound)
 		}
 	}))
@@ -59,7 +59,7 @@ func TestExecuteCancelsSubmittedStatementOnInterrupt(t *testing.T) {
 	_, err := service.Execute(ctx, auth.Access{Endpoint: server.URL, APIKey: "secret"}, "SELECT 1 AS ready")
 	var interrupted *InterruptedError
 	require.ErrorAs(t, err, &interrupted)
-	assert.Equal(t, statementID, interrupted.StatementID)
+	require.Equal(t, statementID, interrupted.StatementID)
 	require.NoError(t, interrupted.CancelErr)
-	assert.True(t, cancelCalled.Load(), "server-side cancel endpoint was not called")
+	require.True(t, cancelCalled.Load(), "server-side cancel endpoint was not called")
 }
