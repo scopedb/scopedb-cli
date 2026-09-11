@@ -2,12 +2,16 @@
 
 `scope` is the command-line interface for [ScopeDB](https://www.scopedb.io/).
 
+ScopeDB CLI is currently available as a release candidate for testing.
+
 ## Install
 
-Install from source with Go 1.27 or newer:
+Download a prebuilt archive for macOS, Linux, or Windows from [GitHub Releases](https://github.com/scopedb/scopedb-cli/releases), extract it, and place the `scope` binary in your `PATH`.
+
+To install the current release candidate from source, use Go 1.27 or newer:
 
 ```sh
-go install github.com/scopedb/scopedb-cli/cmd/scope@latest
+go install github.com/scopedb/scopedb-cli/cmd/scope@v0.1.0-rc.1
 ```
 
 ## Get started
