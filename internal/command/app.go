@@ -178,17 +178,31 @@ func (a *app) runtime(command *cobra.Command) (*runtimeContext, error) {
 	return a.newRuntime(paths, cfg)
 }
 
-func (a *app) readLine(prompt string) (string, error) {
+func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
 	if prompt != "" {
 		if _, err := fmt.Fprint(a.errOut, prompt); err != nil {
 			return "", err
 		}
 	}
-	value, err := a.input.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
+	type readResult struct {
+		value string
+		err   error
 	}
-	return strings.TrimSpace(value), nil
+	// A blocked stdin read cannot observe cancellation, so stop waiting on it as soon as the context ends.
+	done := make(chan readResult, 1)
+	go func() {
+		value, err := a.input.ReadString('\n')
+		done <- readResult{value: value, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case result := <-done:
+		if result.err != nil && !errors.Is(result.err, io.EOF) {
+			return "", result.err
+		}
+		return strings.TrimSpace(result.value), nil
+	}
 }
 
 func openURL(target string) error {

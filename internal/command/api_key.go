@@ -186,7 +186,7 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 				if !a.isInputTerminal() {
 					return usageError("--yes is required when input is not interactive")
 				}
-				answer, err := a.readLine(fmt.Sprintf("Revoke API key %s? [y/N] ", name))
+				answer, err := a.readLine(command.Context(), fmt.Sprintf("Revoke API key %s? [y/N] ", name))
 				if err != nil {
 					return NormalizeError(err)
 				}

@@ -65,7 +65,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				if !a.isInputTerminal() {
 					return usageError("--email is required when input is not interactive")
 				}
-				email, err = a.readLine("Email: ")
+				email, err = a.readLine(command.Context(), "Email: ")
 				if err != nil {
 					return NormalizeError(err)
 				}
@@ -91,7 +91,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				if a.isInputTerminal() {
 					prompt = "Verification code: "
 				}
-				code, err = a.readLine(prompt)
+				code, err = a.readLine(command.Context(), prompt)
 				if err != nil {
 					return NormalizeError(err)
 				}
