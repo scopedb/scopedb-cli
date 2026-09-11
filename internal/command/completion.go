@@ -26,16 +26,16 @@ func newCompletionCommand(root *cobra.Command) *cobra.Command {
 		Short:     "Generate shell completion",
 		Args:      exactArgs(1),
 		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
-		RunE: func(command *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			switch args[0] {
 			case "bash":
-				return root.GenBashCompletion(command.OutOrStdout())
+				return root.GenBashCompletion(cmd.OutOrStdout())
 			case "zsh":
-				return root.GenZshCompletion(command.OutOrStdout())
+				return root.GenZshCompletion(cmd.OutOrStdout())
 			case "fish":
-				return root.GenFishCompletion(command.OutOrStdout(), true)
+				return root.GenFishCompletion(cmd.OutOrStdout(), true)
 			case "powershell":
-				return root.GenPowerShellCompletion(command.OutOrStdout())
+				return root.GenPowerShellCompletion(cmd.OutOrStdout())
 			default:
 				return usageError(fmt.Sprintf("unsupported shell %q", args[0]))
 			}

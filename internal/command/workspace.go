@@ -29,8 +29,8 @@ func (a *app) newWorkspaceCommand() *cobra.Command {
 		Use:   "workspace",
 		Short: "Inspect or select a workspace",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			return command.Help()
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
 		},
 	}
 	command.AddCommand(
@@ -47,15 +47,15 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List available workspaces",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
 				return err
 			}
-			runtime, err := a.runtime(command)
+			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
-			_, session, err := runtime.auth.LoadSession(command.Context())
+			_, session, err := runtime.auth.LoadSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -99,12 +99,12 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 		Use:   "use <id-or-name>",
 		Short: "Select the workspace used by subsequent commands",
 		Args:  exactArgs(1),
-		RunE: func(command *cobra.Command, args []string) error {
-			runtime, err := a.runtime(command)
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, session, err := runtime.auth.LoadSession(command.Context())
+			state, session, err := runtime.auth.LoadSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -116,7 +116,7 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 				_, err := fmt.Fprintf(a.out, "Already using workspace %s (%s).\n", workspace.Name(), workspace.ID)
 				return NormalizeError(err)
 			}
-			if err := runtime.auth.SelectWorkspace(command.Context(), state, workspace.ID); err != nil {
+			if err := runtime.auth.SelectWorkspace(cmd.Context(), state, workspace.ID); err != nil {
 				return NormalizeError(err)
 			}
 			_, err = fmt.Fprintf(a.out, "Now using workspace %s (%s).\n", workspace.Name(), workspace.ID)
@@ -131,19 +131,19 @@ func (a *app) newWorkspaceShowCommand() *cobra.Command {
 		Use:   "show",
 		Short: "Show the current workspace",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
 				return err
 			}
-			runtime, err := a.runtime(command)
+			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, _, err := runtime.auth.LoadSession(command.Context())
+			state, _, err := runtime.auth.LoadSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			details, err := runtime.control.GetWorkspace(command.Context(), state.SessionToken, state.WorkspaceID)
+			details, err := runtime.control.GetWorkspace(cmd.Context(), state.SessionToken, state.WorkspaceID)
 			if err != nil {
 				return NormalizeError(err)
 			}

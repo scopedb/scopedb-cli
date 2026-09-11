@@ -124,13 +124,13 @@ func newApp(deps Dependencies) *app {
 	}
 }
 
-func (a *app) loadConfig(command *cobra.Command) (config.Paths, config.Config, error) {
+func (a *app) loadConfig(cmd *cobra.Command) (config.Paths, config.Config, error) {
 	paths, err := config.ResolvePaths()
 	if err != nil {
 		return config.Paths{}, config.Config{}, err
 	}
 	overrides := config.Overrides{}
-	flags := command.Root().PersistentFlags()
+	flags := cmd.Root().PersistentFlags()
 	if flags.Changed("control-url") {
 		overrides.ControlURL = a.controlURLFlag
 	}
@@ -170,25 +170,38 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 	}, nil
 }
 
-func (a *app) runtime(command *cobra.Command) (*runtimeContext, error) {
-	paths, cfg, err := a.loadConfig(command)
+func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
+	paths, cfg, err := a.loadConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
 	return a.newRuntime(paths, cfg)
 }
 
-func (a *app) readLine(prompt string) (string, error) {
+func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
 	if prompt != "" {
 		if _, err := fmt.Fprint(a.errOut, prompt); err != nil {
 			return "", err
 		}
 	}
-	value, err := a.input.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
+	type input struct {
+		val string
+		err error
 	}
-	return strings.TrimSpace(value), nil
+	done := make(chan input, 1)
+	go func() {
+		val, err := a.input.ReadString('\n')
+		done <- input{val, err}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case result := <-done:
+		if result.err != nil && !errors.Is(result.err, io.EOF) {
+			return "", result.err
+		}
+		return strings.TrimSpace(result.val), nil
+	}
 }
 
 func openURL(target string) error {

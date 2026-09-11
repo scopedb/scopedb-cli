@@ -28,7 +28,7 @@ func (a *app) newOpenCommand() *cobra.Command {
 		Short:     "Open the ScopeDB console",
 		Args:      cobra.MaximumNArgs(1),
 		ValidArgs: []string{"home", "query", "data", "keys", "connect"},
-		RunE: func(command *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			page := "home"
 			if len(args) == 1 {
 				page = args[0]
@@ -38,7 +38,7 @@ func (a *app) newOpenCommand() *cobra.Command {
 			default:
 				return usageError(fmt.Sprintf("unsupported console page %q", page))
 			}
-			_, cfg, err := a.loadConfig(command)
+			_, cfg, err := a.loadConfig(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}

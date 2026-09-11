@@ -37,11 +37,11 @@ func (a *app) newStatusCommand() *cobra.Command {
 		Use:   "status",
 		Short: "Show authentication and workspace status",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
 				return err
 			}
-			runtime, err := a.runtime(command)
+			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -52,11 +52,11 @@ func (a *app) newStatusCommand() *cobra.Command {
 				return renderStatus(a.out, format, statusView{AuthMode: access.Mode, Endpoint: access.Endpoint})
 			}
 
-			state, session, err := runtime.auth.LoadSession(command.Context())
+			state, session, err := runtime.auth.LoadSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			details, err := runtime.control.GetWorkspace(command.Context(), state.SessionToken, state.WorkspaceID)
+			details, err := runtime.control.GetWorkspace(cmd.Context(), state.SessionToken, state.WorkspaceID)
 			if err != nil {
 				return NormalizeError(err)
 			}

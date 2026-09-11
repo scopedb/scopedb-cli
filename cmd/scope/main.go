@@ -42,6 +42,12 @@ func run() int {
 	if err == nil {
 		return clierror.ExitOK
 	}
-	_, _ = fmt.Fprint(os.Stderr, clierror.Render(err))
-	return clierror.ExitCode(err)
+	code := clierror.ExitCode(err)
+	switch code {
+	case clierror.ExitInterrupted:
+		_, _ = fmt.Fprintln(os.Stderr)
+	default:
+		_, _ = fmt.Fprint(os.Stderr, clierror.Render(err))
+	}
+	return code
 }

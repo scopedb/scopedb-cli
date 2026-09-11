@@ -29,8 +29,8 @@ func (a *app) newAPIKeyCommand() *cobra.Command {
 		Use:   "api-key",
 		Short: "Manage workspace API keys",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			return command.Help()
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
 		},
 	}
 	command.AddCommand(
@@ -47,19 +47,19 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 		Use:   "list",
 		Short: "List API keys in the current workspace",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
 				return err
 			}
-			runtime, err := a.runtime(command)
+			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, _, err := runtime.auth.LoadSession(command.Context())
+			state, _, err := runtime.auth.LoadSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			keys, err := runtime.control.ListAPIKeys(command.Context(), state.SessionToken, state.WorkspaceID)
+			keys, err := runtime.control.ListAPIKeys(cmd.Context(), state.SessionToken, state.WorkspaceID)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -94,7 +94,7 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 		Use:   "create <name>",
 		Short: "Create an API key in the current workspace",
 		Args:  exactArgs(1),
-		RunE: func(command *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "value" && format != structuredFormatJSON {
 				return usageError(fmt.Sprintf("unsupported format %q; use value or json", format))
 			}
@@ -102,19 +102,19 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 			if name == "" {
 				return usageError("API key name must not be empty")
 			}
-			expiresAt, err := a.resolveAPIKeyExpiry(command, expiresIn, expiresAtValue)
+			expiresAt, err := a.resolveAPIKeyExpiry(cmd, expiresIn, expiresAtValue)
 			if err != nil {
 				return err
 			}
-			runtime, err := a.runtime(command)
+			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, _, err := runtime.auth.LoadSession(command.Context())
+			state, _, err := runtime.auth.LoadSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			created, err := runtime.control.CreateAPIKey(command.Context(), state.SessionToken, state.WorkspaceID, controlplane.CreateAPIKeyRequest{
+			created, err := runtime.control.CreateAPIKey(cmd.Context(), state.SessionToken, state.WorkspaceID, controlplane.CreateAPIKeyRequest{
 				Name:      name,
 				Tags:      tags,
 				ExpiresAt: expiresAt,
@@ -144,9 +144,9 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 	return command
 }
 
-func (a *app) resolveAPIKeyExpiry(command *cobra.Command, expiresIn time.Duration, expiresAtValue string) (*time.Time, error) {
-	inChanged := command.Flags().Changed("expires-in")
-	atChanged := command.Flags().Changed("expires-at")
+func (a *app) resolveAPIKeyExpiry(cmd *cobra.Command, expiresIn time.Duration, expiresAtValue string) (*time.Time, error) {
+	inChanged := cmd.Flags().Changed("expires-in")
+	atChanged := cmd.Flags().Changed("expires-at")
 	if inChanged && atChanged {
 		return nil, usageError("--expires-in and --expires-at are mutually exclusive")
 	}
@@ -177,7 +177,7 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 		Use:   "revoke <name>",
 		Short: "Revoke an API key",
 		Args:  exactArgs(1),
-		RunE: func(command *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.TrimSpace(args[0])
 			if name == "" {
 				return usageError("API key name must not be empty")
@@ -186,7 +186,7 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 				if !a.isInputTerminal() {
 					return usageError("--yes is required when input is not interactive")
 				}
-				answer, err := a.readLine(fmt.Sprintf("Revoke API key %s? [y/N] ", name))
+				answer, err := a.readLine(cmd.Context(), fmt.Sprintf("Revoke API key %s? [y/N] ", name))
 				if err != nil {
 					return NormalizeError(err)
 				}
@@ -195,15 +195,15 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 					return NormalizeError(err)
 				}
 			}
-			runtime, err := a.runtime(command)
+			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, _, err := runtime.auth.LoadSession(command.Context())
+			state, _, err := runtime.auth.LoadSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			if err := runtime.control.RevokeAPIKey(command.Context(), state.SessionToken, state.WorkspaceID, name); err != nil {
+			if err := runtime.control.RevokeAPIKey(cmd.Context(), state.SessionToken, state.WorkspaceID, name); err != nil {
 				return NormalizeError(err)
 			}
 			_, err = fmt.Fprintf(a.out, "Revoked API key %s.\n", name)
