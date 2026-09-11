@@ -6,8 +6,9 @@ All significant changes to this project will be documented in this file.
 
 ## v0.1.0-rc.2 (2026-09-11)
 
-* Fix Ctrl+C handling while waiting for login input or API key revocation confirmation: exit promptly with status 130 without printing an error.
-* Clarify prebuilt binary installation with platform-specific archive names, checksum verification, and PATH setup.
+### Bug fixes
+
+* Ctrl+C now exits immediately when `scope login` or `scope api-key revoke` is waiting for input, without requiring Enter or printing an error.
 
 ## v0.1.0-rc.1 (2026-09-11)
 

@@ -33,6 +33,14 @@ The global working agreements apply. Keep this file limited to constraints speci
 - Take ScopeQL examples from ScopeDB documentation or tests instead of inventing syntax.
 - Keep each Markdown prose paragraph and list item on one source line. Format Markdown tables so their columns and separators align in the source.
 
+## Changelog
+
+- Update `CHANGELOG.md` in the same PR as significant changes observable by `scope` users. Compare the final behavior with the preceding release tag, including release candidates; use the latest tag as the baseline for `Unreleased`.
+- Include new capabilities, breaking changes, correctness or compatibility fixes, and concrete improvements to existing behavior. Exclude documentation edits, tests, internal refactors, CI, tooling, and dependency maintenance unless they change what users can run or observe; describe that effect when they do.
+- Verify that a bug existed in the baseline release before listing a fix. For changes to unreleased functionality, describe its final behavior in the feature entry and omit intermediate corrections.
+- Keep `## Unreleased` at the top and group entries under `### Breaking changes`, `### New features`, `### Bug fixes`, and `### Improvements`, in that order, omitting empty categories. Put finalized entries under their release version below `Unreleased`.
+- Write one bullet per coherent user-visible change, naming the affected command or workflow and its result. Include migration steps for breaking changes and limit performance claims to workloads supported by evidence. Omit commit history, PR or issue numbers, and implementation details unless needed to understand compatibility, migration, or risk.
+
 ## Pull requests
 
 - Use the semantic title format defined in `.github/semantic.yml`, write the entire title in lowercase, and keep the description concise.
