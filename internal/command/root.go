@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cli
+package command
 
 import (
 	"fmt"
@@ -22,8 +22,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewRootCommand constructs the complete command tree without package globals.
-func NewRootCommand(deps Dependencies) *cobra.Command {
+// NewRoot constructs the complete command tree without package globals.
+func NewRoot(deps Dependencies) *cobra.Command {
 	a := newApp(deps)
 	root := &cobra.Command{
 		Use:           "scope",

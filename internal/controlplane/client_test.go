@@ -15,69 +15,53 @@
 package controlplane
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClientSessionRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodGet || request.URL.Path != "/api/session" {
-			t.Errorf("request = %s %s", request.Method, request.URL.Path)
-		}
-		if got, want := request.Header.Get("Authorization"), "Bearer session-secret"; got != want {
-			t.Errorf("Authorization = %q, want %q", got, want)
-		}
-		if got, want := request.Header.Get("User-Agent"), "scope/test"; got != want {
-			t.Errorf("User-Agent = %q, want %q", got, want)
-		}
+		assert.Equal(t, http.MethodGet, request.Method)
+		assert.Equal(t, "/api/session", request.URL.Path)
+		assert.Equal(t, "Bearer session-secret", request.Header.Get("Authorization"))
+		assert.Equal(t, "scope/test", request.Header.Get("User-Agent"))
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"user":{"email":"dev@example.com","created_at":"2026-09-09T00:00:00Z"},"workspaces":[{"id":"ws-1","display_name":"Production","role":"owner"}],"current_workspace_id":"ws-1"}`))
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	client, err := NewClient(server.URL, "scope/test", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	session, err := client.GetSession(context.Background(), "session-secret")
-	if err != nil {
-		t.Fatalf("GetSession() error = %v", err)
-	}
-	if session.User.Email != "dev@example.com" || session.CurrentWorkspaceID != "ws-1" || len(session.Workspaces) != 1 {
-		t.Errorf("GetSession() = %#v", session)
-	}
+	require.NoError(t, err)
+	session, err := client.GetSession(t.Context(), "session-secret")
+	require.NoError(t, err)
+	require.Equal(t, "dev@example.com", session.User.Email)
+	require.Equal(t, "ws-1", session.CurrentWorkspaceID)
+	require.Len(t, session.Workspaces, 1)
 }
 
 func TestClientSendsLoginVerificationContract(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, http.MethodPost, request.Method)
+		assert.Equal(t, "/api/login/verify", request.URL.Path)
 		var body map[string]string
-		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
-			t.Errorf("decode body: %v", err)
-		}
-		if body["login_challenge"] != "challenge-1" || body["code"] != "123456" {
-			t.Errorf("body = %#v", body)
-		}
+		assert.NoError(t, json.NewDecoder(request.Body).Decode(&body))
+		assert.Equal(t, map[string]string{"login_challenge": "challenge-1", "code": "123456"}, body)
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"token":"session-secret","workspace_id":"ws-1"}`))
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	client, err := NewClient(server.URL, "", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := client.VerifyLogin(context.Background(), "challenge-1", "123456")
-	if err != nil {
-		t.Fatalf("VerifyLogin() error = %v", err)
-	}
-	if response.Token != "session-secret" || response.WorkspaceID != "ws-1" {
-		t.Errorf("VerifyLogin() = %#v", response)
-	}
+	require.NoError(t, err)
+	response, err := client.VerifyLogin(t.Context(), "challenge-1", "123456")
+	require.NoError(t, err)
+	require.Equal(t, LoginResponse{Token: "session-secret", WorkspaceID: "ws-1"}, response)
 }
 
 func TestClientPreservesStructuredHTTPError(t *testing.T) {
@@ -88,37 +72,32 @@ func TestClientPreservesStructuredHTTPError(t *testing.T) {
 		writer.WriteHeader(http.StatusTooManyRequests)
 		_, _ = writer.Write([]byte(`{"message":"slow down","request_id":"body-request"}`))
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	client, err := NewClient(server.URL, "", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = client.Health(context.Background())
+	require.NoError(t, err)
+	err = client.Health(t.Context())
 	var apiErr *Error
-	if !errors.As(err, &apiErr) {
-		t.Fatalf("Health() error = %T %v, want *Error", err, err)
-	}
-	if apiErr.Status != http.StatusTooManyRequests || apiErr.Message != "slow down" || apiErr.RequestID != "body-request" || !apiErr.Retryable || apiErr.RetryAfter != 7*time.Second {
-		t.Errorf("error = %#v", apiErr)
-	}
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, &Error{
+		Status:     http.StatusTooManyRequests,
+		Message:    "slow down",
+		RequestID:  "body-request",
+		Retryable:  true,
+		RetryAfter: 7 * time.Second,
+	}, apiErr)
 }
 
 func TestClientEscapesWorkspacePath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if got, want := request.URL.EscapedPath(), "/api/workspaces/a%20workspace"; got != want {
-			t.Errorf("EscapedPath() = %q, want %q", got, want)
-		}
+		assert.Equal(t, "/api/workspaces/a%20workspace", request.URL.EscapedPath())
 		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(`{"workspace":{"id":"a workspace","role":"owner"},"connection":{},"placement":{},"provisioning":{"status":"pending"}}`))
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	client, err := NewClient(server.URL, "", server.Client())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := client.GetWorkspace(context.Background(), "token", "a workspace"); err != nil {
-		t.Fatalf("GetWorkspace() error = %v", err)
-	}
+	require.NoError(t, err)
+	_, err = client.GetWorkspace(t.Context(), "token", "a workspace")
+	require.NoError(t, err)
 }

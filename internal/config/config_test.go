@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoadPrecedence(t *testing.T) {
@@ -33,26 +35,16 @@ func TestLoadPrecedence(t *testing.T) {
 		ConsoleURL:      "https://file-console.example.com/",
 		CredentialStore: CredentialStorePlaintext,
 	}
-	if err := Save(paths, fileConfig); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
+	require.NoError(t, Save(paths, fileConfig))
 
 	t.Setenv("SCOPEDB_CONTROL_URL", "https://env-control.example.com/")
 	t.Setenv("SCOPEDB_CONSOLE_URL", "https://env-console.example.com/")
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", CredentialStoreKeyring)
 	cfg, err := Load(paths, Overrides{ControlURL: "https://flag-control.example.com/"})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if got, want := cfg.ControlURL, "https://flag-control.example.com"; got != want {
-		t.Errorf("ControlURL = %q, want %q", got, want)
-	}
-	if got, want := cfg.ConsoleURL, "https://env-console.example.com"; got != want {
-		t.Errorf("ConsoleURL = %q, want %q", got, want)
-	}
-	if got, want := cfg.CredentialStore, CredentialStoreKeyring; got != want {
-		t.Errorf("CredentialStore = %q, want %q", got, want)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "https://flag-control.example.com", cfg.ControlURL)
+	require.Equal(t, "https://env-console.example.com", cfg.ConsoleURL)
+	require.Equal(t, CredentialStoreKeyring, cfg.CredentialStore)
 }
 
 func TestLoadExistingConfig(t *testing.T) {
@@ -62,83 +54,53 @@ func TestLoadExistingConfig(t *testing.T) {
 console_url = "https://console.example.com"
 credential_store = "plaintext"
 `)
-	if err := os.WriteFile(path, contents, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
+	require.NoError(t, os.WriteFile(path, contents, 0o600))
 	t.Setenv("SCOPEDB_CONTROL_URL", "")
 	t.Setenv("SCOPEDB_CONSOLE_URL", "")
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
 	cfg, err := Load(Paths{Directory: directory, Config: path}, Overrides{})
-	if err != nil {
-		t.Fatalf("Load() error = %v", err)
-	}
-	if got, want := cfg.ControlURL, "https://control.example.com"; got != want {
-		t.Errorf("ControlURL = %q, want %q", got, want)
-	}
-	if got, want := cfg.ConsoleURL, "https://console.example.com"; got != want {
-		t.Errorf("ConsoleURL = %q, want %q", got, want)
-	}
-	if got, want := cfg.CredentialStore, CredentialStorePlaintext; got != want {
-		t.Errorf("CredentialStore = %q, want %q", got, want)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "https://control.example.com", cfg.ControlURL)
+	require.Equal(t, "https://console.example.com", cfg.ConsoleURL)
+	require.Equal(t, CredentialStorePlaintext, cfg.CredentialStore)
 }
 
 func TestResolvePathsUsesOverride(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "nested")
 	t.Setenv("SCOPEDB_CONFIG_DIR", directory)
 	paths, err := ResolvePaths()
-	if err != nil {
-		t.Fatalf("ResolvePaths() error = %v", err)
-	}
-	if paths.Directory != directory {
-		t.Errorf("Directory = %q, want %q", paths.Directory, directory)
-	}
-	if paths.Config != filepath.Join(directory, "config.toml") {
-		t.Errorf("Config = %q", paths.Config)
-	}
+	require.NoError(t, err)
+	require.Equal(t, directory, paths.Directory)
+	require.Equal(t, filepath.Join(directory, "config.toml"), paths.Config)
 }
 
 func TestResolvePathsUsesPlatformConfigDirectory(t *testing.T) {
 	t.Setenv("SCOPEDB_CONFIG_DIR", "")
 	base, err := os.UserConfigDir()
-	if err != nil {
-		t.Fatalf("UserConfigDir() error = %v", err)
-	}
+	require.NoError(t, err)
 	paths, err := ResolvePaths()
-	if err != nil {
-		t.Fatalf("ResolvePaths() error = %v", err)
-	}
-	if got, want := paths.Directory, filepath.Join(base, "scopedb"); got != want {
-		t.Errorf("Directory = %q, want %q", got, want)
-	}
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(base, "scopedb"), paths.Directory)
 }
 
 func TestSaveRestrictsPermissions(t *testing.T) {
 	directory := t.TempDir()
 	paths := Paths{Directory: directory, Config: filepath.Join(directory, "config.toml")}
-	if err := Save(paths, Config{
+	require.NoError(t, Save(paths, Config{
 		ControlURL:      DefaultControlURL,
 		ConsoleURL:      DefaultConsoleURL,
 		CredentialStore: CredentialStoreKeyring,
-	}); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
+	}))
 	if runtime.GOOS == "windows" {
 		return
 	}
 	info, err := os.Stat(paths.Config)
-	if err != nil {
-		t.Fatalf("Stat() error = %v", err)
-	}
-	if got, want := info.Mode().Perm(), os.FileMode(0o600); got != want {
-		t.Errorf("mode = %03o, want %03o", got, want)
-	}
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
 
 func TestLoadRejectsUnsafeURL(t *testing.T) {
 	paths := Paths{Config: filepath.Join(t.TempDir(), "missing.toml")}
 	_, err := Load(paths, Overrides{ControlURL: "https://user:secret@example.com"})
-	if err == nil {
-		t.Fatal("Load() error = nil, want URL validation error")
-	}
+	require.Error(t, err)
 }

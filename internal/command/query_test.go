@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package cli
+package command
 
 import (
 	"errors"
@@ -20,27 +20,21 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestWriteResultFileDoesNotOverwriteByDefault(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "result.json")
-	if err := os.WriteFile(path, []byte("original"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte("original"), 0o600))
 	err := writeResultFile(path, false, func(writer io.Writer) error {
 		_, writeErr := io.WriteString(writer, "replacement")
 		return writeErr
 	})
-	if err == nil {
-		t.Fatal("writeResultFile() error = nil")
-	}
+	require.Error(t, err)
 	data, readErr := os.ReadFile(path)
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if got, want := string(data), "original"; got != want {
-		t.Errorf("file = %q, want %q", got, want)
-	}
+	require.NoError(t, readErr)
+	require.Equal(t, "original", string(data))
 }
 
 func TestWriteResultFileRemovesPartialRender(t *testing.T) {
@@ -50,10 +44,6 @@ func TestWriteResultFileRemovesPartialRender(t *testing.T) {
 		_, _ = io.WriteString(writer, "partial")
 		return wantErr
 	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("writeResultFile() error = %v, want %v", err, wantErr)
-	}
-	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("Stat() error = %v, want not exist", statErr)
-	}
+	require.ErrorIs(t, err, wantErr)
+	require.NoFileExists(t, path)
 }
