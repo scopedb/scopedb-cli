@@ -124,13 +124,13 @@ func newApp(deps Dependencies) *app {
 	}
 }
 
-func (a *app) loadConfig(command *cobra.Command) (config.Paths, config.Config, error) {
+func (a *app) loadConfig(cmd *cobra.Command) (config.Paths, config.Config, error) {
 	paths, err := config.ResolvePaths()
 	if err != nil {
 		return config.Paths{}, config.Config{}, err
 	}
 	overrides := config.Overrides{}
-	flags := command.Root().PersistentFlags()
+	flags := cmd.Root().PersistentFlags()
 	if flags.Changed("control-url") {
 		overrides.ControlURL = a.controlURLFlag
 	}
@@ -170,8 +170,8 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 	}, nil
 }
 
-func (a *app) runtime(command *cobra.Command) (*runtimeContext, error) {
-	paths, cfg, err := a.loadConfig(command)
+func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
+	paths, cfg, err := a.loadConfig(cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -184,15 +184,14 @@ func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
 			return "", err
 		}
 	}
-	type readResult struct {
-		value string
-		err   error
+	type input struct {
+		val string
+		err error
 	}
-	// A blocked stdin read cannot observe cancellation, so stop waiting on it as soon as the context ends.
-	done := make(chan readResult, 1)
+	done := make(chan input, 1)
 	go func() {
-		value, err := a.input.ReadString('\n')
-		done <- readResult{value: value, err: err}
+		val, err := a.input.ReadString('\n')
+		done <- input{val, err}
 	}()
 	select {
 	case <-ctx.Done():
@@ -201,7 +200,7 @@ func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
 		if result.err != nil && !errors.Is(result.err, io.EOF) {
 			return "", result.err
 		}
-		return strings.TrimSpace(result.value), nil
+		return strings.TrimSpace(result.val), nil
 	}
 }
 

@@ -42,14 +42,12 @@ func run() int {
 	if err == nil {
 		return clierror.ExitOK
 	}
-	_, _ = fmt.Fprint(os.Stderr, renderError(err))
-	return clierror.ExitCode(err)
-}
-
-func renderError(err error) string {
-	// An interrupted command ends the pending line instead of reporting a failure the user already knows about.
-	if clierror.ExitCode(err) == clierror.ExitInterrupted {
-		return "\n"
+	code := clierror.ExitCode(err)
+	switch code {
+	case clierror.ExitInterrupted:
+		_, _ = fmt.Fprintln(os.Stderr)
+	default:
+		_, _ = fmt.Fprint(os.Stderr, clierror.Render(err))
 	}
-	return clierror.Render(err)
+	return code
 }

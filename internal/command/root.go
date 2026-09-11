@@ -31,8 +31,8 @@ func NewRoot(deps Dependencies) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			return command.Help()
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
 		},
 	}
 	root.Version = version.Current().Version

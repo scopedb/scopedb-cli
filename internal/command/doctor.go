@@ -45,11 +45,11 @@ func (a *app) newDoctorCommand() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check local configuration and ScopeDB connectivity",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
 				return err
 			}
-			runtime, err := a.runtime(command)
+			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -65,7 +65,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: machineErr.Error()})
 			case machine:
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "API key from environment for " + access.Endpoint})
-				queryCtx, queryCancel := context.WithTimeout(command.Context(), 5*time.Second)
+				queryCtx, queryCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 				_, queryErr := a.query.Execute(queryCtx, access, doctorStatement)
 				queryCancel()
 				if queryErr != nil {
@@ -75,7 +75,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					report.Checks = append(report.Checks, doctorCheck{Name: "data plane", Status: "pass", Details: access.Endpoint})
 				}
 			default:
-				healthCtx, cancel := context.WithTimeout(command.Context(), 5*time.Second)
+				healthCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 				healthErr := runtime.control.Health(healthCtx)
 				cancel()
 				if healthErr != nil {
@@ -92,7 +92,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					report.OK = false
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: loadErr.Error()})
 				} else {
-					sessionCtx, sessionCancel := context.WithTimeout(command.Context(), 5*time.Second)
+					sessionCtx, sessionCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 					session, sessionErr := runtime.control.GetSession(sessionCtx, state.SessionToken)
 					sessionCancel()
 					if sessionErr != nil {

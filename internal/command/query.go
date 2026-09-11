@@ -47,7 +47,7 @@ func (a *app) newQueryCommand() *cobra.Command {
 			}
 			return nil
 		},
-		RunE: func(command *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			if !isQueryFormat(format) {
 				return usageError(fmt.Sprintf("unsupported format %q; use table, json, jsonl, or csv", format))
 			}
@@ -58,16 +58,16 @@ func (a *app) newQueryCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			runtime, err := a.runtime(command)
+			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
-			access, err := runtime.auth.ResolveDataAccess(command.Context())
+			access, err := runtime.auth.ResolveDataAccess(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
 
-			queryContext := command.Context()
+			queryContext := cmd.Context()
 			cancel := func() {}
 			if timeout > 0 {
 				queryContext, cancel = context.WithTimeout(queryContext, timeout)

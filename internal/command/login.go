@@ -37,8 +37,8 @@ func (a *app) newLoginCommand() *cobra.Command {
 		Use:   "login",
 		Short: "Log in with an email verification code",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			paths, cfg, err := a.loadConfig(command)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			paths, cfg, err := a.loadConfig(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -65,7 +65,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				if !a.isInputTerminal() {
 					return usageError("--email is required when input is not interactive")
 				}
-				email, err = a.readLine(command.Context(), "Email: ")
+				email, err = a.readLine(cmd.Context(), "Email: ")
 				if err != nil {
 					return NormalizeError(err)
 				}
@@ -74,7 +74,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return usageError("email must not be empty")
 			}
 
-			begin, err := runtime.control.BeginLogin(command.Context(), email)
+			begin, err := runtime.control.BeginLogin(cmd.Context(), email)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -91,7 +91,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				if a.isInputTerminal() {
 					prompt = "Verification code: "
 				}
-				code, err = a.readLine(command.Context(), prompt)
+				code, err = a.readLine(cmd.Context(), prompt)
 				if err != nil {
 					return NormalizeError(err)
 				}
@@ -100,7 +100,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return usageError("provide a verification code with --code or stdin")
 			}
 
-			response, err := runtime.control.VerifyLogin(command.Context(), begin.LoginChallenge, code)
+			response, err := runtime.control.VerifyLogin(cmd.Context(), begin.LoginChallenge, code)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -129,8 +129,8 @@ func (a *app) newLogoutCommand() *cobra.Command {
 		Use:   "logout",
 		Short: "Revoke the current session and remove local credentials",
 		Args:  cobra.NoArgs,
-		RunE: func(command *cobra.Command, _ []string) error {
-			runtime, err := a.runtime(command)
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -148,7 +148,7 @@ func (a *app) newLogoutCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			remoteErr := runtime.control.DeleteSession(command.Context(), state.SessionToken)
+			remoteErr := runtime.control.DeleteSession(cmd.Context(), state.SessionToken)
 			localErr := runtime.credentials.Delete(runtime.config.ControlURL)
 			if localErr != nil && !errors.Is(localErr, credential.ErrNotFound) {
 				return NormalizeError(localErr)
