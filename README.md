@@ -11,14 +11,14 @@
 
 Download the release archive for your platform from [GitHub Releases](https://github.com/scopedb/scopedb-cli/releases):
 
-| Platform | Archive |
-| --- | --- |
-| macOS on Apple silicon | `darwin_arm64.tar.gz` |
-| macOS on Intel | `darwin_amd64.tar.gz` |
-| Linux on x86-64 | `linux_amd64.tar.gz` |
-| Linux on ARM64 | `linux_arm64.tar.gz` |
-| Windows on x86-64 | `windows_amd64.zip` |
-| Windows on ARM64 | `windows_arm64.zip` |
+| Platform               | Archive pattern                                  |
+| ---------------------- | ------------------------------------------------ |
+| macOS on Apple silicon | `scope_<version>_darwin_arm64.tar.gz`            |
+| macOS on Intel         | `scope_<version>_darwin_amd64.tar.gz`            |
+| Linux on x86-64        | `scope_<version>_linux_amd64.tar.gz`             |
+| Linux on ARM64         | `scope_<version>_linux_arm64.tar.gz`             |
+| Windows on x86-64      | `scope_<version>_windows_amd64.zip`              |
+| Windows on ARM64       | `scope_<version>_windows_arm64.zip`              |
 
 Compare the archive's SHA-256 digest with its entry in `checksums.txt`, extract it, and place `scope` (`scope.exe` on Windows) in a directory on your `PATH`.
 
