@@ -2,16 +2,42 @@
 
 `scope` is the command-line interface for [ScopeDB](https://www.scopedb.io/).
 
-ScopeDB CLI is currently available as a release candidate for testing.
+> [!IMPORTANT]
+> ScopeDB CLI is in public preview. Current releases are release candidates intended for evaluation and may change before the first stable release.
 
 ## Install
 
-Download a prebuilt archive for macOS, Linux, or Windows from [GitHub Releases](https://github.com/scopedb/scopedb-cli/releases), extract it, and place the `scope` binary in your `PATH`.
+### Prebuilt binaries
 
-To install the current release candidate from source, use Go 1.27 or newer:
+Download the release archive for your platform from [GitHub Releases](https://github.com/scopedb/scopedb-cli/releases):
+
+| Platform               | Archive pattern                                  |
+| ---------------------- | ------------------------------------------------ |
+| macOS on Apple silicon | `scope_<version>_darwin_arm64.tar.gz`            |
+| macOS on Intel         | `scope_<version>_darwin_amd64.tar.gz`            |
+| Linux on x86-64        | `scope_<version>_linux_amd64.tar.gz`             |
+| Linux on ARM64         | `scope_<version>_linux_arm64.tar.gz`             |
+| Windows on x86-64      | `scope_<version>_windows_amd64.zip`              |
+| Windows on ARM64       | `scope_<version>_windows_arm64.zip`              |
+
+Compare the archive's SHA-256 digest with its entry in `checksums.txt`, extract it, and place `scope` (`scope.exe` on Windows) in a directory on your `PATH`.
+
+For example, after extracting the archive on macOS or Linux:
 
 ```sh
-go install github.com/scopedb/scopedb-cli/cmd/scope@v0.1.0-rc.1
+mkdir -p "$HOME/.local/bin"
+install -m 0755 scope "$HOME/.local/bin/scope"
+scope version
+```
+
+Ensure `$HOME/.local/bin` is on your `PATH` before running `scope`.
+
+### Install from source
+
+With Go 1.27 or newer:
+
+```sh
+go install github.com/scopedb/scopedb-cli/cmd/scope@latest
 ```
 
 ## Get started

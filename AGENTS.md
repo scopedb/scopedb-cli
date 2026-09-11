@@ -31,7 +31,7 @@ The global working agreements apply. Keep this file limited to constraints speci
 
 - Keep the README concise and user-facing. Leave private review status, naming rationale, internal architecture, and implementation notes out of it.
 - Take ScopeQL examples from ScopeDB documentation or tests instead of inventing syntax.
-- Keep each semantic prose paragraph and each list item on one source line; do not hard-wrap them.
+- Keep each Markdown prose paragraph and list item on one source line. Format Markdown tables so their columns and separators align in the source.
 
 ## Pull requests
 
