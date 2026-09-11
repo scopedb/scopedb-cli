@@ -38,19 +38,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type queryExecutor interface {
-	Execute(context.Context, auth.Access, string) (*scopedb.ResultSet, error)
-}
-
 type credentialFactory func(string, config.Paths) (credential.Store, error)
 
-// Dependencies contains process-boundary services and test seams.
+// Dependencies configures the process boundaries used by the command tree.
 type Dependencies struct {
 	In              io.Reader
 	Out             io.Writer
 	ErrOut          io.Writer
 	HTTPClient      *http.Client
-	QueryExecutor   queryExecutor
 	CredentialStore credentialFactory
 	IsInputTerminal func() bool
 	OpenURL         func(string) error
@@ -64,7 +59,7 @@ type app struct {
 	out               io.Writer
 	errOut            io.Writer
 	httpClient        *http.Client
-	query             queryExecutor
+	query             *dataplane.QueryService
 	credentialFactory credentialFactory
 	isInputTerminal   func() bool
 	openURL           func(string) error
@@ -91,9 +86,6 @@ func newApp(deps Dependencies) *app {
 	}
 	if deps.ErrOut == nil {
 		deps.ErrOut = os.Stderr
-	}
-	if deps.QueryExecutor == nil {
-		deps.QueryExecutor = &dataplane.QueryService{HTTPClient: deps.HTTPClient}
 	}
 	if deps.CredentialStore == nil {
 		deps.CredentialStore = credential.New
@@ -123,7 +115,7 @@ func newApp(deps Dependencies) *app {
 		out:               deps.Out,
 		errOut:            deps.ErrOut,
 		httpClient:        deps.HTTPClient,
-		query:             deps.QueryExecutor,
+		query:             &dataplane.QueryService{HTTPClient: deps.HTTPClient},
 		credentialFactory: deps.CredentialStore,
 		isInputTerminal:   deps.IsInputTerminal,
 		openURL:           deps.OpenURL,
