@@ -51,7 +51,7 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-`scope login` prompts for an email address and verification code, then stores the session in the operating system keyring. To select another workspace:
+`scope login` prompts for an email address and verification code, then stores the session in the operating system keyring. A pending account or an account without a workspace can stay logged in; `scope status` shows the account status and next steps. Run `scope open` to check approval status or create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
 ```sh
 scope workspace list

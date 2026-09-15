@@ -195,3 +195,19 @@ func TestLoadSessionWithoutCredentials(t *testing.T) {
 	_, _, err := manager.LoadSession(t.Context())
 	require.ErrorIs(t, err, ErrNotLoggedIn)
 }
+
+func TestLoadSessionClearsCachedWorkspaceWhenUnbound(t *testing.T) {
+	store := &memoryStore{present: true, state: credential.State{
+		SessionToken:         "session",
+		WorkspaceID:          "ws-1",
+		DataToken:            "cached-data-token",
+		DataTokenWorkspaceID: "ws-1",
+		DataTokenExpiresAt:   time.Now().Add(time.Hour),
+	}}
+	control := &fakeControl{session: controlplane.Session{User: controlplane.User{Status: "active"}}}
+	manager := Manager{ControlURL: "https://control.example.com", Control: control, Credentials: store}
+	state, _, err := manager.LoadSession(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, credential.State{SessionToken: "session"}, state)
+	require.Equal(t, state, store.state)
+}
