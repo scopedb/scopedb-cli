@@ -25,6 +25,7 @@ type statusView struct {
 	AuthMode          string `json:"auth_mode"`
 	ControlURL        string `json:"control_url,omitempty"`
 	User              string `json:"user,omitempty"`
+	UserStatus        string `json:"user_status,omitempty"`
 	WorkspaceID       string `json:"workspace_id,omitempty"`
 	WorkspaceName     string `json:"workspace_name,omitempty"`
 	Endpoint          string `json:"endpoint,omitempty"`
@@ -56,18 +57,24 @@ func (a *app) newStatusCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			details, err := runtime.control.GetWorkspace(cmd.Context(), state.SessionToken, state.WorkspaceID)
-			if err != nil {
-				return NormalizeError(err)
-			}
 			view := statusView{
-				AuthMode:          "session",
-				ControlURL:        runtime.config.ControlURL,
-				User:              session.User.Email,
-				WorkspaceID:       state.WorkspaceID,
-				WorkspaceName:     details.Workspace.Name(),
-				Endpoint:          details.Connection.APIBaseURL,
-				ProvisioningState: details.Provisioning.Status,
+				AuthMode:    "session",
+				ControlURL:  runtime.config.ControlURL,
+				User:        session.User.Email,
+				UserStatus:  session.User.Status,
+				WorkspaceID: state.WorkspaceID,
+			}
+			if state.WorkspaceID != "" {
+				details, err := runtime.control.GetWorkspace(cmd.Context(), state.SessionToken, state.WorkspaceID)
+				if err != nil {
+					return NormalizeError(err)
+				}
+				view.WorkspaceName = details.Workspace.Name()
+				view.Endpoint = details.Connection.APIBaseURL
+				view.ProvisioningState = details.Provisioning.Status
+			}
+			if err := a.writeWorkspaceSetup(session); err != nil {
+				return err
 			}
 			return renderStatus(a.out, format, view)
 		},
@@ -84,6 +91,7 @@ func renderStatus(out io.Writer, format string, view statusView) error {
 	t.AppendRows([]table.Row{
 		{"Auth mode", view.AuthMode},
 		{"User", emptyDash(view.User)},
+		{"User status", emptyDash(view.UserStatus)},
 		{"Workspace", emptyDash(view.WorkspaceName)},
 		{"Workspace ID", emptyDash(view.WorkspaceID)},
 		{"Endpoint", emptyDash(view.Endpoint)},

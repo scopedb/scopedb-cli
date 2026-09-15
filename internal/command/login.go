@@ -114,8 +114,23 @@ func (a *app) newLoginCommand() *cobra.Command {
 				}
 				return result
 			}
-			_, err = fmt.Fprintf(a.out, "Logged in as %s. Current workspace: %s\n", email, response.WorkspaceID)
-			return NormalizeError(err)
+			if response.WorkspaceID != "" {
+				_, err = fmt.Fprintf(a.out, "Logged in as %s. Current workspace: %s\n", email, response.WorkspaceID)
+				return NormalizeError(err)
+			}
+			if _, err := fmt.Fprintf(a.out, "Logged in as %s.\n", email); err != nil {
+				return NormalizeError(err)
+			}
+			session, err := runtime.control.GetSession(cmd.Context(), response.Token)
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return NormalizeError(err)
+				}
+				// The session is already saved; a failed status lookup must not undo login.
+				_, writeErr := fmt.Fprintln(a.errOut, "Could not check account status. Run 'scope status' to retry.")
+				return NormalizeError(writeErr)
+			}
+			return a.writeWorkspaceSetup(session)
 		},
 	}
 	command.Flags().StringVar(&email, "email", "", "email address")

@@ -55,7 +55,7 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, _, err := runtime.auth.LoadSession(cmd.Context())
+			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -110,7 +110,7 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, _, err := runtime.auth.LoadSession(cmd.Context())
+			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -199,7 +199,7 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, _, err := runtime.auth.LoadSession(cmd.Context())
+			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}

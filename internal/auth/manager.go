@@ -27,8 +27,11 @@ import (
 )
 
 var (
-	ErrNotLoggedIn       = errors.New("not logged in")
-	ErrInvalidMachineEnv = errors.New("invalid machine credentials")
+	ErrNotLoggedIn         = errors.New("not logged in")
+	ErrInvalidMachineEnv   = errors.New("invalid machine credentials")
+	ErrApprovalRequired    = errors.New("account is awaiting approval")
+	ErrNoWorkspaces        = errors.New("account has no workspaces")
+	ErrNoWorkspaceSelected = errors.New("no workspace is selected")
 )
 
 type controlClient interface {
@@ -96,9 +99,6 @@ func (m *Manager) LoadSession(ctx context.Context) (credential.State, controlpla
 	if err != nil {
 		return credential.State{}, controlplane.Session{}, err
 	}
-	if session.CurrentWorkspaceID == "" {
-		return credential.State{}, controlplane.Session{}, fmt.Errorf("ScopeDB session has no current workspace")
-	}
 	if state.WorkspaceID != session.CurrentWorkspaceID {
 		state.WorkspaceID = session.CurrentWorkspaceID
 		state.DataToken = ""
@@ -111,9 +111,35 @@ func (m *Manager) LoadSession(ctx context.Context) (credential.State, controlpla
 	return state, session, nil
 }
 
+// LoadWorkspaceSession requires a selected workspace in addition to a valid session.
+func (m *Manager) LoadWorkspaceSession(ctx context.Context) (credential.State, error) {
+	state, session, err := m.LoadSession(ctx)
+	if err != nil {
+		return credential.State{}, err
+	}
+	if err := RequireWorkspace(session); err != nil {
+		return credential.State{}, err
+	}
+	return state, nil
+}
+
+// RequireWorkspace reports what prevents a session from accessing a workspace.
+func RequireWorkspace(session controlplane.Session) error {
+	if session.User.Status == "pending" {
+		return ErrApprovalRequired
+	}
+	if session.CurrentWorkspaceID == "" {
+		if len(session.Workspaces) == 0 {
+			return ErrNoWorkspaces
+		}
+		return ErrNoWorkspaceSelected
+	}
+	return nil
+}
+
 // SaveLogin persists a newly issued human session and clears cached data credentials.
 func (m *Manager) SaveLogin(response controlplane.LoginResponse) error {
-	if response.Token == "" || response.WorkspaceID == "" {
+	if response.Token == "" {
 		return fmt.Errorf("login response is incomplete")
 	}
 	return m.Credentials.Save(m.ControlURL, credential.State{
@@ -146,7 +172,7 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 		return access, err
 	}
 
-	state, _, err := m.LoadSession(ctx)
+	state, err := m.LoadWorkspaceSession(ctx)
 	if err != nil {
 		return Access{}, err
 	}
@@ -155,11 +181,7 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 		return Access{}, err
 	}
 	if details.Provisioning.Status != "ready" {
-		message := fmt.Sprintf("workspace %s is %s", state.WorkspaceID, details.Provisioning.Status)
-		if details.Provisioning.Reason != nil && *details.Provisioning.Reason != "" {
-			message += ": " + *details.Provisioning.Reason
-		}
-		return Access{}, errors.New(message)
+		return Access{}, fmt.Errorf("workspace %s is %s", state.WorkspaceID, details.Provisioning.Status)
 	}
 	if details.Connection.APIBaseURL == "" {
 		return Access{}, fmt.Errorf("workspace %s has no data-plane endpoint", state.WorkspaceID)
