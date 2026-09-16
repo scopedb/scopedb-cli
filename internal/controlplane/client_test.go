@@ -32,7 +32,7 @@ func TestClientSessionRequest(t *testing.T) {
 		assert.Equal(t, "Bearer session-secret", request.Header.Get("Authorization"))
 		assert.Equal(t, "scope/test", request.Header.Get("User-Agent"))
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"user":{"email":"dev@example.com","created_at":"2026-09-09T00:00:00Z"},"workspaces":[{"id":"ws-1","display_name":"Production","role":"owner"}],"current_workspace_id":"ws-1"}`))
+		_, _ = writer.Write([]byte(`{"user":{"email":"dev@example.com","status":"active","created_at":"2026-09-09T00:00:00Z"},"workspaces":[{"id":"ws-1","display_name":"Production"}],"current_workspace_id":"ws-1"}`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -41,6 +41,7 @@ func TestClientSessionRequest(t *testing.T) {
 	session, err := client.GetSession(t.Context(), "session-secret")
 	require.NoError(t, err)
 	require.Equal(t, "dev@example.com", session.User.Email)
+	require.Equal(t, "active", session.User.Status)
 	require.Equal(t, "ws-1", session.CurrentWorkspaceID)
 	require.Len(t, session.Workspaces, 1)
 }
@@ -92,7 +93,7 @@ func TestClientEscapesWorkspacePath(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		assert.Equal(t, "/api/workspaces/a%20workspace", request.URL.EscapedPath())
 		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(`{"workspace":{"id":"a workspace","role":"owner"},"connection":{},"placement":{},"provisioning":{"status":"pending"}}`))
+		_, _ = writer.Write([]byte(`{"workspace":{"id":"a workspace"},"connection":{},"placement":{},"provisioning":{"status":"pending"}}`))
 	}))
 	t.Cleanup(server.Close)
 

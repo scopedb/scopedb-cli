@@ -4,6 +4,16 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+## v0.1.0-rc.3 (2026-09-16)
+
+### Breaking changes
+
+* Align workspace output with Platform v0.19.0: `scope workspace list` and `scope workspace show` no longer display a role or include `role` in JSON workspace objects. `scope workspace show --format json` also removes `provisioning.code`, `reason`, `retryable`, and `action`; use `provisioning.status` and `updated_at` for provisioning state.
+
+### Bug fixes
+
+* Preserve valid logins for accounts awaiting approval or without a workspace. `scope status` now includes `user_status` in JSON output, and status, workspace listing, and doctor checks guide users through approval, creation in the Console, and workspace selection without requiring another CLI login. Workspace-dependent commands report the missing setup step instead of treating the session as invalid.
+
 ## v0.1.0-rc.2 (2026-09-11)
 
 ### Bug fixes

@@ -242,6 +242,9 @@ func NormalizeError(err error) error {
 	if errors.Is(err, auth.ErrInvalidMachineEnv) {
 		return clierror.Wrap(clierror.ExitUsage, err.Error(), err)
 	}
+	if setupErr := workspaceSetupError(err); setupErr != nil {
+		return setupErr
+	}
 	var controlErr *controlplane.Error
 	if errors.As(err, &controlErr) {
 		code := clierror.ExitGeneral

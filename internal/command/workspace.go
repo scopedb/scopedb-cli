@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/spf13/cobra"
@@ -64,20 +65,22 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 				views = append(views, workspaceListItem{
 					ID:          workspace.ID,
 					DisplayName: workspace.DisplayName,
-					Role:        workspace.Role,
 					Current:     workspace.ID == session.CurrentWorkspaceID,
 				})
+			}
+			if err := a.writeWorkspaceSetup(session); err != nil {
+				return err
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, views)
 			}
-			t := newTable(a.out, "CURRENT", "NAME", "ID", "ROLE")
+			t := newTable(a.out, "CURRENT", "NAME", "ID")
 			for index, workspace := range session.Workspaces {
 				current := ""
 				if views[index].Current {
 					current = "*"
 				}
-				t.AppendRow(table.Row{current, workspace.Name(), workspace.ID, workspace.Role})
+				t.AppendRow(table.Row{current, workspace.Name(), workspace.ID})
 			}
 			t.Render()
 			return nil
@@ -90,7 +93,6 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 type workspaceListItem struct {
 	ID          string  `json:"id"`
 	DisplayName *string `json:"display_name"`
-	Role        string  `json:"role"`
 	Current     bool    `json:"current"`
 }
 
@@ -107,6 +109,9 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 			state, session, err := runtime.auth.LoadSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
+			}
+			if len(session.Workspaces) == 0 {
+				return NormalizeError(auth.RequireWorkspace(session))
 			}
 			workspace, err := resolveWorkspace(session.Workspaces, args[0])
 			if err != nil {
@@ -139,7 +144,7 @@ func (a *app) newWorkspaceShowCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, _, err := runtime.auth.LoadSession(cmd.Context())
+			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -154,13 +159,11 @@ func (a *app) newWorkspaceShowCommand() *cobra.Command {
 			t.AppendRows([]table.Row{
 				{"Name", details.Workspace.Name()},
 				{"ID", details.Workspace.ID},
-				{"Role", details.Workspace.Role},
 				{"Status", details.Provisioning.Status},
 				{"Provider", emptyDash(details.Placement.Provider)},
 				{"Region", emptyDash(details.Placement.Region)},
 				{"Endpoint", emptyDash(details.Connection.APIBaseURL)},
 				{"Auth scheme", emptyDash(details.Connection.AuthScheme)},
-				{"Reason", optionalString(details.Provisioning.Reason)},
 			})
 			t.Render()
 			return nil

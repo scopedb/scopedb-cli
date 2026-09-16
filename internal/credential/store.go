@@ -73,7 +73,7 @@ func validate(controlURL string, state State) error {
 	if state.ControlURL != controlURL {
 		return fmt.Errorf("credential origin mismatch")
 	}
-	if state.SessionToken == "" || state.WorkspaceID == "" {
+	if state.SessionToken == "" {
 		return fmt.Errorf("credential state is incomplete")
 	}
 	return nil

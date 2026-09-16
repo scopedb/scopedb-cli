@@ -17,10 +17,12 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/spf13/cobra"
@@ -99,7 +101,12 @@ func (a *app) newDoctorCommand() *cobra.Command {
 						report.OK = false
 						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: sessionErr.Error()})
 					} else {
-						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: session.User.Email + " / " + session.CurrentWorkspaceID})
+						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: session.User.Email})
+						if setupErr := workspaceSetupError(auth.RequireWorkspace(session)); setupErr != nil {
+							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "warn", Details: fmt.Sprintf("%s; %s", setupErr.Message, setupErr.Hint)})
+						} else {
+							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "pass", Details: session.CurrentWorkspaceID})
+						}
 					}
 				}
 			}

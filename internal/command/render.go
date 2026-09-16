@@ -53,13 +53,6 @@ func newTable(writer io.Writer, header ...any) table.Writer {
 	return result
 }
 
-func optionalString(value *string) string {
-	if value == nil || *value == "" {
-		return "-"
-	}
-	return *value
-}
-
 func optionalTime(value *time.Time) string {
 	if value == nil {
 		return "-"

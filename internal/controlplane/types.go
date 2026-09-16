@@ -33,13 +33,13 @@ type Session struct {
 
 type User struct {
 	Email     string `json:"email"`
+	Status    string `json:"status"`
 	CreatedAt string `json:"created_at"`
 }
 
 type Workspace struct {
 	ID          string  `json:"id"`
 	DisplayName *string `json:"display_name"`
-	Role        string  `json:"role"`
 }
 
 func (w Workspace) Name() string {
@@ -68,10 +68,6 @@ type Placement struct {
 
 type Provisioning struct {
 	Status    string     `json:"status"`
-	Code      *string    `json:"code"`
-	Reason    *string    `json:"reason"`
-	Retryable *bool      `json:"retryable"`
-	Action    *string    `json:"action"`
 	UpdatedAt *time.Time `json:"updated_at"`
 }
 
