@@ -4,14 +4,25 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+### New features
+
+* `scope login`, `logout`, `workspace use`, `api-key revoke`, `open`, and `version` now support `--format json` for machine-readable action results.
+* `scope query`, `workspace show`, and `api-key` commands accept `--workspace` to target an available workspace for one command without changing the saved selection.
+* `scope --no-prompt` and `SCOPEDB_PROMPT_DISABLED` disable interactive questions while still accepting piped login codes and explicit `api-key revoke --yes` confirmation.
+* `scope workspace list` and `api-key list` accept `--limit` to cap displayed results without changing the default of showing all items.
+
 ### Bug fixes
 
 * `scope doctor` now verifies query access for a logged-in workspace, reporting provisioning, token exchange, and query failures that previously went unchecked.
 * Query timeout errors retain the statement ID and report when server cancellation could not be confirmed, so users can check the outcome before retrying.
+* `scope login` no longer saves endpoint and credential-store settings before authentication succeeds; if the final configuration write fails, it restores the previous credentials.
 
 ### Improvements
 
 * `scope doctor` supports `--timeout` for slower connections, includes recovery hints and request IDs in failed checks, and preserves exit code 130 when interrupted.
+* `scope login` hides verification codes entered at a terminal and warns that `--code` exposes the value in process arguments.
+* `scope api-key list --format json` excludes one-time key material from its output.
+* `scope query --output` creates result files with permissions `0600` on Unix-like systems.
 
 ## v0.1.0-rc.3 (2026-09-16)
 

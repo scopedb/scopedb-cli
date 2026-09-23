@@ -36,6 +36,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/dataplane"
 	"github.com/scopedb/scopedb-cli/internal/version"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 type credentialFactory func(string, config.Paths) (credential.Store, error)
@@ -67,6 +68,7 @@ type app struct {
 	getenv            func(string) string
 	controlURLFlag    string
 	consoleURLFlag    string
+	noPromptFlag      bool
 }
 
 type runtimeContext struct {
@@ -178,6 +180,13 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	return a.newRuntime(paths, cfg)
 }
 
+func (a *app) promptsDisabled(cmd *cobra.Command) bool {
+	if cmd.Root().PersistentFlags().Changed("no-prompt") {
+		return a.noPromptFlag
+	}
+	return a.getenv("SCOPEDB_PROMPT_DISABLED") != ""
+}
+
 func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
 	if prompt != "" {
 		if _, err := fmt.Fprint(a.errOut, prompt); err != nil {
@@ -202,6 +211,33 @@ func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
 		}
 		return strings.TrimSpace(result.val), nil
 	}
+}
+
+// readVerificationCode hides input on a terminal and still accepts piped stdin.
+func (a *app) readVerificationCode(ctx context.Context) (string, error) {
+	if !a.isInputTerminal() {
+		return a.readLine(ctx, "")
+	}
+	file, ok := a.in.(*os.File)
+	if !ok || !term.IsTerminal(int(file.Fd())) {
+		return a.readLine(ctx, "Verification code: ")
+	}
+	restore, err := hideTerminalInput(int(file.Fd()))
+	if err != nil {
+		return "", fmt.Errorf("hide verification code: %w", err)
+	}
+	value, readErr := a.readLine(ctx, "Verification code: ")
+	restoreErr := restore()
+	if _, err := fmt.Fprintln(a.errOut); err != nil {
+		return "", err
+	}
+	if readErr != nil {
+		return "", readErr
+	}
+	if restoreErr != nil {
+		return "", fmt.Errorf("restore terminal echo: %w", restoreErr)
+	}
+	return value, nil
 }
 
 func openURL(target string) error {

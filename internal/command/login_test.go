@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -75,9 +76,12 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 		}
 	}))
 
-	out, diagnostics, err := runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
+	out, diagnostics, err := runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage", "--format", "json")
 	require.NoError(t, err)
-	require.Contains(t, out, "Logged in as dev@example.com.")
+	var login loginResult
+	require.NoError(t, json.Unmarshal([]byte(out), &login))
+	require.Equal(t, "dev@example.com", login.Email)
+	require.Nil(t, login.WorkspaceID)
 	require.Contains(t, diagnostics, "awaiting approval")
 	state, err := store.Load(controlURL)
 	require.NoError(t, err)
@@ -213,6 +217,63 @@ func setupLoginTest(t *testing.T, handler http.Handler) (*credential.PlaintextSt
 	paths, err := config.ResolvePaths()
 	require.NoError(t, err)
 	return credential.NewPlaintextStore(paths.CredentialsFile), server.URL
+}
+
+func TestFailedLoginDoesNotChangeConfig(t *testing.T) {
+	_, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/login":
+			_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
+		case "/api/login/verify":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"invalid code"}`))
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	paths, err := config.ResolvePaths()
+	require.NoError(t, err)
+	require.NoError(t, config.Save(paths, config.Config{
+		ControlURL:      "https://old.example.com",
+		ConsoleURL:      config.DefaultConsoleURL,
+		CredentialStore: config.CredentialStorePlaintext,
+	}))
+	before, err := os.ReadFile(paths.Config)
+	require.NoError(t, err)
+	out, _, err := runCommand(t, "--control-url", controlURL, "login", "--email", "dev@example.com", "--code", "bad-code", "--format", "json")
+	require.Error(t, err)
+	require.Empty(t, out)
+	after, err := os.ReadFile(paths.Config)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+}
+
+func TestLoginReadsVerificationCodeFromStdin(t *testing.T) {
+	_, _ = setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/login":
+			_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
+		case "/api/login/verify":
+			var request map[string]string
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+			assert.Equal(t, "123456", request["code"])
+			_, _ = w.Write([]byte(`{"token":"session-secret","workspace_id":"ws-1"}`))
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{In: strings.NewReader("123456\n"), Out: &out, ErrOut: &diagnostics})
+	root.SetArgs([]string{"login", "--email", "dev@example.com", "--insecure-storage", "--format", "json", "--no-prompt"})
+	require.NoError(t, root.ExecuteContext(t.Context()))
+	var result loginResult
+	require.NoError(t, json.Unmarshal(out.Bytes(), &result))
+	require.Equal(t, "dev@example.com", result.Email)
+	require.Equal(t, "ws-1", *result.WorkspaceID)
+	require.NotContains(t, out.String()+diagnostics.String(), "123456")
+	require.NotContains(t, out.String()+diagnostics.String(), "session-secret")
 }
 
 func runCommand(t *testing.T, args ...string) (string, string, error) {

@@ -27,6 +27,7 @@ import (
 const (
 	structuredFormatTable = "table"
 	structuredFormatJSON  = "json"
+	structuredFormatText  = "text"
 )
 
 func validateStructuredFormat(value string) error {
@@ -34,6 +35,27 @@ func validateStructuredFormat(value string) error {
 		return usageError(fmt.Sprintf("unsupported format %q; use table or json", value))
 	}
 	return nil
+}
+
+func validateTextFormat(value string) error {
+	if value != structuredFormatText && value != structuredFormatJSON {
+		return usageError(fmt.Sprintf("unsupported format %q; use text or json", value))
+	}
+	return nil
+}
+
+func validateListLimit(limit int) error {
+	if limit < 0 {
+		return usageError("--limit must not be negative")
+	}
+	return nil
+}
+
+func limitedResults[T any](values []T, limit int) []T {
+	if limit > 0 && len(values) > limit {
+		return values[:limit]
+	}
+	return values
 }
 
 func writeJSON(writer io.Writer, value any) error {

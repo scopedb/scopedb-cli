@@ -45,6 +45,7 @@ func NewRoot(deps Dependencies) *cobra.Command {
 	})
 	root.PersistentFlags().StringVar(&a.controlURLFlag, "control-url", "", "ScopeDB control-plane URL")
 	root.PersistentFlags().StringVar(&a.consoleURLFlag, "console-url", "", "ScopeDB console URL")
+	root.PersistentFlags().BoolVar(&a.noPromptFlag, "no-prompt", false, "disable interactive prompts (also set by SCOPEDB_PROMPT_DISABLED)")
 
 	root.AddCommand(
 		a.newLoginCommand(),
