@@ -68,6 +68,7 @@ type app struct {
 	getenv            func(string) string
 	controlURLFlag    string
 	consoleURLFlag    string
+	noPromptFlag      bool
 }
 
 type runtimeContext struct {
@@ -177,6 +178,13 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 		return nil, err
 	}
 	return a.newRuntime(paths, cfg)
+}
+
+func (a *app) promptsDisabled(cmd *cobra.Command) bool {
+	if cmd.Root().PersistentFlags().Changed("no-prompt") {
+		return a.noPromptFlag
+	}
+	return a.getenv("SCOPEDB_PROMPT_DISABLED") != ""
 }
 
 func (a *app) readLine(ctx context.Context, prompt string) (string, error) {

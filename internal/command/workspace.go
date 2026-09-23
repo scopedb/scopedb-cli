@@ -44,12 +44,16 @@ func (a *app) newWorkspaceCommand() *cobra.Command {
 
 func (a *app) newWorkspaceListCommand() *cobra.Command {
 	var format string
+	var limit int
 	command := &cobra.Command{
 		Use:   "list",
 		Short: "List available workspaces",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
+				return err
+			}
+			if err := validateListLimit(limit); err != nil {
 				return err
 			}
 			runtime, err := a.runtime(cmd)
@@ -60,8 +64,9 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			views := make([]workspaceListItem, 0, len(session.Workspaces))
-			for _, workspace := range session.Workspaces {
+			workspaces := limitedResults(session.Workspaces, limit)
+			views := make([]workspaceListItem, 0, len(workspaces))
+			for _, workspace := range workspaces {
 				views = append(views, workspaceListItem{
 					ID:          workspace.ID,
 					DisplayName: workspace.DisplayName,
@@ -75,7 +80,7 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 				return writeJSON(a.out, views)
 			}
 			t := newTable(a.out, "CURRENT", "NAME", "ID")
-			for index, workspace := range session.Workspaces {
+			for index, workspace := range workspaces {
 				current := ""
 				if views[index].Current {
 					current = "*"
@@ -87,6 +92,7 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
+	command.Flags().IntVarP(&limit, "limit", "L", 0, "maximum results to display (0 means all)")
 	return command
 }
 
@@ -150,19 +156,24 @@ type workspaceUseResult struct {
 
 func (a *app) newWorkspaceShowCommand() *cobra.Command {
 	var format string
+	var workspace string
 	command := &cobra.Command{
 		Use:   "show",
-		Short: "Show the current workspace",
+		Short: "Show a workspace (current by default)",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
+				return err
+			}
+			requested, err := requestedWorkspace(cmd, workspace)
+			if err != nil {
 				return err
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
+			state, err := a.loadWorkspaceSession(cmd, runtime, requested)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -188,6 +199,7 @@ func (a *app) newWorkspaceShowCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
+	command.Flags().StringVar(&workspace, "workspace", "", "show a workspace without changing the default")
 	return command
 }
 

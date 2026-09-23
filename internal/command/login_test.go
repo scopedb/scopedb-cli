@@ -266,7 +266,7 @@ func TestLoginReadsVerificationCodeFromStdin(t *testing.T) {
 	}))
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{In: strings.NewReader("123456\n"), Out: &out, ErrOut: &diagnostics})
-	root.SetArgs([]string{"login", "--email", "dev@example.com", "--insecure-storage", "--format", "json"})
+	root.SetArgs([]string{"login", "--email", "dev@example.com", "--insecure-storage", "--format", "json", "--no-prompt"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
 	var result loginResult
 	require.NoError(t, json.Unmarshal(out.Bytes(), &result))

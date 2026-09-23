@@ -38,6 +38,7 @@ func (a *app) newQueryCommand() *cobra.Command {
 	var outputPath string
 	var force bool
 	var timeout time.Duration
+	var workspace string
 	command := &cobra.Command{
 		Use:   "query [scopeql]",
 		Short: "Execute a ScopeQL statement",
@@ -54,6 +55,10 @@ func (a *app) newQueryCommand() *cobra.Command {
 			if timeout < 0 {
 				return usageError("--timeout must not be negative")
 			}
+			requested, err := requestedWorkspace(cmd, workspace)
+			if err != nil {
+				return err
+			}
 			statement, err := a.readStatement(args, statementFile)
 			if err != nil {
 				return err
@@ -62,7 +67,7 @@ func (a *app) newQueryCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			access, err := runtime.auth.ResolveDataAccess(cmd.Context())
+			access, err := a.resolveDataAccess(cmd, runtime, requested)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -98,6 +103,7 @@ func (a *app) newQueryCommand() *cobra.Command {
 	command.Flags().StringVarP(&outputPath, "output", "o", "", "write results to a file")
 	command.Flags().BoolVar(&force, "force", false, "overwrite an existing output file")
 	command.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "maximum time to wait before cancelling the statement; 0 disables the limit")
+	command.Flags().StringVar(&workspace, "workspace", "", "use a workspace for this query without changing the default")
 	return command
 }
 

@@ -44,6 +44,20 @@ func validateTextFormat(value string) error {
 	return nil
 }
 
+func validateListLimit(limit int) error {
+	if limit < 0 {
+		return usageError("--limit must not be negative")
+	}
+	return nil
+}
+
+func limitedResults[T any](values []T, limit int) []T {
+	if limit > 0 && len(values) > limit {
+		return values[:limit]
+	}
+	return values
+}
+
 func writeJSON(writer io.Writer, value any) error {
 	encoder := json.NewEncoder(writer)
 	encoder.SetEscapeHTML(false)

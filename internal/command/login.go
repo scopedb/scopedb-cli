@@ -61,6 +61,9 @@ func (a *app) newLoginCommand() *cobra.Command {
 
 			email = strings.TrimSpace(email)
 			if email == "" {
+				if a.promptsDisabled(cmd) {
+					return usageError("--email is required when prompts are disabled")
+				}
 				if !a.isInputTerminal() {
 					return usageError("--email is required when input is not interactive")
 				}
@@ -86,6 +89,9 @@ func (a *app) newLoginCommand() *cobra.Command {
 
 			code = strings.TrimSpace(code)
 			if code == "" {
+				if a.promptsDisabled(cmd) && a.isInputTerminal() {
+					return usageError("verification code is required when prompts are disabled; use --code or piped stdin")
+				}
 				code, err = a.readVerificationCode(cmd.Context())
 				if err != nil {
 					return NormalizeError(err)

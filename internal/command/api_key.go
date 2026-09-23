@@ -25,6 +25,7 @@ import (
 )
 
 func (a *app) newAPIKeyCommand() *cobra.Command {
+	var workspace string
 	command := &cobra.Command{
 		Use:   "api-key",
 		Short: "Manage workspace API keys",
@@ -33,29 +34,38 @@ func (a *app) newAPIKeyCommand() *cobra.Command {
 			return cmd.Help()
 		},
 	}
+	command.PersistentFlags().StringVar(&workspace, "workspace", "", "use a workspace for this command without changing the default")
 	command.AddCommand(
-		a.newAPIKeyListCommand(),
-		a.newAPIKeyCreateCommand(),
-		a.newAPIKeyRevokeCommand(),
+		a.newAPIKeyListCommand(&workspace),
+		a.newAPIKeyCreateCommand(&workspace),
+		a.newAPIKeyRevokeCommand(&workspace),
 	)
 	return command
 }
 
-func (a *app) newAPIKeyListCommand() *cobra.Command {
+func (a *app) newAPIKeyListCommand(workspace *string) *cobra.Command {
 	var format string
+	var limit int
 	command := &cobra.Command{
 		Use:   "list",
-		Short: "List API keys in the current workspace",
+		Short: "List API keys in a workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
+				return err
+			}
+			if err := validateListLimit(limit); err != nil {
+				return err
+			}
+			requested, err := requestedWorkspace(cmd, *workspace)
+			if err != nil {
 				return err
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
+			state, err := a.loadWorkspaceSession(cmd, runtime, requested)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -63,6 +73,7 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
+			keys = limitedResults(keys, limit)
 			if format == structuredFormatJSON {
 				items := make([]apiKeyListItem, 0, len(keys))
 				for _, key := range keys {
@@ -90,6 +101,7 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
+	command.Flags().IntVarP(&limit, "limit", "L", 0, "maximum results to display (0 means all)")
 	return command
 }
 
@@ -105,18 +117,22 @@ type apiKeyListItem struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
-func (a *app) newAPIKeyCreateCommand() *cobra.Command {
+func (a *app) newAPIKeyCreateCommand(workspace *string) *cobra.Command {
 	var tags []string
 	var expiresIn time.Duration
 	var expiresAtValue string
 	var format string
 	command := &cobra.Command{
 		Use:   "create <name>",
-		Short: "Create an API key in the current workspace",
+		Short: "Create an API key in a workspace",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if format != "value" && format != structuredFormatJSON {
 				return usageError(fmt.Sprintf("unsupported format %q; use value or json", format))
+			}
+			requested, err := requestedWorkspace(cmd, *workspace)
+			if err != nil {
+				return err
 			}
 			name := strings.TrimSpace(args[0])
 			if name == "" {
@@ -130,7 +146,7 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
+			state, err := a.loadWorkspaceSession(cmd, runtime, requested)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -191,7 +207,7 @@ func (a *app) resolveAPIKeyExpiry(cmd *cobra.Command, expiresIn time.Duration, e
 	return nil, nil
 }
 
-func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
+func (a *app) newAPIKeyRevokeCommand(workspace *string) *cobra.Command {
 	var yes bool
 	var format string
 	command := &cobra.Command{
@@ -202,15 +218,26 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			if err := validateTextFormat(format); err != nil {
 				return err
 			}
+			requested, err := requestedWorkspace(cmd, *workspace)
+			if err != nil {
+				return err
+			}
 			name := strings.TrimSpace(args[0])
 			if name == "" {
 				return usageError("API key name must not be empty")
 			}
 			if !yes {
+				if a.promptsDisabled(cmd) {
+					return usageError("--yes is required when prompts are disabled")
+				}
 				if !a.isInputTerminal() {
 					return usageError("--yes is required when input is not interactive")
 				}
-				answer, err := a.readLine(cmd.Context(), fmt.Sprintf("Revoke API key %s? [y/N] ", name))
+				prompt := fmt.Sprintf("Revoke API key %s", name)
+				if requested != "" {
+					prompt += " in workspace " + requested
+				}
+				answer, err := a.readLine(cmd.Context(), prompt+"? [y/N] ")
 				if err != nil {
 					return NormalizeError(err)
 				}
@@ -226,7 +253,7 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
+			state, err := a.loadWorkspaceSession(cmd, runtime, requested)
 			if err != nil {
 				return NormalizeError(err)
 			}
