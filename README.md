@@ -47,6 +47,7 @@ Sign in to ScopeDB Cloud and run a query:
 ```sh
 scope login
 scope status
+scope doctor
 scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
@@ -82,7 +83,9 @@ scope doctor
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-Both variables are required.
+Both variables are required and override the saved login for queries, status, and connection checks. Setting only one fails instead of falling back to your login. Unset both to return to your logged-in workspace.
+
+For SDK setup, get the endpoint with `scope workspace show` and create an application key with `scope api-key create <name>`. Use the same endpoint and key in your SDK configuration, then run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
 
 ## Development
 

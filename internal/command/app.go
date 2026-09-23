@@ -233,6 +233,14 @@ func NormalizeError(err error) error {
 	if errors.As(err, &interrupted) || errors.Is(err, context.Canceled) {
 		return clierror.Wrap(clierror.ExitInterrupted, err.Error(), err)
 	}
+	var timedOut *dataplane.TimedOutError
+	if errors.As(err, &timedOut) {
+		hint := "increase --timeout and retry"
+		if timedOut.CancelErr != nil {
+			hint = "verify the statement's outcome before retrying; it may have completed or still be running"
+		}
+		return clierror.WithHint(clierror.Wrap(clierror.ExitTemporary, timedOut.Error(), err), hint)
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitTemporary, "operation timed out", err), "increase --timeout and retry")
 	}

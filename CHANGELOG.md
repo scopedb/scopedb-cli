@@ -4,6 +4,15 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Bug fixes
+
+* `scope doctor` now verifies query access for a logged-in workspace, reporting provisioning, token exchange, and query failures that previously went unchecked.
+* Query timeout errors retain the statement ID and report when server cancellation could not be confirmed, so users can check the outcome before retrying.
+
+### Improvements
+
+* `scope doctor` supports `--timeout` for slower connections, includes recovery hints and request IDs in failed checks, and preserves exit code 130 when interrupted.
+
 ## v0.1.0-rc.3 (2026-09-16)
 
 ### Breaking changes
