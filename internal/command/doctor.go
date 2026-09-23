@@ -43,13 +43,20 @@ const doctorStatement = "SELECT 1 AS ready"
 
 func (a *app) newDoctorCommand() *cobra.Command {
 	var format string
+	var timeout time.Duration
 	command := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check local configuration and ScopeDB connectivity",
-		Args:  cobra.NoArgs,
+		Long: "Check configuration, authentication, and connectivity by running SELECT 1 AS ready.\n" +
+			"Uses SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when both are set; otherwise uses your login.\n" +
+			"Incomplete account setup is reported as a warning without running a query.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
 				return err
+			}
+			if timeout <= 0 {
+				return usageError("--timeout must be positive")
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
@@ -67,50 +74,46 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: machineErr.Error()})
 			case machine:
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "API key from environment for " + access.Endpoint})
-				queryCtx, queryCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
-				_, queryErr := a.query.Execute(queryCtx, access, doctorStatement)
-				queryCancel()
-				if queryErr != nil {
-					report.OK = false
-					report.Checks = append(report.Checks, doctorCheck{Name: "data plane", Status: "fail", Details: NormalizeError(queryErr).Error()})
-				} else {
-					report.Checks = append(report.Checks, doctorCheck{Name: "data plane", Status: "pass", Details: access.Endpoint})
-				}
+				a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 			default:
-				healthCtx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+				healthCtx, cancel := context.WithTimeout(cmd.Context(), timeout)
 				healthErr := runtime.control.Health(healthCtx)
 				cancel()
 				if healthErr != nil {
 					report.OK = false
-					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "fail", Details: healthErr.Error()})
+					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "fail", Details: doctorErrorDetails(healthErr)})
 				} else {
 					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "pass", Details: runtime.config.ControlURL})
 				}
 
 				state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
 				if errors.Is(loadErr, credential.ErrNotFound) {
-					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in"})
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope login' or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY"})
 				} else if loadErr != nil {
 					report.OK = false
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: loadErr.Error()})
 				} else {
-					sessionCtx, sessionCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+					sessionCtx, sessionCancel := context.WithTimeout(cmd.Context(), timeout)
 					session, sessionErr := runtime.control.GetSession(sessionCtx, state.SessionToken)
 					sessionCancel()
 					if sessionErr != nil {
 						report.OK = false
-						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: sessionErr.Error()})
+						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: doctorErrorDetails(sessionErr)})
 					} else {
 						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: session.User.Email})
 						if setupErr := workspaceSetupError(auth.RequireWorkspace(session)); setupErr != nil {
 							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "warn", Details: fmt.Sprintf("%s; %s", setupErr.Message, setupErr.Hint)})
 						} else {
 							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "pass", Details: session.CurrentWorkspaceID})
+							a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 						}
 					}
 				}
 			}
 
+			if err := cmd.Context().Err(); err != nil {
+				return NormalizeError(err)
+			}
 			if err := renderDoctor(a.out, format, report); err != nil {
 				return NormalizeError(err)
 			}
@@ -121,7 +124,42 @@ func (a *app) newDoctorCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
+	command.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "maximum time for each remote check, including credential resolution for the query")
 	return command
+}
+
+func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext, timeout time.Duration, report *doctorReport) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	access, err := runtime.auth.ResolveDataAccess(ctx)
+	if err == nil {
+		_, err = a.query.Execute(ctx, access, doctorStatement)
+	}
+	check := doctorCheck{Name: "data plane", Status: "pass", Details: access.Endpoint}
+	if err != nil {
+		report.OK = false
+		check.Status = "fail"
+		check.Details = doctorErrorDetails(err)
+		if clierror.ExitCode(NormalizeError(err)) == clierror.ExitAuth && access.Mode == "api_key" {
+			check.Details += "; check SCOPEDB_ENDPOINT and SCOPEDB_API_KEY belong to the same workspace and the key has not expired or been revoked"
+		}
+	}
+	report.Checks = append(report.Checks, check)
+}
+
+func doctorErrorDetails(err error) string {
+	normalized := NormalizeError(err)
+	details := normalized.Error()
+	var cliErr *clierror.Error
+	if errors.As(normalized, &cliErr) {
+		if cliErr.RequestID != "" {
+			details += "; request ID: " + cliErr.RequestID
+		}
+		if cliErr.Hint != "" {
+			details += "; " + cliErr.Hint
+		}
+	}
+	return details
 }
 
 func renderDoctor(out io.Writer, format string, report doctorReport) error {

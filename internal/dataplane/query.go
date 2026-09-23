@@ -95,7 +95,10 @@ func (s *QueryService) Execute(ctx context.Context, access auth.Access, statemen
 
 	cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, cancelErr := handle.Cancel(cancelCtx)
+	cancelResult, cancelErr := handle.Cancel(cancelCtx)
+	if cancelErr == nil && cancelResult.Status != scopedb.StatementStatusCancelled {
+		cancelErr = fmt.Errorf("statement was not cancelled: status %s", cancelResult.Status)
+	}
 	if timedOut {
 		return nil, &TimedOutError{StatementID: handle.ID().String(), CancelErr: cancelErr}
 	}
