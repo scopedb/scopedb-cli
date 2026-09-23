@@ -97,11 +97,15 @@ type workspaceListItem struct {
 }
 
 func (a *app) newWorkspaceUseCommand() *cobra.Command {
-	return &cobra.Command{
+	var format string
+	command := &cobra.Command{
 		Use:   "use <id-or-name>",
 		Short: "Select the workspace used by subsequent commands",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTextFormat(format); err != nil {
+				return err
+			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
@@ -118,16 +122,30 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 				return err
 			}
 			if workspace.ID == session.CurrentWorkspaceID {
+				if format == structuredFormatJSON {
+					return writeJSON(a.out, workspaceUseResult{ID: workspace.ID, DisplayName: workspace.DisplayName, Changed: false})
+				}
 				_, err := fmt.Fprintf(a.out, "Already using workspace %s (%s).\n", workspace.Name(), workspace.ID)
 				return NormalizeError(err)
 			}
 			if err := runtime.auth.SelectWorkspace(cmd.Context(), state, workspace.ID); err != nil {
 				return NormalizeError(err)
 			}
+			if format == structuredFormatJSON {
+				return writeJSON(a.out, workspaceUseResult{ID: workspace.ID, DisplayName: workspace.DisplayName, Changed: true})
+			}
 			_, err = fmt.Fprintf(a.out, "Now using workspace %s (%s).\n", workspace.Name(), workspace.ID)
 			return NormalizeError(err)
 		},
 	}
+	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
+	return command
+}
+
+type workspaceUseResult struct {
+	ID          string  `json:"id"`
+	DisplayName *string `json:"display_name"`
+	Changed     bool    `json:"changed"`
 }
 
 func (a *app) newWorkspaceShowCommand() *cobra.Command {

@@ -60,6 +60,8 @@ scope workspace use <id-or-name>
 scope status
 ```
 
+The verification code is hidden when entered at a terminal. For piped input, provide `--email` and send the code on stdin; passing `--code` exposes it in process arguments.
+
 ## Query output
 
 Queries can be provided inline, from a file, or through stdin. Results can be rendered as a table, JSON, JSON Lines, or CSV.
@@ -68,6 +70,21 @@ Queries can be provided inline, from a file, or through stdin. Results can be re
 scope query --file report.scopeql --format json
 scope query 'FROM system.tables LIMIT 10' --format csv --output tables.csv
 ```
+
+Files created with `scope query --output` have permissions `0600` on Unix-like systems.
+
+## JSON output
+
+Business commands support `--format json` for scripts while keeping their usual human-readable output by default. Existing query, status, workspace list/show, API key list/create, and doctor JSON results keep their current shapes; action commands return an object describing the result.
+
+```sh
+scope status --format json
+scope workspace use <id-or-name> --format json
+scope api-key revoke <name> --yes --format json
+scope open --print --format json
+```
+
+Results go to stdout; prompts, warnings, and errors go to stderr. Exit codes are unchanged. `scope doctor --format json` still prints its report and exits nonzero if checks fail. `scope version --json` remains available alongside `scope version --format json`.
 
 Run `scope --help` or `scope <command> --help` for the complete command reference. See the [ScopeDB documentation](https://docs.scopedb.io/) for ScopeQL and service documentation.
 

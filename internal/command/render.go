@@ -27,11 +27,19 @@ import (
 const (
 	structuredFormatTable = "table"
 	structuredFormatJSON  = "json"
+	structuredFormatText  = "text"
 )
 
 func validateStructuredFormat(value string) error {
 	if value != structuredFormatTable && value != structuredFormatJSON {
 		return usageError(fmt.Sprintf("unsupported format %q; use table or json", value))
+	}
+	return nil
+}
+
+func validateTextFormat(value string) error {
+	if value != structuredFormatText && value != structuredFormatJSON {
+		return usageError(fmt.Sprintf("unsupported format %q; use text or json", value))
 	}
 	return nil
 }
