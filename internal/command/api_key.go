@@ -227,7 +227,7 @@ func (a *app) newAPIKeyRevokeCommand(workspace *string) *cobra.Command {
 				return usageError("API key name must not be empty")
 			}
 			if !yes {
-				if a.promptsDisabled(cmd) {
+				if a.noInteractive {
 					return usageError("--yes is required when prompts are disabled")
 				}
 				if !a.isInputTerminal() {

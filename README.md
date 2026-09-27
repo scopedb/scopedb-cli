@@ -62,7 +62,7 @@ scope status
 
 The verification code is hidden when entered at a terminal. For piped input, provide `--email` and send the code on stdin; passing `--code` exposes it in process arguments.
 
-Use `--no-prompt` or set `SCOPEDB_PROMPT_DISABLED=1` to disable interactive questions. Piped verification codes still work; `scope login` requires `--email`, and `scope api-key revoke` requires `--yes` when prompting is disabled.
+Use `--no-interactive` or set `SCOPEDB_NO_INTERACTIVE=true` to make scripts fail on missing interactive input. Piped verification codes still work; `scope login` requires `--email`, and `scope api-key revoke` requires `--yes`. Set `SCOPEDB_NO_INTERACTIVE=false` to allow prompts; an explicit `--no-interactive` value takes precedence over the environment. Commands such as `scope query` already run without prompts.
 
 Use `--workspace <id-or-name>` with `scope query`, `scope workspace show`, or an `api-key` command to target one workspace without changing the saved selection. This option uses a login session; machine credentials already select a data-plane endpoint and cannot be combined with `scope query --workspace`.
 
@@ -90,7 +90,7 @@ scope open --print --format json
 
 Results go to stdout; prompts, warnings, and errors go to stderr. Exit codes are unchanged. `scope doctor --format json` still prints its report and exits nonzero if checks fail. `scope version --json` remains available alongside `scope version --format json`.
 
-`scope workspace list` and `scope api-key list` accept `--limit N` to show at most N items. The default and `--limit 0` show all items. This caps the displayed results after fetching them; the current control-plane responses have no pagination cursor.
+`scope workspace list` and `scope api-key list` accept `--limit N` to show at most N items. The default and `--limit 0` show all items. This limits displayed results without reducing the amount fetched.
 
 Run `scope --help` or `scope <command> --help` for the complete command reference. See the [ScopeDB documentation](https://docs.scopedb.io/) for ScopeQL and service documentation.
 

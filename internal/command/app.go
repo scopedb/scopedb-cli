@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,7 +69,7 @@ type app struct {
 	getenv            func(string) string
 	controlURLFlag    string
 	consoleURLFlag    string
-	noPromptFlag      bool
+	noInteractive     bool
 }
 
 type runtimeContext struct {
@@ -180,11 +181,21 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	return a.newRuntime(paths, cfg)
 }
 
-func (a *app) promptsDisabled(cmd *cobra.Command) bool {
-	if cmd.Root().PersistentFlags().Changed("no-prompt") {
-		return a.noPromptFlag
+func (a *app) configureInteraction(cmd *cobra.Command) error {
+	if cmd.Root().PersistentFlags().Changed("no-interactive") {
+		return nil
 	}
-	return a.getenv("SCOPEDB_PROMPT_DISABLED") != ""
+	value := a.getenv("SCOPEDB_NO_INTERACTIVE")
+	if value == "" {
+		a.noInteractive = false
+		return nil
+	}
+	disabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return usageError("SCOPEDB_NO_INTERACTIVE must be a boolean (true or false)")
+	}
+	a.noInteractive = disabled
+	return nil
 }
 
 func (a *app) readLine(ctx context.Context, prompt string) (string, error) {

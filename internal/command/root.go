@@ -31,6 +31,9 @@ func NewRoot(deps Dependencies) *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
+		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			return a.configureInteraction(cmd)
+		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
@@ -45,7 +48,7 @@ func NewRoot(deps Dependencies) *cobra.Command {
 	})
 	root.PersistentFlags().StringVar(&a.controlURLFlag, "control-url", "", "ScopeDB control-plane URL")
 	root.PersistentFlags().StringVar(&a.consoleURLFlag, "console-url", "", "ScopeDB console URL")
-	root.PersistentFlags().BoolVar(&a.noPromptFlag, "no-prompt", false, "disable interactive prompts (also set by SCOPEDB_PROMPT_DISABLED)")
+	root.PersistentFlags().BoolVar(&a.noInteractive, "no-interactive", false, "disable interactive prompts (also set by SCOPEDB_NO_INTERACTIVE=true)")
 
 	root.AddCommand(
 		a.newLoginCommand(),

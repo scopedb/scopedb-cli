@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
@@ -36,7 +37,7 @@ func TestDisabledPromptsRequireExplicitInput(t *testing.T) {
 			t.Errorf("unexpected request: %s", r.URL.Path)
 		}
 	}))
-	t.Setenv("SCOPEDB_PROMPT_DISABLED", "1")
+	t.Setenv("SCOPEDB_NO_INTERACTIVE", "true")
 	for _, args := range [][]string{
 		{"login"},
 		{"login", "--email", "dev@example.com"},
@@ -57,17 +58,49 @@ func TestDisabledPromptsRequireExplicitInput(t *testing.T) {
 	}
 }
 
-func TestExplicitPromptFlagOverridesEnvironment(t *testing.T) {
-	t.Setenv("SCOPEDB_PROMPT_DISABLED", "1")
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		In: strings.NewReader("n\n"), Out: &out, ErrOut: &diagnostics,
-		IsInputTerminal: func() bool { return true },
-	})
-	root.SetArgs([]string{"api-key", "revoke", "automation", "--no-prompt=false"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.Equal(t, "Cancelled.\n", out.String())
-	require.Contains(t, diagnostics.String(), "Revoke API key")
+func TestInteractionFlagAndEnvironmentPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		env    string
+		flag   string
+		errMsg string
+	}{
+		{name: "default"},
+		{name: "environment false", env: "false"},
+		{name: "environment zero", env: "0"},
+		{name: "environment true", env: "true", errMsg: "--yes is required when prompts are disabled"},
+		{name: "environment one", env: "1", errMsg: "--yes is required when prompts are disabled"},
+		{name: "invalid environment", env: "invalid-secret", errMsg: "SCOPEDB_NO_INTERACTIVE must be a boolean"},
+		{name: "flag enables prompts", env: "true", flag: "--no-interactive=false"},
+		{name: "flag disables prompts", env: "false", flag: "--no-interactive", errMsg: "--yes is required when prompts are disabled"},
+		{name: "flag overrides invalid environment", env: "invalid-secret", flag: "--no-interactive=false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SCOPEDB_NO_INTERACTIVE", tc.env)
+			var out, diagnostics bytes.Buffer
+			root := NewRoot(Dependencies{
+				In: strings.NewReader("n\n"), Out: &out, ErrOut: &diagnostics,
+				IsInputTerminal: func() bool { return true },
+			})
+			args := []string{"api-key", "revoke", "automation"}
+			if tc.flag != "" {
+				args = append(args, tc.flag)
+			}
+			root.SetArgs(args)
+			err := root.ExecuteContext(t.Context())
+			if tc.errMsg != "" {
+				require.ErrorContains(t, err, tc.errMsg)
+				require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+				require.NotContains(t, err.Error(), "invalid-secret")
+				require.Empty(t, out.String())
+				require.Empty(t, diagnostics.String())
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, "Cancelled.\n", out.String())
+			require.Contains(t, diagnostics.String(), "Revoke API key")
+		})
+	}
 }
 
 func TestRevokeWorkspaceOverridePromptNamesTarget(t *testing.T) {
