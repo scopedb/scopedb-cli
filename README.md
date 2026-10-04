@@ -62,7 +62,7 @@ scope status
 
 The verification code is hidden when entered at a terminal. For piped input, provide `--email` and send the code on stdin; passing `--code` exposes it in process arguments.
 
-`scope console` prints the Console URL. Choose a page with `scope console query`, and add `--open` to also open the URL in your browser.
+`scope console` prints the Console URL. Add `--open` to also open it in your browser.
 
 ## Query output
 

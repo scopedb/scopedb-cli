@@ -6,7 +6,7 @@ All significant changes to this project will be documented in this file.
 
 ### Breaking changes
 
-* `scope console` replaces `scope open` and prints the Console URL by default. Replace `scope open [page]` with `scope console [page] --open` to launch the browser, or replace `scope open [page] --print` with `scope console [page]` to print the URL. Both modes print the URL to stdout.
+* `scope console` replaces `scope open` and prints the configured Console URL by default. Use `scope console --open` to also launch the browser. The `--print` flag and page arguments are removed; navigate to individual pages in the Console.
 
 ### New features
 
