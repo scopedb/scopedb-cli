@@ -107,7 +107,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 			}
 			previous, previousErr := runtime.credentials.Load(cfg.ControlURL)
 			previousFound := previousErr == nil
-			if previousErr != nil && !errors.Is(previousErr, credential.ErrNotFound) {
+			if previousErr != nil && !errors.Is(previousErr, credential.ErrNotFound) && !errors.Is(previousErr, credential.ErrInvalidState) {
 				a.revokeIssuedSession(runtime, response.Token)
 				return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but existing credentials could not be read", previousErr)
 			}

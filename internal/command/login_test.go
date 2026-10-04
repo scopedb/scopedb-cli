@@ -16,10 +16,13 @@ package command
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -274,6 +277,107 @@ func TestLoginReadsVerificationCodeFromStdin(t *testing.T) {
 	require.Equal(t, "ws-1", *result.WorkspaceID)
 	require.NotContains(t, out.String()+diagnostics.String(), "123456")
 	require.NotContains(t, out.String()+diagnostics.String(), "session-secret")
+}
+
+func TestLoginReplacesInvalidCredentialProfile(t *testing.T) {
+	for _, invalid := range []struct {
+		name   string
+		mutate func(*credential.State)
+	}{
+		{name: "missing session", mutate: func(state *credential.State) { state.SessionToken = "" }},
+		{name: "unsupported version", mutate: func(state *credential.State) { state.Version = 99 }},
+		{name: "wrong origin", mutate: func(state *credential.State) { state.ControlURL = "https://wrong.example.com" }},
+	} {
+		t.Run(invalid.name, func(t *testing.T) {
+			store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "POST /api/login":
+					_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
+				case "POST /api/login/verify":
+					_, _ = w.Write([]byte(`{"token":"session-secret","workspace_id":"ws-1"}`))
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			const otherURL = "https://other.example.com"
+			require.NoError(t, store.Save(otherURL, credential.State{SessionToken: "other-session"}))
+			other, err := store.Load(otherURL)
+			require.NoError(t, err)
+			state := credential.State{Version: 1, ControlURL: controlURL, SessionToken: "old-session"}
+			invalid.mutate(&state)
+			data, err := json.Marshal(map[string]any{
+				"version": 1,
+				"profiles": map[string]credential.State{
+					fmt.Sprintf("%x", sha256.Sum256([]byte(controlURL))): state,
+					fmt.Sprintf("%x", sha256.Sum256([]byte(otherURL))):   other,
+				},
+			})
+			require.NoError(t, err)
+			paths, err := config.ResolvePaths()
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(paths.CredentialsFile, data, 0o600))
+			_, err = store.Load(controlURL)
+			require.Error(t, err)
+
+			_, _, err = runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
+			require.NoError(t, err)
+			recovered, err := store.Load(controlURL)
+			require.NoError(t, err)
+			require.Equal(t, "session-secret", recovered.SessionToken)
+			require.Equal(t, "ws-1", recovered.WorkspaceID)
+			preserved, err := store.Load(otherURL)
+			require.NoError(t, err)
+			require.Equal(t, other, preserved)
+		})
+	}
+}
+
+func TestLoginPreservesUnreadableCredentialFile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data string
+		mode os.FileMode
+	}{
+		{name: "invalid JSON", data: `{"version":1,"profiles":`, mode: 0o600},
+		{name: "unsupported document", data: `{"version":99,"profiles":{}}`, mode: 0o600},
+		{name: "unsafe permissions", data: `{"version":1,"profiles":{}}`, mode: 0o644},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.mode != 0o600 && runtime.GOOS == "windows" {
+				t.Skip("POSIX permission check")
+			}
+			var revoked atomic.Bool
+			_, _ = setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.Method + " " + r.URL.Path {
+				case "POST /api/login":
+					_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
+				case "POST /api/login/verify":
+					_, _ = w.Write([]byte(`{"token":"session-secret","workspace_id":"ws-1"}`))
+				case "DELETE /api/session":
+					assert.Equal(t, "Bearer session-secret", r.Header.Get("Authorization"))
+					revoked.Store(true)
+					w.WriteHeader(http.StatusNoContent)
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			paths, err := config.ResolvePaths()
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(paths.CredentialsFile, []byte(tc.data), tc.mode))
+			require.NoError(t, os.Chmod(paths.CredentialsFile, tc.mode))
+			out, _, err := runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
+			require.ErrorContains(t, err, "existing credentials could not be read")
+			require.Empty(t, out)
+			require.True(t, revoked.Load())
+			preserved, err := os.ReadFile(paths.CredentialsFile)
+			require.NoError(t, err)
+			require.Equal(t, tc.data, string(preserved))
+			_, err = os.Stat(paths.Config)
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+	}
 }
 
 func runCommand(t *testing.T, args ...string) (string, string, error) {
