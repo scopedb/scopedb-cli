@@ -62,8 +62,6 @@ scope status
 
 The verification code is hidden when entered at a terminal. For piped input, provide `--email` and send the code on stdin; passing `--code` exposes it in process arguments.
 
-Use `--no-interactive` or set `SCOPEDB_NO_INTERACTIVE=true` to make scripts fail on missing interactive input. Piped verification codes still work; `scope login` requires `--email`, and `scope api-key revoke` requires `--yes`. Set `SCOPEDB_NO_INTERACTIVE=false` to allow prompts; an explicit `--no-interactive` value takes precedence over the environment. Commands such as `scope query` already run without prompts.
-
 ## Query output
 
 Queries can be provided inline, from a file, or through stdin. Results can be rendered as a table, JSON, JSON Lines, or CSV.

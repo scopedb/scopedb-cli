@@ -213,9 +213,6 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 				return usageError("API key name must not be empty")
 			}
 			if !yes {
-				if a.noInteractive {
-					return usageError("--yes is required when prompts are disabled")
-				}
 				if !a.isInputTerminal() {
 					return usageError("--yes is required when input is not interactive")
 				}
