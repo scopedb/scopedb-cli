@@ -21,12 +21,12 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func (a *app) newOpenCommand() *cobra.Command {
-	var printOnly bool
+func (a *app) newConsoleCommand() *cobra.Command {
+	var openBrowser bool
 	var format string
 	command := &cobra.Command{
-		Use:       "open [home|query|data|keys|connect]",
-		Short:     "Open the ScopeDB console",
+		Use:       "console [home|query|data|keys|connect]",
+		Short:     "Print the ScopeDB console URL, optionally opening it in a browser",
 		Args:      cobra.MaximumNArgs(1),
 		ValidArgs: []string{"home", "query", "data", "keys", "connect"},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,29 +47,24 @@ func (a *app) newOpenCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			target := strings.TrimRight(cfg.ConsoleURL, "/") + "/" + page
-			if printOnly {
-				if format == structuredFormatJSON {
-					return writeJSON(a.out, openResult{Page: page, URL: target, Opened: false})
+			if openBrowser {
+				if err := a.openURL(target); err != nil {
+					return NormalizeError(err)
 				}
-				_, err := fmt.Fprintln(a.out, target)
-				return NormalizeError(err)
-			}
-			if err := a.openURL(target); err != nil {
-				return NormalizeError(err)
 			}
 			if format == structuredFormatJSON {
-				return writeJSON(a.out, openResult{Page: page, URL: target, Opened: true})
+				return writeJSON(a.out, consoleResult{Page: page, URL: target, Opened: openBrowser})
 			}
-			_, err = fmt.Fprintf(a.out, "Opened %s.\n", target)
+			_, err = fmt.Fprintln(a.out, target)
 			return NormalizeError(err)
 		},
 	}
-	command.Flags().BoolVar(&printOnly, "print", false, "print the URL without opening a browser")
+	command.Flags().BoolVar(&openBrowser, "open", false, "open the URL in the default browser")
 	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
 	return command
 }
 
-type openResult struct {
+type consoleResult struct {
 	Page   string `json:"page"`
 	URL    string `json:"url"`
 	Opened bool   `json:"opened"`

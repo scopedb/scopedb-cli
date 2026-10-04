@@ -52,7 +52,7 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-`scope login` prompts for an email address and verification code, then stores the session in the operating system keyring. A pending account or an account without a workspace can stay logged in; `scope status` shows the account status and next steps. Run `scope open` to check approval status or create your first workspace in the Console. Once a workspace is available, select it without logging in again:
+`scope login` prompts for an email address and verification code, then stores the session in the operating system keyring. A pending account or an account without a workspace can stay logged in; `scope status` shows the account status and next steps. Run `scope console --open` to check approval status or create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
 ```sh
 scope workspace list
@@ -61,6 +61,8 @@ scope status
 ```
 
 The verification code is hidden when entered at a terminal. For piped input, provide `--email` and send the code on stdin; passing `--code` exposes it in process arguments.
+
+`scope console` prints the Console URL. Choose a page with `scope console query`, and add `--open` to also open the URL in your browser.
 
 ## Query output
 
@@ -81,7 +83,7 @@ Business commands support `--format json` for scripts while keeping their usual 
 scope status --format json
 scope workspace use <id-or-name> --format json
 scope api-key revoke <name> --yes --format json
-scope open --print --format json
+scope console --format json
 ```
 
 Results go to stdout; prompts, warnings, and errors go to stderr. Exit codes are unchanged. `scope doctor --format json` still prints its report and exits nonzero if checks fail. `scope version --json` remains available alongside `scope version --format json`.

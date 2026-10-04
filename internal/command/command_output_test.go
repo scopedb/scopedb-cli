@@ -99,31 +99,36 @@ func TestRevokeJSONCancellation(t *testing.T) {
 	require.Contains(t, diagnostics.String(), "Revoke API key")
 }
 
-func TestOpenJSONReportsBrowserAction(t *testing.T) {
+func TestConsoleOutput(t *testing.T) {
 	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 	t.Setenv("SCOPEDB_CONSOLE_URL", "https://console.example.com")
-	for _, printOnly := range []bool{false, true} {
-		var out, diagnostics bytes.Buffer
-		var opened string
-		root := NewRoot(Dependencies{Out: &out, ErrOut: &diagnostics, OpenURL: func(url string) error {
-			opened = url
-			return nil
-		}})
-		args := []string{"open", "query", "--format", "json"}
-		want := `{"page":"query","url":"https://console.example.com/query","opened":true}`
-		if printOnly {
-			args = append(args, "--print")
-			want = `{"page":"query","url":"https://console.example.com/query","opened":false}`
-		}
-		root.SetArgs(args)
-		require.NoError(t, root.ExecuteContext(t.Context()))
-		require.JSONEq(t, want, out.String())
-		require.Empty(t, diagnostics.String())
-		if printOnly {
-			require.Empty(t, opened)
-		} else {
-			require.Equal(t, "https://console.example.com/query", opened)
-		}
+	for _, tc := range []struct {
+		args   string
+		output string
+		opened string
+	}{
+		{"console", "https://console.example.com/home\n", ""},
+		{"console query --open", "https://console.example.com/query\n", "https://console.example.com/query"},
+		{"console query --format json", `{"page":"query","url":"https://console.example.com/query","opened":false}`, ""},
+		{"console query --open --format json", `{"page":"query","url":"https://console.example.com/query","opened":true}`, "https://console.example.com/query"},
+	} {
+		t.Run(tc.args, func(t *testing.T) {
+			var out, diagnostics bytes.Buffer
+			var opened string
+			root := NewRoot(Dependencies{Out: &out, ErrOut: &diagnostics, OpenURL: func(url string) error {
+				opened = url
+				return nil
+			}})
+			root.SetArgs(strings.Fields(tc.args))
+			require.NoError(t, root.ExecuteContext(t.Context()))
+			if strings.Contains(tc.args, "--format json") {
+				require.JSONEq(t, tc.output, out.String())
+			} else {
+				require.Equal(t, tc.output, out.String())
+			}
+			require.Empty(t, diagnostics.String())
+			require.Equal(t, tc.opened, opened)
+		})
 	}
 }
 

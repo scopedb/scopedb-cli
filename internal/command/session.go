@@ -26,9 +26,9 @@ import (
 func workspaceSetupError(err error) *clierror.Error {
 	switch {
 	case errors.Is(err, auth.ErrApprovalRequired):
-		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, fmt.Sprint(err), err), "run 'scope open' to check approval status in the Console")
+		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, fmt.Sprint(err), err), "run 'scope console --open' to check approval status in the Console")
 	case errors.Is(err, auth.ErrNoWorkspaces):
-		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "run 'scope open' to create your first workspace, then 'scope workspace list' and 'scope workspace use <id-or-name>'")
+		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "run 'scope console --open' to create your first workspace, then 'scope workspace list' and 'scope workspace use <id-or-name>'")
 	case errors.Is(err, auth.ErrNoWorkspaceSelected):
 		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "run 'scope workspace list' and 'scope workspace use <id-or-name>'")
 	default:

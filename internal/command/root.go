@@ -54,7 +54,7 @@ func NewRoot(deps Dependencies) *cobra.Command {
 		a.newQueryCommand(),
 		a.newAPIKeyCommand(),
 		a.newDoctorCommand(),
-		a.newOpenCommand(),
+		a.newConsoleCommand(),
 		newVersionCommand(a.out),
 		newCompletionCommand(root),
 	)
