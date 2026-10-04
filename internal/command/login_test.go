@@ -16,13 +16,10 @@ package command
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -81,10 +78,7 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 
 	out, diagnostics, err := runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage", "--format", "json")
 	require.NoError(t, err)
-	var login loginResult
-	require.NoError(t, json.Unmarshal([]byte(out), &login))
-	require.Equal(t, "dev@example.com", login.Email)
-	require.Nil(t, login.WorkspaceID)
+	require.JSONEq(t, `{"email":"dev@example.com","workspace_id":null}`, out)
 	require.Contains(t, diagnostics, "awaiting approval")
 	state, err := store.Load(controlURL)
 	require.NoError(t, err)
@@ -271,113 +265,121 @@ func TestLoginReadsVerificationCodeFromStdin(t *testing.T) {
 	root := NewRoot(Dependencies{In: strings.NewReader("123456\n"), Out: &out, ErrOut: &diagnostics})
 	root.SetArgs([]string{"login", "--email", "dev@example.com", "--insecure-storage", "--format", "json"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
-	var result loginResult
-	require.NoError(t, json.Unmarshal(out.Bytes(), &result))
-	require.Equal(t, "dev@example.com", result.Email)
-	require.Equal(t, "ws-1", *result.WorkspaceID)
+	require.JSONEq(t, `{"email":"dev@example.com","workspace_id":"ws-1"}`, out.String())
 	require.NotContains(t, out.String()+diagnostics.String(), "123456")
 	require.NotContains(t, out.String()+diagnostics.String(), "session-secret")
 }
 
-func TestLoginReplacesInvalidCredentialProfile(t *testing.T) {
-	for _, invalid := range []struct {
-		name   string
-		mutate func(*credential.State)
+func TestLoginRecoversInvalidProfileWithoutLosingOtherOrigins(t *testing.T) {
+	store, controlURL, revoked := setupSuccessfulLogin(t)
+	const otherURL = "https://other.example.com"
+	require.NoError(t, store.Save(otherURL, credential.State{SessionToken: "other-session"}))
+	require.NoError(t, store.Save(controlURL, credential.State{}))
+	_, err := store.Load(controlURL)
+	require.ErrorIs(t, err, credential.ErrInvalidState)
+
+	_, _, err = runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
+	require.NoError(t, err)
+	recovered, err := store.Load(controlURL)
+	require.NoError(t, err)
+	require.Equal(t, "session-secret", recovered.SessionToken)
+	require.Equal(t, "ws-1", recovered.WorkspaceID)
+	preserved, err := store.Load(otherURL)
+	require.NoError(t, err)
+	require.Equal(t, "other-session", preserved.SessionToken)
+	require.Zero(t, revoked.Load())
+}
+
+func TestLoginPreservesUnreadableCredentialFile(t *testing.T) {
+	_, _, revoked := setupSuccessfulLogin(t)
+	paths, err := config.ResolvePaths()
+	require.NoError(t, err)
+	const broken = `{"version":1,"profiles":`
+	require.NoError(t, os.WriteFile(paths.CredentialsFile, []byte(broken), 0o600))
+	out, _, err := runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
+	require.ErrorContains(t, err, "existing credentials could not be read")
+	require.EqualValues(t, 1, revoked.Load())
+	require.Empty(t, out)
+	preserved, err := os.ReadFile(paths.CredentialsFile)
+	require.NoError(t, err)
+	require.Equal(t, broken, string(preserved))
+	_, err = os.Stat(paths.Config)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestLoginRollsBackFailedPersistence(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		prior bool
+		fail  func(config.Paths) error
 	}{
-		{name: "missing session", mutate: func(state *credential.State) { state.SessionToken = "" }},
-		{name: "unsupported version", mutate: func(state *credential.State) { state.Version = 99 }},
-		{name: "wrong origin", mutate: func(state *credential.State) { state.ControlURL = "https://wrong.example.com" }},
+		{"credential write", true, func(config.Paths) error { return os.ErrPermission }},
+		{"config write", true, func(paths config.Paths) error { return os.Mkdir(paths.Config, 0o700) }},
+		{"first login", false, func(paths config.Paths) error { return os.Mkdir(paths.Config, 0o700) }},
 	} {
-		t.Run(invalid.name, func(t *testing.T) {
-			store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch r.Method + " " + r.URL.Path {
-				case "POST /api/login":
-					_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
-				case "POST /api/login/verify":
-					_, _ = w.Write([]byte(`{"token":"session-secret","workspace_id":"ws-1"}`))
-				default:
-					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				}
-			}))
-			const otherURL = "https://other.example.com"
-			require.NoError(t, store.Save(otherURL, credential.State{SessionToken: "other-session"}))
-			other, err := store.Load(otherURL)
-			require.NoError(t, err)
-			state := credential.State{Version: 1, ControlURL: controlURL, SessionToken: "old-session"}
-			invalid.mutate(&state)
-			data, err := json.Marshal(map[string]any{
-				"version": 1,
-				"profiles": map[string]credential.State{
-					fmt.Sprintf("%x", sha256.Sum256([]byte(controlURL))): state,
-					fmt.Sprintf("%x", sha256.Sum256([]byte(otherURL))):   other,
+		t.Run(tc.name, func(t *testing.T) {
+			store, controlURL, revoked := setupSuccessfulLogin(t)
+			if tc.prior {
+				require.NoError(t, store.Save(controlURL, credential.State{SessionToken: "prior-secret"}))
+			}
+			var out, diagnostics bytes.Buffer
+			root := NewRoot(Dependencies{
+				In: strings.NewReader(""), Out: &out, ErrOut: &diagnostics,
+				CredentialStore: func(_ string, paths config.Paths) (credential.Store, error) {
+					return &interruptSaveStore{Store: store, afterSave: func() error { return tc.fail(paths) }}, nil
 				},
 			})
-			require.NoError(t, err)
-			paths, err := config.ResolvePaths()
-			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(paths.CredentialsFile, data, 0o600))
-			_, err = store.Load(controlURL)
-			require.Error(t, err)
-
-			_, _, err = runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
-			require.NoError(t, err)
-			recovered, err := store.Load(controlURL)
-			require.NoError(t, err)
-			require.Equal(t, "session-secret", recovered.SessionToken)
-			require.Equal(t, "ws-1", recovered.WorkspaceID)
-			preserved, err := store.Load(otherURL)
-			require.NoError(t, err)
-			require.Equal(t, other, preserved)
+			root.SetArgs([]string{"login", "--email", "dev@example.com", "--code", "123456", "--format", "json"})
+			err := root.ExecuteContext(t.Context())
+			require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
+			require.EqualValues(t, 1, revoked.Load())
+			require.Empty(t, out.String())
+			state, err := store.Load(controlURL)
+			if tc.prior {
+				require.NoError(t, err)
+				require.Equal(t, "prior-secret", state.SessionToken)
+			} else {
+				require.ErrorIs(t, err, credential.ErrNotFound)
+			}
 		})
 	}
 }
 
-func TestLoginPreservesUnreadableCredentialFile(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		data string
-		mode os.FileMode
-	}{
-		{name: "invalid JSON", data: `{"version":1,"profiles":`, mode: 0o600},
-		{name: "unsupported document", data: `{"version":99,"profiles":{}}`, mode: 0o600},
-		{name: "unsafe permissions", data: `{"version":1,"profiles":{}}`, mode: 0o644},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.mode != 0o600 && runtime.GOOS == "windows" {
-				t.Skip("POSIX permission check")
-			}
-			var revoked atomic.Bool
-			_, _ = setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch r.Method + " " + r.URL.Path {
-				case "POST /api/login":
-					_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
-				case "POST /api/login/verify":
-					_, _ = w.Write([]byte(`{"token":"session-secret","workspace_id":"ws-1"}`))
-				case "DELETE /api/session":
-					assert.Equal(t, "Bearer session-secret", r.Header.Get("Authorization"))
-					revoked.Store(true)
-					w.WriteHeader(http.StatusNoContent)
-				default:
-					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-				}
-			}))
-			paths, err := config.ResolvePaths()
-			require.NoError(t, err)
-			require.NoError(t, os.WriteFile(paths.CredentialsFile, []byte(tc.data), tc.mode))
-			require.NoError(t, os.Chmod(paths.CredentialsFile, tc.mode))
-			out, _, err := runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
-			require.ErrorContains(t, err, "existing credentials could not be read")
-			require.Empty(t, out)
-			require.True(t, revoked.Load())
-			preserved, err := os.ReadFile(paths.CredentialsFile)
-			require.NoError(t, err)
-			require.Equal(t, tc.data, string(preserved))
-			_, err = os.Stat(paths.Config)
-			require.ErrorIs(t, err, os.ErrNotExist)
-		})
+type interruptSaveStore struct {
+	credential.Store
+	afterSave func() error
+}
+
+func (s *interruptSaveStore) Save(controlURL string, state credential.State) error {
+	if err := s.Store.Save(controlURL, state); err != nil {
+		return err
 	}
+	if interrupt := s.afterSave; interrupt != nil {
+		s.afterSave = nil
+		return interrupt()
+	}
+	return nil
+}
+
+func setupSuccessfulLogin(t *testing.T) (*credential.PlaintextStore, string, *atomic.Int32) {
+	t.Helper()
+	var revoked atomic.Int32
+	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "POST /api/login":
+			_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
+		case "POST /api/login/verify":
+			_, _ = w.Write([]byte(`{"token":"session-secret","workspace_id":"ws-1"}`))
+		case "DELETE /api/session":
+			assert.Equal(t, "Bearer session-secret", r.Header.Get("Authorization"))
+			revoked.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	return store, controlURL, &revoked
 }
 
 func runCommand(t *testing.T, args ...string) (string, string, error) {

@@ -31,7 +31,7 @@ func TestListLimitsCapRenderedItems(t *testing.T) {
 		case "GET /api/session":
 			_, _ = w.Write([]byte(`{"user":{"email":"dev@example.com","status":"active"},"workspaces":[{"id":"ws-1"},{"id":"ws-2"},{"id":"ws-3"}],"current_workspace_id":"ws-1"}`))
 		case "GET /api/workspaces/ws-1/api-keys":
-			_, _ = w.Write([]byte(`[{"name":"first"},{"name":"second"},{"name":"third"}]`))
+			_, _ = w.Write([]byte(`[{"name":"first","key":"returned-key-secret"},{"name":"second"},{"name":"third"}]`))
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -49,6 +49,7 @@ func TestListLimitsCapRenderedItems(t *testing.T) {
 	} {
 		out, _, err := runCommand(t, args...)
 		require.NoError(t, err)
+		require.NotContains(t, out, "returned-key-secret")
 		var items []map[string]any
 		require.NoError(t, json.Unmarshal([]byte(out), &items))
 		require.Len(t, items, 2)

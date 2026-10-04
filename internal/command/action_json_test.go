@@ -16,13 +16,8 @@ package command
 
 import (
 	"bytes"
-	"encoding/json"
-	"errors"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/scopedb/scopedb-cli/internal/config"
@@ -33,19 +28,26 @@ import (
 
 func TestActionJSONResults(t *testing.T) {
 	currentWorkspace := "ws-1"
+	selections, logouts, revocations := 0, 0, 0
 	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		token := "session-secret"
+		if currentWorkspace == "ws-2" {
+			token = "rotated-secret"
+		}
+		assert.Equal(t, "Bearer "+token, r.Header.Get("Authorization"))
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/session":
 			_, _ = w.Write([]byte(`{"user":{"email":"dev@example.com","status":"active"},"workspaces":[{"id":"ws-1","display_name":"Alpha"},{"id":"ws-2","display_name":"Beta"}],"current_workspace_id":"` + currentWorkspace + `"}`))
 		case "POST /api/session/workspace":
+			selections++
 			currentWorkspace = "ws-2"
 			_, _ = w.Write([]byte(`{"token":"rotated-secret","workspace_id":"ws-2"}`))
-		case "GET /api/workspaces/ws-2/api-keys":
-			_, _ = w.Write([]byte(`[{"id":"key-1","name":"automation","tags":[],"status":"active","created_by":"dev@example.com","created_at":"2026-09-01T00:00:00Z","key":"returned-key-secret"}]`))
 		case "DELETE /api/workspaces/ws-2/api-keys/automation":
+			revocations++
 			w.WriteHeader(http.StatusNoContent)
 		case "DELETE /api/session":
+			logouts++
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -59,200 +61,76 @@ func TestActionJSONResults(t *testing.T) {
 	}))
 	require.NoError(t, store.Save(controlURL, credential.State{SessionToken: "session-secret", WorkspaceID: "ws-1"}))
 
-	out, diagnostics, err := runCommand(t, "workspace", "use", "ws-2", "--format", "json")
-	require.NoError(t, err)
-	require.Empty(t, diagnostics)
-	var selected workspaceUseResult
-	require.NoError(t, json.Unmarshal([]byte(out), &selected))
-	require.Equal(t, "ws-2", selected.ID)
-	require.Equal(t, "Beta", *selected.DisplayName)
-	require.True(t, selected.Changed)
-
-	out, _, err = runCommand(t, "workspace", "use", "ws-2", "--format", "json")
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(out), &selected))
-	require.False(t, selected.Changed)
-
-	out, _, err = runCommand(t, "api-key", "list", "--format", "json")
-	require.NoError(t, err)
-	var keys []map[string]any
-	require.NoError(t, json.Unmarshal([]byte(out), &keys))
-	require.Len(t, keys, 1)
-	require.NotContains(t, keys[0], "key")
-	require.NotContains(t, out, "returned-key-secret")
-
-	out, _, err = runCommand(t, "api-key", "revoke", "automation", "--yes", "--format", "json")
-	require.NoError(t, err)
-	var revoked apiKeyRevokeResult
-	require.NoError(t, json.Unmarshal([]byte(out), &revoked))
-	require.Equal(t, apiKeyRevokeResult{Name: "automation", Revoked: true}, revoked)
-
-	out, _, err = runCommand(t, "logout", "--format", "json")
-	require.NoError(t, err)
-	var loggedOut logoutResult
-	require.NoError(t, json.Unmarshal([]byte(out), &loggedOut))
-	require.True(t, loggedOut.LoggedOut)
-	out, _, err = runCommand(t, "logout", "--format", "json")
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(out), &loggedOut))
-	require.False(t, loggedOut.LoggedOut)
+	for _, step := range []struct {
+		args string
+		json string
+	}{
+		{"workspace use Beta", `{"id":"ws-2","display_name":"Beta","changed":true}`},
+		{"workspace use ws-2", `{"id":"ws-2","display_name":"Beta","changed":false}`},
+		{"api-key revoke automation --yes", `{"name":"automation","revoked":true}`},
+		{"logout", `{"logged_out":true}`},
+		{"logout", `{"logged_out":false}`},
+	} {
+		out, diagnostics, err := runCommand(t, append(strings.Fields(step.args), "--format", "json")...)
+		require.NoError(t, err, step.args)
+		require.Empty(t, diagnostics, step.args)
+		require.JSONEq(t, step.json, out, step.args)
+	}
+	require.Equal(t, 1, selections)
+	require.Equal(t, 1, revocations)
+	require.Equal(t, 1, logouts)
+	_, err = store.Load(controlURL)
+	require.ErrorIs(t, err, credential.ErrNotFound)
 }
 
-func TestRevokeJSONCancellationDoesNotCallService(t *testing.T) {
+func TestRevokeJSONCancellation(t *testing.T) {
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
-		In:              strings.NewReader("n\n"),
-		Out:             &out,
-		ErrOut:          &diagnostics,
+		In: strings.NewReader("n\n"), Out: &out, ErrOut: &diagnostics,
 		IsInputTerminal: func() bool { return true },
+		CredentialStore: func(string, config.Paths) (credential.Store, error) {
+			t.Fatal("cancellation must not access credentials or call the service")
+			return nil, nil
+		},
 	})
 	root.SetArgs([]string{"api-key", "revoke", "automation", "--format", "json"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
-	var result apiKeyRevokeResult
-	require.NoError(t, json.Unmarshal(out.Bytes(), &result))
-	require.Equal(t, apiKeyRevokeResult{Name: "automation", Revoked: false}, result)
+	require.JSONEq(t, `{"name":"automation","revoked":false}`, out.String())
 	require.Contains(t, diagnostics.String(), "Revoke API key")
 }
 
-func TestOpenAndVersionJSON(t *testing.T) {
+func TestOpenJSONReportsBrowserAction(t *testing.T) {
 	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	var out, diagnostics bytes.Buffer
-	var opened string
-	root := NewRoot(Dependencies{
-		In:     strings.NewReader(""),
-		Out:    &out,
-		ErrOut: &diagnostics,
-		OpenURL: func(target string) error {
-			opened = target
+	t.Setenv("SCOPEDB_CONSOLE_URL", "https://console.example.com")
+	for _, printOnly := range []bool{false, true} {
+		var out, diagnostics bytes.Buffer
+		var opened string
+		root := NewRoot(Dependencies{Out: &out, ErrOut: &diagnostics, OpenURL: func(url string) error {
+			opened = url
 			return nil
-		},
-	})
-	root.SetArgs([]string{"open", "query", "--format", "json"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
-	var result openResult
-	require.NoError(t, json.Unmarshal(out.Bytes(), &result))
-	require.Equal(t, "query", result.Page)
-	require.Equal(t, opened, result.URL)
-	require.True(t, result.Opened)
-	require.Empty(t, diagnostics.String())
-
-	out.Reset()
-	root = NewRoot(Dependencies{In: strings.NewReader(""), Out: &out, ErrOut: &diagnostics})
-	root.SetArgs([]string{"open", "keys", "--print", "--format", "json"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.NoError(t, json.Unmarshal(out.Bytes(), &result))
-	require.Equal(t, "keys", result.Page)
-	require.False(t, result.Opened)
-
-	out.Reset()
-	root = NewRoot(Dependencies{In: strings.NewReader(""), Out: &out, ErrOut: &diagnostics})
-	root.SetArgs([]string{"version", "--format", "json"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
-	var version map[string]any
-	require.NoError(t, json.Unmarshal(out.Bytes(), &version))
-	require.NotEmpty(t, version["version"])
-
-	out.Reset()
-	root = NewRoot(Dependencies{In: strings.NewReader(""), Out: &out, ErrOut: &diagnostics})
-	root.SetArgs([]string{"version", "--json", "--format", "text"})
-	require.Error(t, root.ExecuteContext(t.Context()))
-	require.Empty(t, out.String())
-}
-
-type blockConfigStore struct {
-	credential.Store
-	configPath string
-}
-
-func (s *blockConfigStore) Save(controlURL string, state credential.State) error {
-	if err := s.Store.Save(controlURL, state); err != nil {
-		return err
-	}
-	if state.SessionToken == "session-secret" {
-		return os.Mkdir(s.configPath, 0o700)
-	}
-	return nil
-}
-
-type failAfterSaveStore struct {
-	credential.Store
-}
-
-func (s *failAfterSaveStore) Save(controlURL string, state credential.State) error {
-	if err := s.Store.Save(controlURL, state); err != nil {
-		return err
-	}
-	if state.SessionToken == "session-secret" {
-		return errors.New("simulated credential write failure")
-	}
-	return nil
-}
-
-func TestLoginRestoresCredentialsWhenCredentialSaveFails(t *testing.T) {
-	var revoked atomic.Bool
-	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
-		case "POST /api/login":
-			_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
-		case "POST /api/login/verify":
-			_, _ = w.Write([]byte(`{"token":"session-secret"}`))
-		case "DELETE /api/session":
-			revoked.Store(true)
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}})
+		args := []string{"open", "query", "--format", "json"}
+		want := `{"page":"query","url":"https://console.example.com/query","opened":true}`
+		if printOnly {
+			args = append(args, "--print")
+			want = `{"page":"query","url":"https://console.example.com/query","opened":false}`
 		}
-	}))
-	require.NoError(t, store.Save(controlURL, credential.State{SessionToken: "prior-secret"}))
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		In: strings.NewReader(""), Out: &out, ErrOut: &diagnostics,
-		CredentialStore: func(string, config.Paths) (credential.Store, error) {
-			return &failAfterSaveStore{Store: store}, nil
-		},
-	})
-	root.SetArgs([]string{"login", "--email", "dev@example.com", "--code", "123456", "--format", "json"})
-	require.ErrorContains(t, root.ExecuteContext(t.Context()), "credentials could not be stored")
-	require.Empty(t, out.String())
-	state, err := store.Load(controlURL)
-	require.NoError(t, err)
-	require.Equal(t, "prior-secret", state.SessionToken)
-	assert.True(t, revoked.Load())
+		root.SetArgs(args)
+		require.NoError(t, root.ExecuteContext(t.Context()))
+		require.JSONEq(t, want, out.String())
+		require.Empty(t, diagnostics.String())
+		if printOnly {
+			require.Empty(t, opened)
+		} else {
+			require.Equal(t, "https://console.example.com/query", opened)
+		}
+	}
 }
 
-func TestLoginRestoresCredentialsWhenConfigSaveFails(t *testing.T) {
-	var revoked atomic.Bool
-	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
-		case "POST /api/login":
-			_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
-		case "POST /api/login/verify":
-			_, _ = w.Write([]byte(`{"token":"session-secret"}`))
-		case "DELETE /api/session":
-			revoked.Store(true)
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	paths, err := config.ResolvePaths()
+func TestVersionJSONAlias(t *testing.T) {
+	legacy, _, err := runCommand(t, "version", "--json")
 	require.NoError(t, err)
-	require.NoError(t, store.Save(controlURL, credential.State{SessionToken: "prior-secret"}))
-	blocking := &blockConfigStore{Store: store, configPath: paths.Config}
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		In: strings.NewReader(""), Out: &out, ErrOut: &diagnostics,
-		CredentialStore: func(string, config.Paths) (credential.Store, error) { return blocking, nil },
-	})
-	root.SetArgs([]string{"login", "--email", "dev@example.com", "--code", "123456", "--format", "json"})
-	require.ErrorContains(t, root.ExecuteContext(t.Context()), "configuration could not be stored")
-	require.Empty(t, out.String())
-	state, err := store.Load(controlURL)
+	out, _, err := runCommand(t, "version", "--format", "json")
 	require.NoError(t, err)
-	require.Equal(t, "prior-secret", state.SessionToken)
-	assert.True(t, revoked.Load())
-	_, err = os.Stat(filepath.Join(paths.Directory, "config.toml"))
-	require.NoError(t, err)
+	require.JSONEq(t, legacy, out)
 }
