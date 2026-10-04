@@ -26,7 +26,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestActionJSONResults(t *testing.T) {
+func TestCommandJSONOutput(t *testing.T) {
 	currentWorkspace := "ws-1"
 	selections, logouts, revocations := 0, 0, 0
 	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
