@@ -103,18 +103,6 @@ func TestInteractionFlagAndEnvironmentPrecedence(t *testing.T) {
 	}
 }
 
-func TestRevokeWorkspaceOverridePromptNamesTarget(t *testing.T) {
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		In: strings.NewReader("n\n"), Out: &out, ErrOut: &diagnostics,
-		IsInputTerminal: func() bool { return true },
-	})
-	root.SetArgs([]string{"api-key", "revoke", "automation", "--workspace", "Beta"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.Equal(t, "Cancelled.\n", out.String())
-	require.Contains(t, diagnostics.String(), "Revoke API key automation in workspace Beta?")
-}
-
 func TestListLimitsCapRenderedItems(t *testing.T) {
 	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

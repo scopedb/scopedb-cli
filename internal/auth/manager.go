@@ -176,19 +176,6 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	if err != nil {
 		return Access{}, err
 	}
-	return m.resolveDataAccess(ctx, state, true)
-}
-
-// ResolveDataAccessForWorkspace exchanges a token for a one-command workspace
-// override without changing the saved session or data-token cache.
-func (m *Manager) ResolveDataAccessForWorkspace(ctx context.Context, state credential.State) (Access, error) {
-	if state.SessionToken == "" || state.WorkspaceID == "" {
-		return Access{}, fmt.Errorf("workspace session is incomplete")
-	}
-	return m.resolveDataAccess(ctx, state, false)
-}
-
-func (m *Manager) resolveDataAccess(ctx context.Context, state credential.State, saveToken bool) (Access, error) {
 	details, err := m.Control.GetWorkspace(ctx, state.SessionToken, state.WorkspaceID)
 	if err != nil {
 		return Access{}, err
@@ -219,10 +206,8 @@ func (m *Manager) resolveDataAccess(ctx context.Context, state credential.State,
 	state.DataToken = exchanged.AccessToken
 	state.DataTokenWorkspaceID = state.WorkspaceID
 	state.DataTokenExpiresAt = exchanged.ExpiresAt.UTC()
-	if saveToken {
-		if err := m.Credentials.Save(m.ControlURL, state); err != nil {
-			return Access{}, fmt.Errorf("save short-lived data credential: %w", err)
-		}
+	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
+		return Access{}, fmt.Errorf("save short-lived data credential: %w", err)
 	}
 	return Access{
 		Endpoint:    details.Connection.APIBaseURL,

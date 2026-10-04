@@ -64,8 +64,6 @@ The verification code is hidden when entered at a terminal. For piped input, pro
 
 Use `--no-interactive` or set `SCOPEDB_NO_INTERACTIVE=true` to make scripts fail on missing interactive input. Piped verification codes still work; `scope login` requires `--email`, and `scope api-key revoke` requires `--yes`. Set `SCOPEDB_NO_INTERACTIVE=false` to allow prompts; an explicit `--no-interactive` value takes precedence over the environment. Commands such as `scope query` already run without prompts.
 
-Use `--workspace <id-or-name>` with `scope query`, `scope workspace show`, or an `api-key` command to target one workspace without changing the saved selection. This option uses a login session; machine credentials already select a data-plane endpoint and cannot be combined with `scope query --workspace`.
-
 ## Query output
 
 Queries can be provided inline, from a file, or through stdin. Results can be rendered as a table, JSON, JSON Lines, or CSV.

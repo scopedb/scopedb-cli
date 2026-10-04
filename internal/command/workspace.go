@@ -156,24 +156,19 @@ type workspaceUseResult struct {
 
 func (a *app) newWorkspaceShowCommand() *cobra.Command {
 	var format string
-	var workspace string
 	command := &cobra.Command{
 		Use:   "show",
-		Short: "Show a workspace (current by default)",
+		Short: "Show the current workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
-				return err
-			}
-			requested, err := requestedWorkspace(cmd, workspace)
-			if err != nil {
 				return err
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, err := a.loadWorkspaceSession(cmd, runtime, requested)
+			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -199,7 +194,6 @@ func (a *app) newWorkspaceShowCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
-	command.Flags().StringVar(&workspace, "workspace", "", "show a workspace without changing the default")
 	return command
 }
 

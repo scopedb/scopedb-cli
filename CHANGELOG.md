@@ -7,7 +7,6 @@ All significant changes to this project will be documented in this file.
 ### New features
 
 * `scope login`, `logout`, `workspace use`, `api-key revoke`, `open`, and `version` now support `--format json` for machine-readable action results.
-* `scope query`, `workspace show`, and `api-key` commands accept `--workspace` to target an available workspace for one command without changing the saved selection.
 * `scope --no-interactive` and `SCOPEDB_NO_INTERACTIVE=true` make commands fail on missing interactive input while still accepting piped login codes and explicit `api-key revoke --yes` confirmation.
 * `scope workspace list` and `api-key list` accept `--limit` to cap displayed results without changing the default of showing all items.
 
