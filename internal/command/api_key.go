@@ -43,12 +43,16 @@ func (a *app) newAPIKeyCommand() *cobra.Command {
 
 func (a *app) newAPIKeyListCommand() *cobra.Command {
 	var format string
+	var limit int
 	command := &cobra.Command{
 		Use:   "list",
 		Short: "List API keys in the current workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
+				return err
+			}
+			if err := validateListLimit(limit); err != nil {
 				return err
 			}
 			runtime, err := a.runtime(cmd)
@@ -63,8 +67,17 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
+			keys = limitedResults(keys, limit)
 			if format == structuredFormatJSON {
-				return writeJSON(a.out, keys)
+				items := make([]apiKeyListItem, 0, len(keys))
+				for _, key := range keys {
+					items = append(items, apiKeyListItem{
+						ID: key.ID, Name: key.Name, Tags: key.Tags, Status: key.Status,
+						CreatedBy: key.CreatedBy, CreatedAt: key.CreatedAt,
+						RevokedAt: key.RevokedAt, ExpiresAt: key.ExpiresAt,
+					})
+				}
+				return writeJSON(a.out, items)
 			}
 			t := newTable(a.out, "NAME", "ID", "STATUS", "TAGS", "CREATED", "EXPIRES")
 			for _, key := range keys {
@@ -82,7 +95,20 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
+	command.Flags().IntVarP(&limit, "limit", "L", 0, "maximum results to display (0 means all)")
 	return command
+}
+
+// apiKeyListItem intentionally excludes the one-time secret returned by create.
+type apiKeyListItem struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Tags      []string   `json:"tags"`
+	Status    string     `json:"status"`
+	CreatedBy string     `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
 func (a *app) newAPIKeyCreateCommand() *cobra.Command {
@@ -173,11 +199,15 @@ func (a *app) resolveAPIKeyExpiry(cmd *cobra.Command, expiresIn time.Duration, e
 
 func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 	var yes bool
+	var format string
 	command := &cobra.Command{
 		Use:   "revoke <name>",
 		Short: "Revoke an API key",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTextFormat(format); err != nil {
+				return err
+			}
 			name := strings.TrimSpace(args[0])
 			if name == "" {
 				return usageError("API key name must not be empty")
@@ -191,6 +221,9 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 					return NormalizeError(err)
 				}
 				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
+					if format == structuredFormatJSON {
+						return writeJSON(a.out, apiKeyRevokeResult{Name: name, Revoked: false})
+					}
 					_, err := fmt.Fprintln(a.out, "Cancelled.")
 					return NormalizeError(err)
 				}
@@ -206,10 +239,19 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			if err := runtime.control.RevokeAPIKey(cmd.Context(), state.SessionToken, state.WorkspaceID, name); err != nil {
 				return NormalizeError(err)
 			}
+			if format == structuredFormatJSON {
+				return writeJSON(a.out, apiKeyRevokeResult{Name: name, Revoked: true})
+			}
 			_, err = fmt.Fprintf(a.out, "Revoked API key %s.\n", name)
 			return NormalizeError(err)
 		},
 	}
 	command.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation")
+	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
 	return command
+}
+
+type apiKeyRevokeResult struct {
+	Name    string `json:"name"`
+	Revoked bool   `json:"revoked"`
 }

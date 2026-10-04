@@ -28,6 +28,10 @@ const currentStateVersion = 1
 
 var ErrNotFound = errors.New("credentials not found")
 
+// ErrInvalidState identifies an unusable profile that Save can replace. It does
+// not cover storage access failures or unreadable multi-profile documents.
+var ErrInvalidState = errors.New("stored credential state is invalid")
+
 // State contains secrets and their workspace binding. It must never be written
 // to the regular TOML configuration file.
 type State struct {
@@ -68,13 +72,13 @@ func prepare(controlURL string, state State) State {
 
 func validate(controlURL string, state State) error {
 	if state.Version != currentStateVersion {
-		return fmt.Errorf("unsupported credential state version %d", state.Version)
+		return fmt.Errorf("%w: unsupported version %d", ErrInvalidState, state.Version)
 	}
 	if state.ControlURL != controlURL {
-		return fmt.Errorf("credential origin mismatch")
+		return fmt.Errorf("%w: credential origin mismatch", ErrInvalidState)
 	}
 	if state.SessionToken == "" {
-		return fmt.Errorf("credential state is incomplete")
+		return fmt.Errorf("%w: session token is missing", ErrInvalidState)
 	}
 	return nil
 }

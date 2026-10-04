@@ -39,7 +39,7 @@ func (s *KeyringStore) Load(controlURL string) (State, error) {
 	}
 	var state State
 	if err := json.Unmarshal([]byte(encoded), &state); err != nil {
-		return State{}, fmt.Errorf("decode credentials from OS keyring: %w", err)
+		return State{}, fmt.Errorf("%w: cannot decode credentials from OS keyring", ErrInvalidState)
 	}
 	if err := validate(controlURL, state); err != nil {
 		return State{}, err

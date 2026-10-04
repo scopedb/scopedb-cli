@@ -33,22 +33,21 @@ func (a *app) newLoginCommand() *cobra.Command {
 	var email string
 	var code string
 	var insecureStorage bool
+	var format string
 	command := &cobra.Command{
 		Use:   "login",
 		Short: "Log in with an email verification code",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateTextFormat(format); err != nil {
+				return err
+			}
 			paths, cfg, err := a.loadConfig(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
 			if insecureStorage {
 				cfg.CredentialStore = config.CredentialStorePlaintext
-			}
-			// Login establishes the active control-plane profile, so persist the
-			// resolved non-secret endpoints together with the storage choice.
-			if err := config.Save(paths, cfg); err != nil {
-				return NormalizeError(err)
 			}
 			if cfg.CredentialStore == config.CredentialStorePlaintext {
 				if _, err := fmt.Fprintln(a.errOut, "Warning: credentials will be stored unencrypted in a permission-restricted file."); err != nil {
@@ -87,11 +86,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 
 			code = strings.TrimSpace(code)
 			if code == "" {
-				prompt := ""
-				if a.isInputTerminal() {
-					prompt = "Verification code: "
-				}
-				code, err = a.readLine(cmd.Context(), prompt)
+				code, err = a.readVerificationCode(cmd.Context())
 				if err != nil {
 					return NormalizeError(err)
 				}
@@ -104,47 +99,109 @@ func (a *app) newLoginCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			if err := runtime.auth.SaveLogin(response); err != nil {
-				revokeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				_ = runtime.control.DeleteSession(revokeCtx, response.Token)
-				result := clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", err)
-				if cfg.CredentialStore == config.CredentialStoreKeyring {
-					result.Hint = "fix OS keyring access or rerun with 'scope login --insecure-storage'"
+			if err := runtime.persistLogin(response); err != nil {
+				return err
+			}
+			if response.WorkspaceID == "" {
+				session, sessionErr := runtime.control.GetSession(cmd.Context(), response.Token)
+				if sessionErr != nil {
+					if errors.Is(sessionErr, context.Canceled) {
+						return NormalizeError(sessionErr)
+					}
+					// The session is already saved; a failed status lookup must not undo login.
+					if _, err := fmt.Fprintln(a.errOut, "Could not check account status. Run 'scope status' to retry."); err != nil {
+						return NormalizeError(err)
+					}
+				} else if err := a.writeWorkspaceSetup(session); err != nil {
+					return err
 				}
-				return result
+			}
+			if format == structuredFormatJSON {
+				result := loginResult{Email: email}
+				if response.WorkspaceID != "" {
+					result.WorkspaceID = &response.WorkspaceID
+				}
+				return writeJSON(a.out, result)
 			}
 			if response.WorkspaceID != "" {
 				_, err = fmt.Fprintf(a.out, "Logged in as %s. Current workspace: %s\n", email, response.WorkspaceID)
-				return NormalizeError(err)
+			} else {
+				_, err = fmt.Fprintf(a.out, "Logged in as %s.\n", email)
 			}
-			if _, err := fmt.Fprintf(a.out, "Logged in as %s.\n", email); err != nil {
-				return NormalizeError(err)
-			}
-			session, err := runtime.control.GetSession(cmd.Context(), response.Token)
-			if err != nil {
-				if errors.Is(err, context.Canceled) {
-					return NormalizeError(err)
-				}
-				// The session is already saved; a failed status lookup must not undo login.
-				_, writeErr := fmt.Fprintln(a.errOut, "Could not check account status. Run 'scope status' to retry.")
-				return NormalizeError(writeErr)
-			}
-			return a.writeWorkspaceSetup(session)
+			return NormalizeError(err)
 		},
 	}
 	command.Flags().StringVar(&email, "email", "", "email address")
-	command.Flags().StringVar(&code, "code", "", "verification code (for non-interactive input)")
+	command.Flags().StringVar(&code, "code", "", "verification code (visible in process arguments; prefer stdin)")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
+	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
 	return command
 }
 
+type loginResult struct {
+	Email       string  `json:"email"`
+	WorkspaceID *string `json:"workspace_id"`
+}
+
+func (r *runtimeContext) persistLogin(response controlplane.LoginResponse) error {
+	previous, previousErr := r.credentials.Load(r.config.ControlURL)
+	previousFound := previousErr == nil
+	if previousErr != nil && !errors.Is(previousErr, credential.ErrNotFound) && !errors.Is(previousErr, credential.ErrInvalidState) {
+		r.revokeIssuedSession(response.Token)
+		return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but existing credentials could not be read", previousErr)
+	}
+
+	var result *clierror.Error
+	if err := r.auth.SaveLogin(response); err != nil {
+		result = clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", err)
+		if r.config.CredentialStore == config.CredentialStoreKeyring {
+			result.Hint = "fix OS keyring access or rerun with 'scope login --insecure-storage'"
+		}
+	} else if err := config.Save(r.paths, r.config); err != nil {
+		result = clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "login succeeded, but configuration could not be stored", err), "check config directory access and retry")
+	} else {
+		return nil
+	}
+
+	rollbackErr := restoreCredentials(r.credentials, r.config.ControlURL, previous, previousFound)
+	r.revokeIssuedSession(response.Token)
+	if rollbackErr != nil {
+		result.Message += " and previous credentials could not be restored"
+		result.Err = errors.Join(result.Err, rollbackErr)
+		result.Hint = "check config and credential store access before retrying"
+	}
+	return result
+}
+
+func restoreCredentials(store credential.Store, controlURL string, previous credential.State, found bool) error {
+	if found {
+		return store.Save(controlURL, previous)
+	}
+	if err := store.Delete(controlURL); err != nil && !errors.Is(err, credential.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
+func (r *runtimeContext) revokeIssuedSession(token string) {
+	if token == "" {
+		return
+	}
+	revokeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = r.control.DeleteSession(revokeCtx, token)
+}
+
 func (a *app) newLogoutCommand() *cobra.Command {
-	return &cobra.Command{
+	var format string
+	command := &cobra.Command{
 		Use:   "logout",
 		Short: "Revoke the current session and remove local credentials",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateTextFormat(format); err != nil {
+				return err
+			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return NormalizeError(err)
@@ -157,6 +214,9 @@ func (a *app) newLogoutCommand() *cobra.Command {
 
 			state, err := runtime.credentials.Load(runtime.config.ControlURL)
 			if errors.Is(err, credential.ErrNotFound) {
+				if format == structuredFormatJSON {
+					return writeJSON(a.out, logoutResult{LoggedOut: false})
+				}
 				_, err := fmt.Fprintln(a.out, "Not logged in.")
 				return NormalizeError(err)
 			}
@@ -176,10 +236,19 @@ func (a *app) newLogoutCommand() *cobra.Command {
 				}
 				return result
 			}
+			if format == structuredFormatJSON {
+				return writeJSON(a.out, logoutResult{LoggedOut: true})
+			}
 			_, err = fmt.Fprintln(a.out, "Logged out.")
 			return NormalizeError(err)
 		},
 	}
+	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
+	return command
+}
+
+type logoutResult struct {
+	LoggedOut bool `json:"logged_out"`
 }
 
 func isMissingRemoteSession(err error) bool {

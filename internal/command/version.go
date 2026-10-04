@@ -15,7 +15,6 @@
 package command
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 
@@ -25,21 +24,27 @@ import (
 
 func newVersionCommand(out io.Writer) *cobra.Command {
 	var asJSON bool
+	var format string
 	command := &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
 		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateTextFormat(format); err != nil {
+				return err
+			}
+			if asJSON && cmd.Flags().Changed("format") && format != structuredFormatJSON {
+				return usageError("--json and --format specify different formats")
+			}
 			info := version.Current()
-			if asJSON {
-				encoder := json.NewEncoder(out)
-				encoder.SetIndent("", "  ")
-				return encoder.Encode(info)
+			if asJSON || format == structuredFormatJSON {
+				return writeJSON(out, info)
 			}
 			_, err := fmt.Fprintf(out, "scope %s (commit %s, built %s)\n", info.Version, info.Commit, info.Date)
 			return err
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "print machine-readable JSON")
+	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
 	return command
 }

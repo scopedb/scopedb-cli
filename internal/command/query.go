@@ -178,7 +178,7 @@ func writeResultFile(path string, force bool, render func(io.Writer) error) erro
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := temporary.Chmod(0o644); err != nil {
+	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
 		return fmt.Errorf("set output file permissions: %w", err)
 	}
