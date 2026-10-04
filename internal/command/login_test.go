@@ -94,7 +94,7 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 		hint       string
 		exitCode   int
 	}{
-		{"pending", "pending", nil, "awaiting approval", "scope open", clierror.ExitAuth},
+		{"pending", "pending", nil, "awaiting approval", "scope console --open", clierror.ExitAuth},
 		{"approved", "active", nil, "no workspaces", "create your first workspace", clierror.ExitUsage},
 		{"created", "active", []controlplane.Workspace{{ID: "ws-1", DisplayName: new("Analytics")}}, "no workspace is selected", "scope workspace use", clierror.ExitUsage},
 	} {

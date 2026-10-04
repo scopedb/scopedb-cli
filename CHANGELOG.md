@@ -4,9 +4,13 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Breaking changes
+
+* `scope console` replaces `scope open` and prints the Console URL by default. Replace `scope open [page]` with `scope console [page] --open` to launch the browser, or replace `scope open [page] --print` with `scope console [page]` to print the URL. Both modes print the URL to stdout.
+
 ### New features
 
-* `scope login`, `logout`, `workspace use`, `api-key revoke`, `open`, and `version` now support `--format json` for machine-readable action results.
+* `scope login`, `logout`, `workspace use`, `api-key revoke`, `console`, and `version` now support `--format json` for machine-readable action results.
 * `scope workspace list` and `api-key list` accept `--limit` to cap displayed results without changing the default of showing all items.
 
 ### Bug fixes
