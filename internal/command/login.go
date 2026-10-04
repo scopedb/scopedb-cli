@@ -105,32 +105,8 @@ func (a *app) newLoginCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			previous, previousErr := runtime.credentials.Load(cfg.ControlURL)
-			previousFound := previousErr == nil
-			if previousErr != nil && !errors.Is(previousErr, credential.ErrNotFound) && !errors.Is(previousErr, credential.ErrInvalidState) {
-				a.revokeIssuedSession(runtime, response.Token)
-				return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but existing credentials could not be read", previousErr)
-			}
-			if err := runtime.auth.SaveLogin(response); err != nil {
-				rollbackErr := restoreCredentials(runtime.credentials, cfg.ControlURL, previous, previousFound)
-				a.revokeIssuedSession(runtime, response.Token)
-				if rollbackErr != nil {
-					return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored or restored", errors.Join(err, rollbackErr)), "check credential store access before retrying")
-				}
-				result := clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", err)
-				if cfg.CredentialStore == config.CredentialStoreKeyring {
-					result.Hint = "fix OS keyring access or rerun with 'scope login --insecure-storage'"
-				}
-				return result
-			}
-			// Commit the selected endpoint and storage only after authentication.
-			if err := config.Save(paths, cfg); err != nil {
-				rollbackErr := restoreCredentials(runtime.credentials, cfg.ControlURL, previous, previousFound)
-				a.revokeIssuedSession(runtime, response.Token)
-				if rollbackErr != nil {
-					return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "login succeeded, but configuration could not be stored and previous credentials could not be restored", errors.Join(err, rollbackErr)), "check config and credential store access before retrying")
-				}
-				return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "login succeeded, but configuration could not be stored", err), "check config directory access and retry")
+			if err := runtime.persistLogin(response); err != nil {
+				return err
 			}
 			if response.WorkspaceID == "" {
 				session, sessionErr := runtime.control.GetSession(cmd.Context(), response.Token)
@@ -173,6 +149,36 @@ type loginResult struct {
 	WorkspaceID *string `json:"workspace_id"`
 }
 
+func (r *runtimeContext) persistLogin(response controlplane.LoginResponse) error {
+	previous, previousErr := r.credentials.Load(r.config.ControlURL)
+	previousFound := previousErr == nil
+	if previousErr != nil && !errors.Is(previousErr, credential.ErrNotFound) && !errors.Is(previousErr, credential.ErrInvalidState) {
+		r.revokeIssuedSession(response.Token)
+		return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but existing credentials could not be read", previousErr)
+	}
+
+	var result *clierror.Error
+	if err := r.auth.SaveLogin(response); err != nil {
+		result = clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", err)
+		if r.config.CredentialStore == config.CredentialStoreKeyring {
+			result.Hint = "fix OS keyring access or rerun with 'scope login --insecure-storage'"
+		}
+	} else if err := config.Save(r.paths, r.config); err != nil {
+		result = clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "login succeeded, but configuration could not be stored", err), "check config directory access and retry")
+	} else {
+		return nil
+	}
+
+	rollbackErr := restoreCredentials(r.credentials, r.config.ControlURL, previous, previousFound)
+	r.revokeIssuedSession(response.Token)
+	if rollbackErr != nil {
+		result.Message += " and previous credentials could not be restored"
+		result.Err = errors.Join(result.Err, rollbackErr)
+		result.Hint = "check config and credential store access before retrying"
+	}
+	return result
+}
+
 func restoreCredentials(store credential.Store, controlURL string, previous credential.State, found bool) error {
 	if found {
 		return store.Save(controlURL, previous)
@@ -183,13 +189,13 @@ func restoreCredentials(store credential.Store, controlURL string, previous cred
 	return nil
 }
 
-func (a *app) revokeIssuedSession(runtime *runtimeContext, token string) {
+func (r *runtimeContext) revokeIssuedSession(token string) {
 	if token == "" {
 		return
 	}
 	revokeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = runtime.control.DeleteSession(revokeCtx, token)
+	_ = r.control.DeleteSession(revokeCtx, token)
 }
 
 func (a *app) newLogoutCommand() *cobra.Command {
