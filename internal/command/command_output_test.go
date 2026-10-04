@@ -107,10 +107,10 @@ func TestConsoleOutput(t *testing.T) {
 		output string
 		opened string
 	}{
-		{"console", "https://console.example.com\n", ""},
-		{"console --open", "https://console.example.com\n", "https://console.example.com"},
-		{"console --format json", `{"url":"https://console.example.com","opened":false}`, ""},
-		{"console --open --format json", `{"url":"https://console.example.com","opened":true}`, "https://console.example.com"},
+		{"console", "https://console.example.com/home\n", ""},
+		{"console query --open", "https://console.example.com/query\n", "https://console.example.com/query"},
+		{"console query --format json", `{"page":"query","url":"https://console.example.com/query","opened":false}`, ""},
+		{"console query --open --format json", `{"page":"query","url":"https://console.example.com/query","opened":true}`, "https://console.example.com/query"},
 	} {
 		t.Run(tc.args, func(t *testing.T) {
 			var out, diagnostics bytes.Buffer

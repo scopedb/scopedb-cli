@@ -16,6 +16,7 @@ package command
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -24,26 +25,42 @@ func (a *app) newConsoleCommand() *cobra.Command {
 	var openBrowser bool
 	var format string
 	command := &cobra.Command{
-		Use:   "console",
-		Short: "Print the ScopeDB console URL, optionally opening it in a browser",
-		Args:  cobra.NoArgs,
+		Use:   "console [home|query|data|keys|connect]",
+		Short: "Print a ScopeDB console page URL, optionally opening it in a browser",
+		Long: `Print a URL for a ScopeDB console page. The default page is home.
+Add --open to also open the page in your browser.`,
+		Example: `  scope console
+  scope console query
+  scope console keys --open`,
+		Args:      cobra.MaximumNArgs(1),
+		ValidArgs: []string{"home", "query", "data", "keys", "connect"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTextFormat(format); err != nil {
 				return err
+			}
+			page := "home"
+			if len(args) == 1 {
+				page = args[0]
+			}
+			switch page {
+			case "home", "query", "data", "keys", "connect":
+			default:
+				return usageError(fmt.Sprintf("unsupported console page %q", page))
 			}
 			_, cfg, err := a.loadConfig(cmd)
 			if err != nil {
 				return NormalizeError(err)
 			}
+			target := strings.TrimRight(cfg.ConsoleURL, "/") + "/" + page
 			if openBrowser {
-				if err := a.openURL(cfg.ConsoleURL); err != nil {
+				if err := a.openURL(target); err != nil {
 					return NormalizeError(err)
 				}
 			}
 			if format == structuredFormatJSON {
-				return writeJSON(a.out, consoleResult{URL: cfg.ConsoleURL, Opened: openBrowser})
+				return writeJSON(a.out, consoleResult{Page: page, URL: target, Opened: openBrowser})
 			}
-			_, err = fmt.Fprintln(a.out, cfg.ConsoleURL)
+			_, err = fmt.Fprintln(a.out, target)
 			return NormalizeError(err)
 		},
 	}
@@ -53,6 +70,7 @@ func (a *app) newConsoleCommand() *cobra.Command {
 }
 
 type consoleResult struct {
+	Page   string `json:"page"`
 	URL    string `json:"url"`
 	Opened bool   `json:"opened"`
 }
