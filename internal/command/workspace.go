@@ -74,8 +74,12 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 					Current:     workspace.ID == session.CurrentWorkspaceID,
 				})
 			}
-			if err := a.writeWorkspaceSetup(session); err != nil {
-				return err
+			// Choosing a workspace is what this command enables, so a missing
+			// selection needs no notice; only an empty account cannot be listed.
+			if len(session.Workspaces) == 0 {
+				if err := a.writeWorkspaceSetup(session); err != nil {
+					return err
+				}
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, views)

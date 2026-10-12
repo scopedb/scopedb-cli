@@ -24,6 +24,43 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestListWithoutSelectedWorkspaceShowsEveryWorkspace(t *testing.T) {
+	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/session":
+			_, _ = w.Write([]byte(`{"user":{"email":"dev@example.com","status":"active"},"workspaces":[{"id":"ws-1","display_name":"Alpha"},{"id":"ws-2","display_name":"Beta"}],"current_workspace_id":""}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	paths, err := config.ResolvePaths()
+	require.NoError(t, err)
+	require.NoError(t, config.Save(paths, config.Config{
+		ControlURL: controlURL, ConsoleURL: config.DefaultConsoleURL, CredentialStore: config.CredentialStorePlaintext,
+	}))
+	require.NoError(t, store.Save(controlURL, credential.State{SessionToken: "session-secret"}))
+
+	out, diagnostics, err := runCommand(t, "workspace", "list", "--format", "json")
+	require.NoError(t, err)
+	require.Empty(t, diagnostics)
+	var items []workspaceListItem
+	require.NoError(t, json.Unmarshal([]byte(out), &items))
+	require.Equal(t, []workspaceListItem{
+		{ID: "ws-1", DisplayName: new("Alpha")},
+		{ID: "ws-2", DisplayName: new("Beta")},
+	}, items)
+
+	out, diagnostics, err = runCommand(t, "workspace", "list")
+	require.NoError(t, err)
+	require.Empty(t, diagnostics)
+	for _, workspace := range items {
+		require.Contains(t, out, workspace.ID)
+		require.Contains(t, out, *workspace.DisplayName)
+	}
+}
+
 func TestListLimitsCapRenderedItems(t *testing.T) {
 	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
