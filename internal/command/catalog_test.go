@@ -371,7 +371,7 @@ func TestCatalogBrowse(t *testing.T) {
 			require.True(t, ok, r.URL.Path)
 			body, err := json.Marshal(response)
 			require.NoError(t, err)
-			return &http.Response{StatusCode: 200, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
+			return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
 		})}})
 		root.SetArgs(append([]string{"catalog"}, args...))
 		require.NoError(t, root.ExecuteContext(t.Context()))

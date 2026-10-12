@@ -25,8 +25,8 @@ import (
 	"runtime"
 	"strings"
 
+	scopedb "github.com/scopedb/goscopedb"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
-	"github.com/scopedb/scopedb-cli/internal/dataplane"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -39,7 +39,7 @@ type catalogPlan struct {
 	Resource       catalogResource `json:"resource"`
 	Definition     json.RawMessage `json:"definition"`
 	ETag           string          `json:"etag"`
-	dataplane.CatalogChange
+	scopedb.CatalogResult
 }
 
 func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogResource, options catalogOptions) error {
@@ -99,7 +99,18 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 		// Machine credentials carry no workspace ID, so pin the credential without storing it.
 		credentialHash = fmt.Sprintf("%x", sha256.Sum256([]byte(access.APIKey)))
 	}
-	service := dataplane.CatalogService{HTTPClient: a.httpClient}
+	client, err := scopedb.NewClient(scopedb.Config{Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient})
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	catalog := client.Catalog(segments...)
+	mutate := func(ctx context.Context, controls scopedb.CatalogOptions) (scopedb.CatalogResult, error) {
+		if method == http.MethodDelete {
+			return catalog.Delete(ctx, controls)
+		}
+		return catalog.Apply(ctx, plan.Definition, controls)
+	}
 	if options.plan != "" {
 		if plan.Endpoint != endpoint || plan.WorkspaceID != access.WorkspaceID || plan.CredentialHash != credentialHash {
 			return usageError("plan targets a different connection, workspace, or machine credential; select its connection or generate a new plan")
@@ -109,9 +120,8 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 		}
 		ctx, cancel := options.requestContext(cmd.Context())
 		defer cancel()
-		result, _, err := service.Mutate(ctx, access, dataplane.CatalogRequest{
-			Method: method, Resource: segments, Definition: plan.Definition,
-			AllowDestructive: options.allowDestructive, ETag: plan.ETag,
+		result, err := mutate(ctx, scopedb.CatalogOptions{
+			AllowDestructive: options.allowDestructive, IfMatch: plan.ETag,
 		})
 		if err != nil {
 			return err
@@ -119,17 +129,15 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 		return writeCatalog(a.out, result, options.format)
 	}
 	ctx, cancel := options.requestContext(cmd.Context())
-	change, etag, err := service.Mutate(ctx, access, dataplane.CatalogRequest{
-		Method: method, Resource: segments, Definition: plan.Definition, DryRun: true,
-	})
+	change, err := mutate(ctx, scopedb.CatalogOptions{DryRun: true})
 	cancel()
 	if err != nil {
 		return err
 	}
 	plan.Version, plan.Endpoint, plan.WorkspaceID = 1, endpoint, access.WorkspaceID
 	plan.CredentialHash = credentialHash
-	plan.ETag, plan.CatalogChange = etag, change
-	diff, err := catalogDiff(plan.Resource, plan.CatalogChange)
+	plan.ETag, plan.CatalogResult = change.ETag, change
+	diff, err := catalogDiff(plan.Resource, plan.CatalogResult)
 	if err != nil {
 		return err
 	}
@@ -159,9 +167,8 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 	}
 	ctx, cancel = options.requestContext(cmd.Context())
 	defer cancel()
-	result, _, err := service.Mutate(ctx, access, dataplane.CatalogRequest{
-		Method: method, Resource: segments, Definition: plan.Definition,
-		AllowDestructive: options.allowDestructive, ETag: plan.ETag,
+	result, err := mutate(ctx, scopedb.CatalogOptions{
+		AllowDestructive: options.allowDestructive, IfMatch: plan.ETag,
 	})
 	if err != nil {
 		return err

@@ -17,11 +17,12 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
 
+	scopedb "github.com/scopedb/goscopedb"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
-	"github.com/scopedb/scopedb-cli/internal/dataplane"
 	"github.com/spf13/cobra"
 )
 
@@ -134,21 +135,26 @@ func (a *app) runCatalog(cmd *cobra.Command, action string, args []string, optio
 	if err != nil {
 		return err
 	}
-	service := dataplane.CatalogService{HTTPClient: a.httpClient}
+	client, err := scopedb.NewClient(scopedb.Config{Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient})
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	catalog := client.Catalog(segments...)
 	ctx, cancel := options.requestContext(cmd.Context())
 	defer cancel()
-	definition, err := service.Get(ctx, access, segments)
+	snapshot, err := catalog.Get(ctx)
 	if err != nil {
 		return err
 	}
 	if action == "list" {
-		names, err := catalogNames(resource, args[0], definition)
+		names, err := catalogNames(resource, args[0], snapshot.Definition)
 		if err != nil {
 			return err
 		}
 		return writeCatalog(a.out, names, options.format)
 	}
-	return writeCatalog(a.out, definition, options.format)
+	return writeCatalog(a.out, snapshot.Definition, options.format)
 }
 
 // Time spent reviewing a diff does not consume either request's timeout.
@@ -159,13 +165,13 @@ func (o catalogOptions) requestContext(ctx context.Context) (context.Context, co
 	return context.WithTimeout(ctx, o.timeout)
 }
 
-func normalizeCatalogError(catalogErr *dataplane.CatalogError) error {
+func normalizeCatalogError(catalogErr *scopedb.Error) error {
 	code := clierror.ExitGeneral
-	if errors.Is(catalogErr, context.DeadlineExceeded) || catalogErr.Status == http.StatusRequestTimeout || catalogErr.Status == http.StatusTooManyRequests || catalogErr.Status >= 500 {
+	if errors.Is(catalogErr, context.DeadlineExceeded) || catalogErr.HTTPStatus == http.StatusRequestTimeout || catalogErr.HTTPStatus == http.StatusTooManyRequests || catalogErr.HTTPStatus >= 500 {
 		code = clierror.ExitTemporary
 	}
 	hint := ""
-	switch catalogErr.Status {
+	switch catalogErr.HTTPStatus {
 	case http.StatusBadRequest, http.StatusUnprocessableEntity:
 		code = clierror.ExitUsage
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -192,7 +198,14 @@ func normalizeCatalogError(catalogErr *dataplane.CatalogError) error {
 			hint = ""
 		}
 	}
-	result := clierror.WithHint(clierror.Wrap(code, catalogErr.Error(), catalogErr), hint)
+	message := catalogErr.Message
+	if catalogErr.Code != "" {
+		message = catalogErr.Code + ": " + message
+	}
+	if catalogErr.HTTPStatus != 0 {
+		message = fmt.Sprintf("HTTP %d: %s", catalogErr.HTTPStatus, message)
+	}
+	result := clierror.WithHint(clierror.Wrap(code, message, catalogErr), hint)
 	result.RequestID = catalogErr.RequestID
 	return result
 }

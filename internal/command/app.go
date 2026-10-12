@@ -253,8 +253,8 @@ func NormalizeError(err error) error {
 	if errors.As(err, &ready) {
 		return err
 	}
-	var catalogErr *dataplane.CatalogError
-	if errors.As(err, &catalogErr) {
+	var catalogErr *scopedb.Error
+	if errors.As(err, &catalogErr) && catalogErr.Kind == scopedb.ErrorKindCatalogFailed {
 		return normalizeCatalogError(catalogErr)
 	}
 	var interrupted *dataplane.InterruptedError

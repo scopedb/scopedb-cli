@@ -24,7 +24,7 @@ import (
 
 	yaml "github.com/go-openapi/go-yaml/codec"
 	"github.com/pmezard/go-difflib/difflib"
-	"github.com/scopedb/scopedb-cli/internal/dataplane"
+	scopedb "github.com/scopedb/goscopedb"
 )
 
 func (a *app) readCatalog(path string) (json.RawMessage, error) {
@@ -71,7 +71,7 @@ func writeCatalog(writer io.Writer, value any, format string) error {
 	return err
 }
 
-func catalogDiff(resource catalogResource, change dataplane.CatalogChange) (string, error) {
+func catalogDiff(resource catalogResource, change scopedb.CatalogResult) (string, error) {
 	before, err := yaml.FromJSON(change.Before)
 	if err != nil {
 		return "", err
