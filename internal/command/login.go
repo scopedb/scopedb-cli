@@ -109,7 +109,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 						return NormalizeError(sessionErr)
 					}
 					// The session is already saved; a failed status lookup must not undo login.
-					if _, err := fmt.Fprintln(a.errOut, "Could not check account status. Run 'scope status' to retry."); err != nil {
+					if _, err := fmt.Fprintln(a.errOut, "Could not check account status. Run 'scope auth status' to retry."); err != nil {
 						return NormalizeError(err)
 					}
 				} else if err := a.writeWorkspaceSetup(session); err != nil {
@@ -134,7 +134,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 	command.Flags().StringVar(&email, "email", "", "email address")
 	command.Flags().StringVar(&code, "code", "", "verification code (visible in process arguments; prefer stdin)")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
+	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	return command
 }
 
@@ -155,7 +155,7 @@ func (r *runtimeContext) persistLogin(response controlplane.LoginResponse) error
 	if err := r.auth.SaveLogin(response); err != nil {
 		result = clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", err)
 		if r.config.CredentialStore == config.CredentialStoreKeyring {
-			result.Hint = "fix OS keyring access or rerun with 'scope login --insecure-storage'"
+			result.Hint = "fix OS keyring access or rerun with 'scope auth login --insecure-storage'"
 		}
 	} else if err := config.Save(r.paths, r.config); err != nil {
 		result = clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "login succeeded, but configuration could not be stored", err), "check config directory access and retry")
@@ -215,7 +215,7 @@ func (a *app) newLogoutCommand() *cobra.Command {
 			state, err := runtime.credentials.Load(runtime.config.ControlURL)
 			if errors.Is(err, credential.ErrNotFound) {
 				if format == structuredFormatJSON {
-					return writeJSON(a.out, logoutResult{LoggedOut: false})
+					return writeJSON(a.out, logoutResult{Changed: false})
 				}
 				_, err := fmt.Fprintln(a.out, "Not logged in.")
 				return NormalizeError(err)
@@ -237,18 +237,18 @@ func (a *app) newLogoutCommand() *cobra.Command {
 				return result
 			}
 			if format == structuredFormatJSON {
-				return writeJSON(a.out, logoutResult{LoggedOut: true})
+				return writeJSON(a.out, logoutResult{Changed: true})
 			}
 			_, err = fmt.Fprintln(a.out, "Logged out.")
 			return NormalizeError(err)
 		},
 	}
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
+	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	return command
 }
 
 type logoutResult struct {
-	LoggedOut bool `json:"logged_out"`
+	Changed bool `json:"changed"`
 }
 
 func isMissingRemoteSession(err error) bool {

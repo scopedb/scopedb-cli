@@ -94,7 +94,7 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
+	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
 	command.Flags().IntVarP(&limit, "limit", "L", 0, "maximum results to display (0 means all)")
 	return command
 }
@@ -166,7 +166,7 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 	command.Flags().StringArrayVar(&tags, "tag", nil, "tag to attach; may be repeated")
 	command.Flags().DurationVar(&expiresIn, "expires-in", 0, "relative expiration such as 720h or 12h")
 	command.Flags().StringVar(&expiresAtValue, "expires-at", "", "absolute RFC3339 expiration")
-	command.Flags().StringVarP(&format, "format", "f", "value", "output format: value or json")
+	command.Flags().StringVar(&format, "format", "value", "output format: value or json")
 	return command
 }
 
@@ -247,7 +247,7 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 		},
 	}
 	command.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation")
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
+	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	return command
 }
 

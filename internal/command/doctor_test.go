@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -44,7 +45,7 @@ func TestDoctorChecksSessionDataAccess(t *testing.T) {
 		{"ready", "ready", http.StatusOK, http.StatusOK, ""},
 		{"provisioning", "pending", 0, 0, "pending"},
 		{"query rejected", "ready", http.StatusUnauthorized, http.StatusOK, "invalid credential"},
-		{"exchange rejected", "ready", 0, http.StatusUnauthorized, "scope login"},
+		{"exchange rejected", "ready", 0, http.StatusUnauthorized, "scope auth login"},
 	} {
 		t.Run(phase.name, func(t *testing.T) {
 			queries, exchanges := 0, 0
@@ -216,8 +217,16 @@ type doctorTransport func(*http.Request) (*http.Response, error)
 func (f doctorTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestDoctorTimeoutAndCancellation(t *testing.T) {
-	for _, interrupt := range []bool{false, true} {
-		t.Run(map[bool]string{false: "timeout", true: "interrupt"}[interrupt], func(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		timeout   string
+		interrupt bool
+	}{
+		{"timeout", "20ms", false},
+		{"interrupt", "20ms", true},
+		{"zero timeout interrupt", "0", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			setupLoginTest(t, http.NotFoundHandler())
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -234,16 +243,16 @@ func TestDoctorTimeoutAndCancellation(t *testing.T) {
 					return ""
 				},
 				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
-					if interrupt {
+					if tc.interrupt {
 						cancel()
 					}
 					<-r.Context().Done()
 					return nil, r.Context().Err()
 				})},
 			})
-			root.SetArgs([]string{"doctor", "--format", "json", "--timeout", "20ms"})
+			root.SetArgs([]string{"doctor", "--format", "json", "--timeout", tc.timeout})
 			err := root.ExecuteContext(ctx)
-			if interrupt {
+			if tc.interrupt {
 				require.Equal(t, clierror.ExitInterrupted, clierror.ExitCode(err))
 				require.Empty(t, out.String())
 			} else {
@@ -256,7 +265,7 @@ func TestDoctorTimeoutAndCancellation(t *testing.T) {
 }
 
 func TestDoctorRejectsInvalidTimeout(t *testing.T) {
-	for _, timeout := range []string{"0", "-1s"} {
+	for _, timeout := range []string{"-1s", "-1ns"} {
 		var out bytes.Buffer
 		root := NewRoot(Dependencies{Out: &out, In: strings.NewReader("")})
 		root.SetArgs([]string{"doctor", "--timeout", timeout})
@@ -276,7 +285,93 @@ func TestDoctorGuidesNewUsers(t *testing.T) {
 		out, diagnostics, err := runCommand(t, "doctor", "--format", format)
 		require.NoError(t, err)
 		require.Empty(t, diagnostics)
-		require.Contains(t, out, "scope login")
+		require.Contains(t, out, "scope auth login")
 		require.Contains(t, out, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
+	}
+}
+
+func TestDoctorZeroTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		deadline bool
+		cancelAt string
+	}{
+		{"no deadline", false, ""},
+		{"parent deadline", true, ""},
+		{"cancel health", false, "/healthz"},
+		{"cancel session", false, "/api/session"},
+		{"cancel workspace", false, "/api/workspaces/ws-1"},
+		{"cancel exchange", false, "/api/workspaces/ws-1/token-exchange"},
+		{"cancel query", false, "/v1/statements"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, controlURL := setupLoginTest(t, http.NotFoundHandler())
+			t.Setenv("SCOPEDB_CREDENTIAL_STORE", config.CredentialStorePlaintext)
+			require.NoError(t, store.Save(controlURL, credential.State{SessionToken: "session-secret", WorkspaceID: "ws-1"}))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tc.deadline {
+				var deadlineCancel context.CancelFunc
+				ctx, deadlineCancel = context.WithTimeout(ctx, time.Minute)
+				defer deadlineCancel()
+			}
+			deadline, hasDeadline := ctx.Deadline()
+			var requests []string
+			var out, diagnostics bytes.Buffer
+			cancelled := false
+			root := NewRoot(Dependencies{
+				Out: &out, ErrOut: &diagnostics,
+				Getenv: func(string) string { return "" },
+				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+					if err := r.Context().Err(); err != nil {
+						return nil, err
+					}
+					actual, exists := r.Context().Deadline()
+					require.Equal(t, hasDeadline, exists)
+					require.Equal(t, deadline, actual)
+					requests = append(requests, r.Method+" "+r.URL.Path)
+					if r.URL.Path == tc.cancelAt {
+						cancelled = true
+						cancel()
+						<-r.Context().Done()
+						return nil, r.Context().Err()
+					}
+					var body string
+					switch r.Method + " " + r.URL.Path {
+					case "GET /healthz":
+						body = `{}`
+					case "GET /api/session":
+						body = `{"user":{"email":"dev@example.com","status":"active"},"current_workspace_id":"ws-1"}`
+					case "GET /api/workspaces/ws-1":
+						body = `{"workspace":{"id":"ws-1"},"connection":{"api_base_url":"https://data.example.com"},"provisioning":{"status":"ready"}}`
+					case "POST /api/workspaces/ws-1/token-exchange":
+						data, err := json.Marshal(map[string]any{"token_type": "Bearer", "access_token": "data-secret", "expires_at": time.Now().Add(time.Hour)})
+						require.NoError(t, err)
+						body = string(data)
+					case "POST /v1/statements":
+						body = doctorQueryResult
+					default:
+						t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+				})},
+			})
+			root.SetArgs([]string{"doctor", "--format", "json", "--timeout", "0"})
+			err := root.ExecuteContext(ctx)
+			require.Empty(t, diagnostics.String())
+			if tc.cancelAt != "" {
+				require.True(t, cancelled)
+				require.Equal(t, clierror.ExitInterrupted, clierror.ExitCode(err))
+				require.Empty(t, out.String())
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, []string{"GET /healthz", "GET /api/session", "GET /api/session", "GET /api/workspaces/ws-1", "POST /api/workspaces/ws-1/token-exchange", "POST /v1/statements"}, requests)
+			var report doctorReport
+			require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+			require.True(t, report.OK)
+			require.NotContains(t, out.String(), "session-secret")
+			require.NotContains(t, out.String(), "data-secret")
+		})
 	}
 }

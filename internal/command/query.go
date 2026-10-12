@@ -93,8 +93,8 @@ func (a *app) newQueryCommand() *cobra.Command {
 			return NormalizeError(err)
 		},
 	}
-	command.Flags().StringVar(&statementFile, "file", "", "read ScopeQL from a file; use - for stdin")
-	command.Flags().StringVarP(&format, "format", "f", output.FormatTable, "output format: table, json, jsonl, or csv")
+	command.Flags().StringVarP(&statementFile, "file", "f", "", "read ScopeQL from a file; use - for stdin")
+	command.Flags().StringVar(&format, "format", output.FormatTable, "output format: table, json, jsonl, or csv")
 	command.Flags().StringVarP(&outputPath, "output", "o", "", "write results to a file")
 	command.Flags().BoolVar(&force, "force", false, "overwrite an existing output file")
 	command.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "maximum time to wait before cancelling the statement; 0 disables the limit")

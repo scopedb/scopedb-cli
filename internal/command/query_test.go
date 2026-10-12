@@ -17,6 +17,7 @@ package command
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/stretchr/testify/require"
 )
@@ -105,4 +107,69 @@ func TestQueryOutputFileHasRestrictedPermissions(t *testing.T) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestQueryFileInput(t *testing.T) {
+	const statement = "SELECT 1 AS ready"
+	path := filepath.Join(t.TempDir(), "report.scopeql")
+	require.NoError(t, os.WriteFile(path, []byte(statement+"\n"), 0o600))
+	for _, tc := range []struct {
+		name    string
+		args    []string
+		input   string
+		invalid bool
+	}{
+		{"short file", []string{"-f", path}, "", false},
+		{"long file", []string{"--file", path}, "", false},
+		{"short stdin", []string{"-f", "-"}, statement, false},
+		{"long stdin", []string{"--file", "-"}, statement, false},
+		{"conflicting input", []string{"-f", path, statement}, "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+			t.Setenv("SCOPEDB_CONTROL_URL", "")
+			t.Setenv("SCOPEDB_CONSOLE_URL", "")
+			t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
+			var out, diagnostics bytes.Buffer
+			calls := 0
+			root := NewRoot(Dependencies{
+				In: strings.NewReader(tc.input), Out: &out, ErrOut: &diagnostics,
+				Getenv: func(name string) string {
+					switch name {
+					case "SCOPEDB_ENDPOINT":
+						return "https://data.example.com"
+					case "SCOPEDB_API_KEY":
+						return "machine-secret"
+					default:
+						return ""
+					}
+				},
+				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+					calls++
+					require.Equal(t, "POST /v1/statements", r.Method+" "+r.URL.Path)
+					require.Equal(t, "zstd", r.Header.Get("Content-Encoding"))
+					body, err := zstd.NewReader(r.Body)
+					require.NoError(t, err)
+					defer body.Close()
+					var request map[string]any
+					require.NoError(t, json.NewDecoder(body).Decode(&request))
+					require.Equal(t, statement, request["statement"])
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(doctorQueryResult)), Request: r}, nil
+				})},
+			})
+			root.SetArgs(append([]string{"query", "--format", "json"}, tc.args...))
+			err := root.ExecuteContext(t.Context())
+			if tc.invalid {
+				require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+				require.Zero(t, calls)
+				require.Empty(t, out.String())
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, 1, calls)
+			require.True(t, json.Valid(out.Bytes()))
+			require.Empty(t, diagnostics.String())
+			require.NotContains(t, out.String(), "machine-secret")
+		})
+	}
 }

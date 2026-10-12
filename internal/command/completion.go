@@ -22,8 +22,9 @@ import (
 
 func newCompletionCommand(root *cobra.Command) *cobra.Command {
 	return &cobra.Command{
-		Use:       "completion [bash|zsh|fish|powershell]",
+		Use:       "completion <shell>",
 		Short:     "Generate shell completion",
+		Long:      "Generate shell completion for bash, zsh, fish, or powershell.",
 		Args:      exactArgs(1),
 		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
 		RunE: func(cmd *cobra.Command, args []string) error {
