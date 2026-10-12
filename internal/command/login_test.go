@@ -92,11 +92,12 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 		workspaces []controlplane.Workspace
 		message    string
 		hint       string
+		listNotice string
 		exitCode   int
 	}{
-		{"pending", "pending", nil, "awaiting approval", "scope console --open", clierror.ExitAuth},
-		{"approved", "active", nil, "no workspaces", "create your first workspace", clierror.ExitUsage},
-		{"created", "active", []controlplane.Workspace{{ID: "ws-1", DisplayName: new("Analytics")}}, "no workspace is selected", "scope workspace use", clierror.ExitUsage},
+		{"pending", "pending", nil, "awaiting approval", "scope console --open", "awaiting approval", clierror.ExitAuth},
+		{"approved", "active", nil, "no workspaces", "create your first workspace", "no workspaces", clierror.ExitUsage},
+		{"created", "active", []controlplane.Workspace{{ID: "ws-1", DisplayName: new("Analytics")}}, "no workspace is selected", "scope workspace use", "", clierror.ExitUsage},
 	} {
 		t.Run(phase.name, func(t *testing.T) {
 			session.Store(controlplane.Session{
@@ -113,12 +114,18 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 			require.Contains(t, diagnostics, phase.message)
 			require.Contains(t, diagnostics, phase.hint)
 
-			out, _, err = runCommand(t, "workspace", "list", "--format", "json")
+			out, listDiagnostics, err := runCommand(t, "workspace", "list", "--format", "json")
 			require.NoError(t, err)
 			var workspaces []workspaceListItem
 			require.NoError(t, json.Unmarshal([]byte(out), &workspaces))
 			require.NotNil(t, workspaces)
 			require.Len(t, workspaces, len(phase.workspaces))
+			require.NotContains(t, listDiagnostics, "no workspace is selected")
+			if phase.listNotice == "" {
+				require.Empty(t, listDiagnostics)
+			} else {
+				require.Contains(t, listDiagnostics, phase.listNotice)
+			}
 
 			out, _, err = runCommand(t, "doctor", "--format", "json")
 			require.NoError(t, err)
