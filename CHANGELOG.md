@@ -22,6 +22,7 @@ All significant changes to this project will be documented in this file.
 
 ### Improvements
 
+* Report the underlying cause when the CLI renders an error, in the terminal output and in `scope doctor` details, so a failure such as a credential store problem explains itself.
 * `scope doctor` supports `--timeout` for slower connections, includes recovery hints and request IDs in failed checks, and preserves exit code 130 when interrupted.
 * `scope login` hides verification codes entered at a terminal and warns that `--code` exposes the value in process arguments.
 * `scope api-key list --format json` excludes one-time key material from its output.

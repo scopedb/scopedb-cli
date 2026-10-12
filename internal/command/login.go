@@ -232,7 +232,7 @@ func (a *app) newLogoutCommand() *cobra.Command {
 				result := NormalizeError(remoteErr)
 				var cliErr *clierror.Error
 				if errors.As(result, &cliErr) {
-					cliErr.Message = "local credentials removed, but the remote session could not be revoked: " + remoteErr.Error()
+					cliErr.Message = "local credentials removed, but the remote session could not be revoked"
 				}
 				return result
 			}
