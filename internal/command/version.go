@@ -45,6 +45,6 @@ func newVersionCommand(out io.Writer) *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&asJSON, "json", false, "print machine-readable JSON")
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
+	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	return command
 }

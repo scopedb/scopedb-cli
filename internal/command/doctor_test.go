@@ -44,7 +44,7 @@ func TestDoctorChecksSessionDataAccess(t *testing.T) {
 		{"ready", "ready", http.StatusOK, http.StatusOK, ""},
 		{"provisioning", "pending", 0, 0, "pending"},
 		{"query rejected", "ready", http.StatusUnauthorized, http.StatusOK, "invalid credential"},
-		{"exchange rejected", "ready", 0, http.StatusUnauthorized, "scope login"},
+		{"exchange rejected", "ready", 0, http.StatusUnauthorized, "scope auth login"},
 	} {
 		t.Run(phase.name, func(t *testing.T) {
 			queries, exchanges := 0, 0
@@ -256,7 +256,7 @@ func TestDoctorTimeoutAndCancellation(t *testing.T) {
 }
 
 func TestDoctorRejectsInvalidTimeout(t *testing.T) {
-	for _, timeout := range []string{"0", "-1s"} {
+	for _, timeout := range []string{"-1s"} {
 		var out bytes.Buffer
 		root := NewRoot(Dependencies{Out: &out, In: strings.NewReader("")})
 		root.SetArgs([]string{"doctor", "--timeout", timeout})
@@ -276,7 +276,7 @@ func TestDoctorGuidesNewUsers(t *testing.T) {
 		out, diagnostics, err := runCommand(t, "doctor", "--format", format)
 		require.NoError(t, err)
 		require.Empty(t, diagnostics)
-		require.Contains(t, out, "scope login")
+		require.Contains(t, out, "scope auth login")
 		require.Contains(t, out, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 	}
 }

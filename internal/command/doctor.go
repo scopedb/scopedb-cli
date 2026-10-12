@@ -49,14 +49,15 @@ func (a *app) newDoctorCommand() *cobra.Command {
 		Short: "Check local configuration and ScopeDB connectivity",
 		Long: "Check configuration, authentication, and connectivity by running SELECT 1 AS ready.\n" +
 			"Uses SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when both are set; otherwise uses your login.\n" +
-			"Incomplete account setup is reported as a warning without running a query.",
+			"Incomplete account setup is reported as a warning without running a query.\n" +
+			"--timeout 0 disables the per-check limit; individual control-plane requests still have a 15s limit.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
 				return err
 			}
-			if timeout <= 0 {
-				return usageError("--timeout must be positive")
+			if timeout < 0 {
+				return usageError("--timeout must not be negative")
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
@@ -76,7 +77,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "API key from environment for " + access.Endpoint})
 				a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 			default:
-				healthCtx, cancel := context.WithTimeout(cmd.Context(), timeout)
+				healthCtx, cancel := checkContext(cmd.Context(), timeout)
 				healthErr := runtime.control.Health(healthCtx)
 				cancel()
 				if healthErr != nil {
@@ -88,12 +89,12 @@ func (a *app) newDoctorCommand() *cobra.Command {
 
 				state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
 				if errors.Is(loadErr, credential.ErrNotFound) {
-					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope login' or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY"})
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login' or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY"})
 				} else if loadErr != nil {
 					report.OK = false
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: loadErr.Error()})
 				} else {
-					sessionCtx, sessionCancel := context.WithTimeout(cmd.Context(), timeout)
+					sessionCtx, sessionCancel := checkContext(cmd.Context(), timeout)
 					session, sessionErr := runtime.control.GetSession(sessionCtx, state.SessionToken)
 					sessionCancel()
 					if sessionErr != nil {
@@ -123,13 +124,13 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
-	command.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "maximum time for each remote check, including credential resolution for the query")
+	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
+	command.Flags().DurationVar(&timeout, "timeout", 5*time.Second, "maximum time for each remote check, including query credential resolution; 0 disables the check limit")
 	return command
 }
 
 func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext, timeout time.Duration, report *doctorReport) {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := checkContext(ctx, timeout)
 	defer cancel()
 	access, err := runtime.auth.ResolveDataAccess(ctx)
 	if err == nil {
@@ -145,6 +146,13 @@ func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext,
 		}
 	}
 	report.Checks = append(report.Checks, check)
+}
+
+func checkContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout == 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
 }
 
 func renderDoctor(out io.Writer, format string, report doctorReport) error {

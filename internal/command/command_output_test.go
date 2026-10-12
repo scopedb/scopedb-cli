@@ -68,8 +68,8 @@ func TestCommandJSONOutput(t *testing.T) {
 		{"workspace use Beta", `{"id":"ws-2","display_name":"Beta","changed":true}`},
 		{"workspace use ws-2", `{"id":"ws-2","display_name":"Beta","changed":false}`},
 		{"api-key revoke automation --yes", `{"name":"automation","revoked":true}`},
-		{"logout", `{"logged_out":true}`},
-		{"logout", `{"logged_out":false}`},
+		{"auth logout", `{"changed":true}`},
+		{"auth logout", `{"changed":false}`},
 	} {
 		out, diagnostics, err := runCommand(t, append(strings.Fields(step.args), "--format", "json")...)
 		require.NoError(t, err, step.args)

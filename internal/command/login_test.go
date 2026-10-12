@@ -77,7 +77,7 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 		}
 	}))
 
-	out, diagnostics, err := runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage", "--format", "json")
+	out, diagnostics, err := runCommand(t, "auth", "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage", "--format", "json")
 	require.NoError(t, err)
 	require.JSONEq(t, `{"email":"dev@example.com","workspace_id":null}`, out)
 	require.Contains(t, diagnostics, "awaiting approval")
@@ -105,11 +105,11 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 				User:       controlplane.User{Email: "dev@example.com", Status: phase.status},
 				Workspaces: phase.workspaces,
 			})
-			out, diagnostics, err := runCommand(t, "status", "--format", "json")
+			out, diagnostics, err := runCommand(t, "auth", "status", "--format", "json")
 			require.NoError(t, err)
 			var status map[string]any
 			require.NoError(t, json.Unmarshal([]byte(out), &status))
-			require.Equal(t, "dev@example.com", status["user"])
+			require.Equal(t, "dev@example.com", status["email"])
 			require.Equal(t, phase.status, status["user_status"])
 			require.NotContains(t, status, "workspace_id")
 			require.Contains(t, diagnostics, phase.message)
@@ -137,7 +137,7 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 			require.Contains(t, out, phase.message)
 
 			for _, args := range [][]string{
-				{"workspace", "show"},
+				{"workspace", "get"},
 				{"query", "SELECT 1 AS ready"},
 				{"api-key", "list"},
 				{"api-key", "create", "automation"},
@@ -159,16 +159,16 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 	require.Equal(t, "rotated-secret", state.SessionToken)
 	require.Equal(t, "ws-1", state.WorkspaceID)
 
-	out, diagnostics, err = runCommand(t, "status", "--format", "json")
+	out, diagnostics, err = runCommand(t, "auth", "status", "--format", "json")
 	require.NoError(t, err)
 	require.Empty(t, diagnostics)
 	var status statusView
 	require.NoError(t, json.Unmarshal([]byte(out), &status))
 	require.Equal(t, "ws-1", status.WorkspaceID)
 	require.Equal(t, "Analytics", status.WorkspaceName)
-	require.Equal(t, "ready", status.ProvisioningState)
+	require.Equal(t, "https://data.example.com", status.Endpoint)
 
-	_, _, err = runCommand(t, "logout")
+	_, _, err = runCommand(t, "auth", "logout")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, revoked.Load())
 	_, err = store.Load(controlURL)
@@ -195,16 +195,16 @@ func TestLoginKeepsSessionWhenStatusLookupFails(t *testing.T) {
 			http.NotFound(w, r)
 		}
 	}))
-	out, diagnostics, err := runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
+	out, diagnostics, err := runCommand(t, "auth", "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
-	require.Contains(t, diagnostics, "scope status")
+	require.Contains(t, diagnostics, "scope auth status")
 	state, err := store.Load(controlURL)
 	require.NoError(t, err)
 	require.Equal(t, "session-secret", state.SessionToken)
 	require.False(t, revoked.Load())
 
-	_, _, err = runCommand(t, "logout")
+	_, _, err = runCommand(t, "auth", "logout")
 	require.NoError(t, err)
 	require.True(t, revoked.Load())
 	_, err = store.Load(controlURL)
@@ -230,7 +230,7 @@ func TestLoginReportsUnreachableControlPlane(t *testing.T) {
 	controlURL := "http://" + listener.Addr().String()
 	require.NoError(t, listener.Close())
 
-	_, _, err = runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--control-url", controlURL)
+	_, _, err = runCommand(t, "auth", "login", "--email", "dev@example.com", "--code", "123456", "--control-url", controlURL)
 	require.Error(t, err)
 	rendered := clierror.Render(NormalizeError(err))
 	require.Contains(t, rendered, "Error: cannot reach ScopeDB control plane")
@@ -260,7 +260,7 @@ func TestFailedLoginDoesNotChangeConfig(t *testing.T) {
 	}))
 	before, err := os.ReadFile(paths.Config)
 	require.NoError(t, err)
-	out, _, err := runCommand(t, "--control-url", controlURL, "login", "--email", "dev@example.com", "--code", "bad-code", "--format", "json")
+	out, _, err := runCommand(t, "--control-url", controlURL, "auth", "login", "--email", "dev@example.com", "--code", "bad-code", "--format", "json")
 	require.Error(t, err)
 	require.Empty(t, out)
 	after, err := os.ReadFile(paths.Config)
@@ -285,7 +285,7 @@ func TestLoginReadsVerificationCodeFromStdin(t *testing.T) {
 	}))
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{In: strings.NewReader("123456\n"), Out: &out, ErrOut: &diagnostics})
-	root.SetArgs([]string{"login", "--email", "dev@example.com", "--insecure-storage", "--format", "json"})
+	root.SetArgs([]string{"auth", "login", "--email", "dev@example.com", "--insecure-storage", "--format", "json"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
 	require.JSONEq(t, `{"email":"dev@example.com","workspace_id":"ws-1"}`, out.String())
 	require.NotContains(t, out.String()+diagnostics.String(), "123456")
@@ -300,7 +300,7 @@ func TestLoginRecoversInvalidProfileWithoutLosingOtherOrigins(t *testing.T) {
 	_, err := store.Load(controlURL)
 	require.ErrorIs(t, err, credential.ErrInvalidState)
 
-	_, _, err = runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
+	_, _, err = runCommand(t, "auth", "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
 	require.NoError(t, err)
 	recovered, err := store.Load(controlURL)
 	require.NoError(t, err)
@@ -318,7 +318,7 @@ func TestLoginPreservesUnreadableCredentialFile(t *testing.T) {
 	require.NoError(t, err)
 	const broken = `{"version":1,"profiles":`
 	require.NoError(t, os.WriteFile(paths.CredentialsFile, []byte(broken), 0o600))
-	out, _, err := runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
+	out, _, err := runCommand(t, "auth", "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
 	require.ErrorContains(t, err, "existing credentials could not be read")
 	require.EqualValues(t, 1, revoked.Load())
 	require.Empty(t, out)
@@ -351,7 +351,7 @@ func TestLoginRollsBackFailedPersistence(t *testing.T) {
 					return &interruptSaveStore{Store: store, afterSave: func() error { return tc.fail(paths) }}, nil
 				},
 			})
-			root.SetArgs([]string{"login", "--email", "dev@example.com", "--code", "123456", "--format", "json"})
+			root.SetArgs([]string{"auth", "login", "--email", "dev@example.com", "--code", "123456", "--format", "json"})
 			err := root.ExecuteContext(t.Context())
 			require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
 			require.EqualValues(t, 1, revoked.Load())

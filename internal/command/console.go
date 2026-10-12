@@ -65,7 +65,7 @@ Add --open to also open the page in your browser.`,
 		},
 	}
 	command.Flags().BoolVar(&openBrowser, "open", false, "open the URL in the default browser")
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
+	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	return command
 }
 
