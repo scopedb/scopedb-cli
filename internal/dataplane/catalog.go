@@ -54,7 +54,16 @@ type CatalogError struct {
 	Cause     error  `json:"-"`
 }
 
-func (e *CatalogError) Error() string { return e.Message }
+func (e *CatalogError) Error() string {
+	message := e.Message
+	if e.Code != "" {
+		message = e.Code + ": " + message
+	}
+	if e.Status != 0 {
+		message = fmt.Sprintf("HTTP %d: %s", e.Status, message)
+	}
+	return message
+}
 
 func (e *CatalogError) Unwrap() error { return e.Cause }
 
@@ -68,21 +77,26 @@ func (s *CatalogService) Get(ctx context.Context, access auth.Access, segments [
 }
 
 func (s *CatalogService) Mutate(ctx context.Context, access auth.Access, input CatalogRequest) (CatalogChange, string, error) {
-	body, version, err := s.request(ctx, access, input)
+	body, headers, err := s.request(ctx, access, input)
 	if err != nil {
 		return CatalogChange{}, "", err
 	}
 	var result CatalogChange
+	version := headers.Get("ETag")
 	if err := json.Unmarshal(body, &result); err != nil || len(result.Before) == 0 || len(result.After) == 0 || version == "" {
-		return CatalogChange{}, "", fmt.Errorf("invalid catalog response; verify the catalog before retrying")
+		failure := &CatalogError{Status: http.StatusOK, RequestID: headers.Get("X-Request-ID"), Message: "invalid catalog response", Cause: err}
+		if !input.DryRun {
+			failure.Code = "catalog_commit_outcome_unknown"
+		}
+		return CatalogChange{}, "", failure
 	}
 	return result, version, nil
 }
 
-func (s *CatalogService) request(ctx context.Context, access auth.Access, input CatalogRequest) (json.RawMessage, string, error) {
+func (s *CatalogService) request(ctx context.Context, access auth.Access, input CatalogRequest) (json.RawMessage, http.Header, error) {
 	endpoint, err := url.Parse(access.Endpoint)
 	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
-		return nil, "", &scopedb.Error{Kind: scopedb.ErrorKindConfigInvalid, Message: "invalid ScopeDB endpoint"}
+		return nil, nil, &scopedb.Error{Kind: scopedb.ErrorKindConfigInvalid, Message: "invalid ScopeDB endpoint"}
 	}
 	path := strings.TrimRight(endpoint.EscapedPath(), "/") + "/v1"
 	for _, segment := range input.Resource {
@@ -100,7 +114,7 @@ func (s *CatalogService) request(ctx context.Context, access auth.Access, input 
 	endpoint.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, input.Method, endpoint.String(), bytes.NewReader(input.Definition))
 	if err != nil {
-		return nil, "", err
+		return nil, nil, err
 	}
 	request.Header.Set("Authorization", "Bearer "+access.APIKey)
 	if len(input.Definition) > 0 {
@@ -116,27 +130,29 @@ func (s *CatalogService) request(ctx context.Context, access auth.Access, input 
 	response, err := client.Do(request)
 	if err != nil {
 		if input.Method != http.MethodGet && !input.DryRun {
-			return nil, "", &CatalogError{Code: "catalog_commit_outcome_unknown", Message: "catalog apply could not be confirmed; read the catalog and plan again before retrying", Cause: err}
+			return nil, nil, &CatalogError{Code: "catalog_commit_outcome_unknown", Message: "catalog apply could not be confirmed", Cause: err}
 		}
-		return nil, "", err
+		return nil, nil, err
 	}
 	defer func() { _ = response.Body.Close() }()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
-		if input.Method != http.MethodGet && !input.DryRun {
-			return nil, "", &CatalogError{Code: "catalog_commit_outcome_unknown", Message: "catalog apply response could not be read; read the catalog and plan again before retrying", Cause: err}
+		failure := &CatalogError{Status: response.StatusCode, RequestID: response.Header.Get("X-Request-ID"), Message: "failed to read catalog response", Cause: err}
+		if input.Method != http.MethodGet && !input.DryRun && (response.StatusCode < 400 || response.StatusCode >= 500) {
+			failure.Code = "catalog_commit_outcome_unknown"
 		}
-		return nil, "", fmt.Errorf("read catalog response: %w", err)
+		return nil, nil, failure
 	}
 	if response.StatusCode != http.StatusOK {
 		failure := &CatalogError{Status: response.StatusCode, RequestID: response.Header.Get("X-Request-ID")}
 		if json.Unmarshal(body, failure) != nil || failure.Message == "" {
-			failure.Message = fmt.Sprintf("catalog request failed: HTTP %d", response.StatusCode)
+			failure.Message = "catalog request failed"
 		}
 		if access.APIKey != "" {
 			failure.Message = strings.ReplaceAll(failure.Message, access.APIKey, "[redacted]")
+			failure.Code = strings.ReplaceAll(failure.Code, access.APIKey, "[redacted]")
 		}
-		return nil, "", failure
+		return nil, nil, failure
 	}
-	return body, response.Header.Get("ETag"), nil
+	return body, response.Header, nil
 }

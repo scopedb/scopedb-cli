@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/go-openapi/go-yaml"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
@@ -91,7 +92,7 @@ func TestCatalogPlanApply(t *testing.T) {
 	require.NoError(t, run(saved, "catalog", "apply", "--plan", "-", "--allow-destructive"))
 	require.Equal(t, 1, writes)
 	require.Equal(t, 1, plans, "saved plan must not be refreshed before applying")
-	require.Contains(t, diagnostics.String(), "-  name: old")
+	require.Empty(t, diagnostics.String(), "saved plans apply without redisplaying the reviewed diff")
 	require.Contains(t, out.String(), "columns: []")
 	apiKey = "another-workspace-key"
 	err := run(saved, "catalog", "apply", "--plan", "-")
@@ -102,6 +103,7 @@ func TestCatalogPlanApply(t *testing.T) {
 	err = run(saved, "catalog", "apply", "--plan", "-", "--allow-destructive")
 	require.Error(t, err)
 	require.Contains(t, clierror.Render(err), "generate a new plan")
+	require.Contains(t, clierror.Render(err), "HTTP 412: catalog_version_mismatch")
 	require.Equal(t, 2, writes, "version conflict must not trigger an automatic retry")
 	require.Equal(t, 1, plans)
 	require.Empty(t, out.String())
@@ -250,18 +252,25 @@ func TestCatalogRequestFailures(t *testing.T) {
 		require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
 	})
 	for _, tc := range []struct {
-		name   string
-		status int
-		cause  error
-		code   int
-		apply  bool
+		name, action    string
+		status          int
+		cause           error
+		code            int
+		partial         bool
+		invalidResponse bool
 	}{
-		{name: "proxy unavailable during plan", status: 502, code: clierror.ExitTemporary},
-		{name: "cancel apply", cause: context.Canceled, code: clierror.ExitInterrupted, apply: true},
-		{name: "timeout apply", cause: context.DeadlineExceeded, code: clierror.ExitTemporary, apply: true},
-		{name: "lost apply response", cause: io.ErrUnexpectedEOF, code: clierror.ExitGeneral, apply: true},
+		{name: "proxy unavailable during plan", action: "plan", status: 502, code: clierror.ExitTemporary},
+		{name: "cancel apply", action: "apply", cause: context.Canceled, code: clierror.ExitInterrupted},
+		{name: "timeout apply", action: "apply", cause: context.DeadlineExceeded, code: clierror.ExitTemporary},
+		{name: "lost apply response", action: "apply", cause: io.ErrUnexpectedEOF, code: clierror.ExitGeneral},
+		{name: "partial apply response", action: "apply", cause: io.ErrUnexpectedEOF, code: clierror.ExitGeneral, partial: true},
+		{name: "partial version conflict", action: "apply", status: 412, cause: io.ErrUnexpectedEOF, code: clierror.ExitGeneral, partial: true},
+		{name: "invalid apply response", action: "apply", code: clierror.ExitGeneral, invalidResponse: true},
+		{name: "cancel get body", action: "get", cause: context.Canceled, code: clierror.ExitInterrupted, partial: true},
+		{name: "cancel plan body", action: "plan", cause: context.Canceled, code: clierror.ExitInterrupted, partial: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			apply := tc.action == "apply"
 			var out, diagnostics bytes.Buffer
 			requests := 0
 			root := NewRoot(Dependencies{In: strings.NewReader("name: t\n"), Out: &out, ErrOut: &diagnostics,
@@ -276,31 +285,59 @@ func TestCatalogRequestFailures(t *testing.T) {
 				},
 				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
 					requests++
-					if requests == 2 {
+					if apply && requests == 1 {
+						return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(`{"before":null,"after":{"name":"t","columns":[]}}`)), Request: r}, nil
+					}
+					if tc.cause != nil && !tc.partial {
 						return nil, tc.cause
 					}
 					status, body := 200, `{"before":null,"after":{"name":"t","columns":[]}}`
 					if tc.status != 0 {
 						status, body = tc.status, `{"message":"gateway unavailable"}`
 					}
-					return &http.Response{StatusCode: status, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+					if tc.invalidResponse {
+						body = `{}`
+					}
+					response := &http.Response{StatusCode: status, Header: http.Header{"Etag": []string{`"1"`}, "X-Request-Id": []string{"catalog-request"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}
+					if tc.partial {
+						response.Body = io.NopCloser(iotest.ErrReader(tc.cause))
+					}
+					return response, nil
 				})},
 			})
-			args := []string{"catalog", "plan", "--table", "db.public.t", "-f", "-"}
-			if tc.apply {
-				args[1] = "apply"
+			args := []string{"catalog", tc.action, "--table", "db.public.t"}
+			if tc.action != "get" {
+				args = append(args, "-f", "-")
+			}
+			if apply {
 				args = append(args, "--yes")
 			}
 			root.SetArgs(args)
 			err := root.ExecuteContext(t.Context())
 			require.Equal(t, tc.code, clierror.ExitCode(err))
 			require.Empty(t, out.String())
-			if tc.apply {
+			if tc.cause != nil {
 				require.ErrorIs(t, err, tc.cause)
+			}
+			if tc.partial || tc.invalidResponse {
+				var failure *clierror.Error
+				require.ErrorAs(t, err, &failure)
+				require.Equal(t, "catalog-request", failure.RequestID)
+				require.Contains(t, failure.Message, "HTTP ")
+			}
+			if apply {
 				require.Equal(t, 2, requests, "an uncertain write must not be retried")
-				require.Contains(t, clierror.Render(err), "read the catalog")
+				if tc.status == 412 {
+					require.Contains(t, clierror.Render(err), "generate a new plan")
+					require.NotContains(t, clierror.Render(err), "catalog_commit_outcome_unknown")
+				} else {
+					require.Contains(t, clierror.Render(err), "read the catalog")
+				}
 			} else {
 				require.Equal(t, 1, requests)
+				if tc.code == clierror.ExitInterrupted {
+					require.Equal(t, "\n", clierror.Render(err))
+				}
 			}
 		})
 	}
@@ -318,10 +355,7 @@ func TestCatalogBrowse(t *testing.T) {
 	responses := map[string]any{
 		"/v1/databases":                                       document,
 		"/v1/databases/db":                                    database,
-		"/v1/databases/db/schemas":                            map[string]any{"schemas": []any{schema}},
 		"/v1/databases/db/schemas/public":                     schema,
-		"/v1/databases/db/schemas/public/tables":              map[string]any{"tables": []any{table}},
-		"/v1/databases/db/schemas/public/views":               map[string]any{"views": schema["views"]},
 		"/v1/databases/empty":                                 map[string]any{"name": "empty", "schemas": []any{}},
 		"/v1/databases/db/schemas/public/tables/" + tableName: table,
 	}

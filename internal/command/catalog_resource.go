@@ -31,14 +31,14 @@ func (r catalogResource) segments() ([]string, error) {
 	switch r.Kind {
 	case "databases":
 		count = 0
-	case "database", "schemas":
+	case "database":
 		count = 1
-	case "schema", "tables", "views":
+	case "schema":
 		count = 2
 	case "table", "view":
 		count = 3
 	default:
-		return nil, usageError("resource must be databases, database, schemas, schema, tables, table, views, or view")
+		return nil, usageError("resource must be databases, database, schema, table, or view")
 	}
 	names, err := parseCatalogName(r.Name)
 	if err != nil {
@@ -61,36 +61,26 @@ func (r catalogResource) segments() ([]string, error) {
 		}
 		segments = append(segments, name)
 	}
-	if r.Kind == "schemas" || r.Kind == "tables" || r.Kind == "views" {
-		segments = append(segments, r.Kind)
-	}
 	return segments, nil
 }
 
-func (r catalogResource) forList(kind string) (catalogResource, error) {
+func (r catalogResource) validateList(kind string) error {
 	switch kind {
 	case "databases", "schemas", "tables", "views":
 	default:
-		return catalogResource{}, usageError("list requires databases, schemas, tables, or views")
+		return usageError("list requires databases, schemas, tables, or views")
 	}
 	switch r.Kind {
-	case "database":
-		if kind == "schemas" {
-			r.Kind = "schemas"
-		}
 	case "schema":
 		if kind == "databases" {
-			return catalogResource{}, usageError("cannot list databases within a schema")
-		}
-		if kind == "tables" || kind == "views" {
-			r.Kind = kind
+			return usageError("cannot list databases within a schema")
 		}
 	case "table", "view":
 		if kind != r.Kind+"s" {
-			return catalogResource{}, usageError("cannot list " + kind + " within a " + r.Kind)
+			return usageError("cannot list " + kind + " within a " + r.Kind)
 		}
 	}
-	return r, nil
+	return nil
 }
 
 func formatCatalogName(names ...string) string {

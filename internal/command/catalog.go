@@ -115,9 +115,7 @@ func (a *app) runCatalog(cmd *cobra.Command, action string, args []string, optio
 		return usageError("select a resource to drop, or use --all to clear the tenant")
 	}
 	if action == "list" {
-		var err error
-		resource, err = resource.forList(args[0])
-		if err != nil {
+		if err := resource.validateList(args[0]); err != nil {
 			return err
 		}
 	}
@@ -182,15 +180,17 @@ func normalizeCatalogError(catalogErr *dataplane.CatalogError) error {
 		hint = "review a new plan and pass --allow-destructive to permit data loss"
 	}
 	if catalogErr.Code == "catalog_commit_outcome_unknown" {
-		switch {
-		case errors.Is(catalogErr, context.Canceled):
-			code = clierror.ExitInterrupted
-		case errors.Is(catalogErr, context.DeadlineExceeded):
+		code = clierror.ExitGeneral
+		if errors.Is(catalogErr, context.DeadlineExceeded) {
 			code = clierror.ExitTemporary
-		default:
-			code = clierror.ExitGeneral
 		}
 		hint = "read the catalog and plan again before retrying"
+	}
+	if errors.Is(catalogErr, context.Canceled) {
+		code = clierror.ExitInterrupted
+		if catalogErr.Code != "catalog_commit_outcome_unknown" {
+			hint = ""
+		}
 	}
 	result := clierror.WithHint(clierror.Wrap(code, catalogErr.Error(), catalogErr), hint)
 	result.RequestID = catalogErr.RequestID

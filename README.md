@@ -94,7 +94,7 @@ scope catalog apply --table scopedb.public.events -f events.yaml
 
 `list databases`, `list schemas`, `list tables`, and `list views` default to the entire tenant and return fully qualified names. A definition replaces the complete selected resource: omitted objects are removed, and omitted collections are empty. Start from `get` when editing an existing resource. To manage the entire tenant, use `scope catalog get > catalog.yaml` and `scope catalog apply -f catalog.yaml`.
 
-`apply` displays a unified YAML diff on stderr. Changes that may permanently lose data display a warning before confirmation. Press Enter to approve the displayed changes, or Ctrl-C to cancel. Use `--yes` in automation and additionally pass `--allow-destructive` to permit data loss. Output defaults to YAML; `--format json` produces JSON. Files accept either format, and `-f -` reads stdin.
+`apply -f` displays a unified YAML diff on stderr. Changes that may permanently lose data display a warning before confirmation. Press Enter to approve the displayed changes, or Ctrl-C to cancel. Use `--yes` in automation and additionally pass `--allow-destructive` to permit data loss. Output defaults to YAML; `--format json` produces JSON. Files accept either format, and `-f -` reads stdin.
 
 For agents and reviewed changes, save a plan and apply it explicitly:
 
@@ -107,7 +107,7 @@ scope catalog apply --table scopedb.public.events -f events.yaml --yes > applied
 
 `plan` displays a YAML diff on stderr and writes the complete snapshot to stdout. A plan contains the original request, normalized before/after definitions, a `destructive` risk flag, connection, and catalog version. Machine-authenticated plans also bind to the API key through a hash, without including the key itself. Plans retain any custom storage credentials in the submitted definition; protect them like the source configuration.
 
-`apply --plan` does not prompt or reread the source file; destructive plans require `--allow-destructive`. Treat the plan as a snapshot; edit the definition and regenerate the plan to change it. If the catalog changes, apply fails and asks you to plan again. Plans include any deletions caused by the replacement definition. Planning alone can also be used for audits.
+`apply --plan` submits the saved request and writes the execution result to stdout without prompting, redisplaying the saved diff, or rereading the source file; destructive plans require `--allow-destructive`. Treat the plan as a snapshot; edit the definition and regenerate the plan to change it. If the catalog changes, apply fails and asks you to plan again. Plans include any deletions caused by the replacement definition. Planning alone can also be used for audits.
 
 The output of an apply contains its actual before/after state and the `destructive` flag. Data loss risks include removing tables or physical columns, shortening retention, and changing deduplication on existing tables.
 

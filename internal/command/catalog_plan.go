@@ -99,23 +99,36 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 		// Machine credentials carry no workspace ID, so pin the credential without storing it.
 		credentialHash = fmt.Sprintf("%x", sha256.Sum256([]byte(access.APIKey)))
 	}
-	if options.plan != "" && (plan.Endpoint != endpoint || plan.WorkspaceID != access.WorkspaceID || plan.CredentialHash != credentialHash) {
-		return usageError("plan targets a different connection, workspace, or machine credential; select its connection or generate a new plan")
-	}
 	service := dataplane.CatalogService{HTTPClient: a.httpClient}
-	if options.plan == "" {
+	if options.plan != "" {
+		if plan.Endpoint != endpoint || plan.WorkspaceID != access.WorkspaceID || plan.CredentialHash != credentialHash {
+			return usageError("plan targets a different connection, workspace, or machine credential; select its connection or generate a new plan")
+		}
+		if plan.Destructive && !options.allowDestructive {
+			return usageError("changes may permanently lose data; review the plan and pass --allow-destructive")
+		}
 		ctx, cancel := options.requestContext(cmd.Context())
-		change, etag, err := service.Mutate(ctx, access, dataplane.CatalogRequest{
-			Method: method, Resource: segments, Definition: plan.Definition, DryRun: true,
+		defer cancel()
+		result, _, err := service.Mutate(ctx, access, dataplane.CatalogRequest{
+			Method: method, Resource: segments, Definition: plan.Definition,
+			AllowDestructive: options.allowDestructive, ETag: plan.ETag,
 		})
-		cancel()
 		if err != nil {
 			return err
 		}
-		plan.Version, plan.Endpoint, plan.WorkspaceID = 1, endpoint, access.WorkspaceID
-		plan.CredentialHash = credentialHash
-		plan.ETag, plan.CatalogChange = etag, change
+		return writeCatalog(a.out, result, options.format)
 	}
+	ctx, cancel := options.requestContext(cmd.Context())
+	change, etag, err := service.Mutate(ctx, access, dataplane.CatalogRequest{
+		Method: method, Resource: segments, Definition: plan.Definition, DryRun: true,
+	})
+	cancel()
+	if err != nil {
+		return err
+	}
+	plan.Version, plan.Endpoint, plan.WorkspaceID = 1, endpoint, access.WorkspaceID
+	plan.CredentialHash = credentialHash
+	plan.ETag, plan.CatalogChange = etag, change
 	diff, err := catalogDiff(plan.Resource, plan.CatalogChange)
 	if err != nil {
 		return err
@@ -135,16 +148,16 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 	if action == "plan" {
 		return writeCatalog(a.out, plan, options.format)
 	}
-	if plan.Destructive && !options.allowDestructive && (options.yes || options.plan != "") {
+	if plan.Destructive && !options.allowDestructive && options.yes {
 		return usageError("changes may permanently lose data; review the diff and pass --allow-destructive")
 	}
-	if (diff != "" || plan.Destructive) && !options.yes && options.plan == "" {
+	if (diff != "" || plan.Destructive) && !options.yes {
 		if err := a.confirmCatalog(cmd.Context(), options.file == "-"); err != nil {
 			return err
 		}
 		options.allowDestructive = options.allowDestructive || plan.Destructive
 	}
-	ctx, cancel := options.requestContext(cmd.Context())
+	ctx, cancel = options.requestContext(cmd.Context())
 	defer cancel()
 	result, _, err := service.Mutate(ctx, access, dataplane.CatalogRequest{
 		Method: method, Resource: segments, Definition: plan.Definition,

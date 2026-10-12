@@ -40,12 +40,10 @@ func catalogNames(resource catalogResource, kind string, definition json.RawMess
 	switch resource.Kind {
 	case "database":
 		databases = []entry{document}
-	case "schemas":
-		databases = []entry{{Name: names[0], Schemas: document.Schemas}}
 	case "schema":
 		databases = []entry{{Name: names[0], Schemas: []entry{document}}}
-	case "tables", "views", "table", "view":
-		schema := entry{Name: names[1], Tables: document.Tables, Views: document.Views}
+	case "table", "view":
+		schema := entry{Name: names[1]}
 		if resource.Kind == "table" {
 			schema.Tables = []entry{document}
 		}
