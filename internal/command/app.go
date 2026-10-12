@@ -292,7 +292,7 @@ func NormalizeError(err error) error {
 		case controlErr.Retryable:
 			code = clierror.ExitTemporary
 		}
-		result := clierror.Wrap(code, controlErr.Error(), err)
+		result := clierror.Wrap(code, controlFailureText(controlErr), err)
 		result.RequestID = controlErr.RequestID
 		if code == clierror.ExitAuth {
 			result.Hint = "run 'scope login' or check the active workspace"
@@ -325,4 +325,15 @@ func NormalizeError(err error) error {
 		return clierror.Wrap(clierror.ExitUsage, err.Error(), err)
 	}
 	return clierror.Wrap(clierror.ExitGeneral, err.Error(), err)
+}
+
+// controlFailureText keeps a transport detail such as a timeout or a refused
+// connection visible. Those failures leave Error.Message generic, and the cause
+// line never repeats it, so the detail would otherwise be lost.
+func controlFailureText(controlErr *controlplane.Error) string {
+	message := controlErr.Error()
+	if controlErr.Err != nil && controlErr.Err.Error() != message {
+		return message + ": " + controlErr.Err.Error()
+	}
+	return message
 }

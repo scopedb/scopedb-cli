@@ -21,6 +21,7 @@ All significant changes to this project will be documented in this file.
 
 ### Improvements
 
+* Include the transport detail when the control plane cannot be reached, instead of only "cannot reach ScopeDB control plane".
 * `scope doctor` supports `--timeout` for slower connections, includes recovery hints and request IDs in failed checks, and preserves exit code 130 when interrupted.
 * `scope login` hides verification codes entered at a terminal and warns that `--code` exposes the value in process arguments.
 * `scope api-key list --format json` excludes one-time key material from its output.
