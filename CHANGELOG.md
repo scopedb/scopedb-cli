@@ -18,6 +18,7 @@ All significant changes to this project will be documented in this file.
 * `scope doctor` now verifies query access for a logged-in workspace, reporting provisioning, token exchange, and query failures that previously went unchecked.
 * Query timeout errors retain the statement ID and report when server cancellation could not be confirmed, so users can check the outcome before retrying.
 * `scope login` no longer saves endpoint and credential-store settings before authentication succeeds; if the final configuration write fails, it restores the previous valid credentials.
+* `scope workspace list` no longer prints a "no workspace is selected" notice pointing back at itself when the account has workspaces to choose from; it now only reports setup guidance when there is nothing to list.
 
 ### Improvements
 
