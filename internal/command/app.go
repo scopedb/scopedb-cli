@@ -94,11 +94,7 @@ func newApp(deps Dependencies) *app {
 	if deps.IsInputTerminal == nil {
 		deps.IsInputTerminal = func() bool {
 			file, ok := deps.In.(*os.File)
-			if !ok {
-				return false
-			}
-			info, err := file.Stat()
-			return err == nil && info.Mode()&os.ModeCharDevice != 0
+			return ok && term.IsTerminal(int(file.Fd()))
 		}
 	}
 	if deps.OpenURL == nil {
@@ -256,6 +252,38 @@ func NormalizeError(err error) error {
 	var ready *clierror.Error
 	if errors.As(err, &ready) {
 		return err
+	}
+	var catalogErr *dataplane.CatalogError
+	if errors.As(err, &catalogErr) {
+		code := clierror.ExitGeneral
+		if errors.Is(err, context.DeadlineExceeded) || catalogErr.Status == http.StatusRequestTimeout || catalogErr.Status == http.StatusTooManyRequests || catalogErr.Status >= 500 {
+			code = clierror.ExitTemporary
+		}
+		hint := ""
+		switch catalogErr.Status {
+		case http.StatusBadRequest, http.StatusUnprocessableEntity:
+			code = clierror.ExitUsage
+		case http.StatusUnauthorized, http.StatusForbidden:
+			code = clierror.ExitAuth
+		case http.StatusNotFound:
+			code = clierror.ExitNotFound
+		case http.StatusPreconditionFailed:
+			hint = "catalog changed; generate a new plan and review its diff"
+		}
+		if catalogErr.Code == "catalog_commit_outcome_unknown" {
+			switch {
+			case errors.Is(err, context.Canceled):
+				code = clierror.ExitInterrupted
+			case errors.Is(err, context.DeadlineExceeded):
+				code = clierror.ExitTemporary
+			default:
+				code = clierror.ExitGeneral
+			}
+			hint = "read the catalog and plan again before retrying"
+		}
+		result := clierror.WithHint(clierror.Wrap(code, catalogErr.Error(), err), hint)
+		result.RequestID = catalogErr.RequestID
+		return result
 	}
 	var interrupted *dataplane.InterruptedError
 	if errors.As(err, &interrupted) || errors.Is(err, context.Canceled) {

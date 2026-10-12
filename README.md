@@ -75,6 +75,40 @@ scope query 'FROM system.tables LIMIT 10' --format csv --output tables.csv
 
 Files created with `scope query --output` have permissions `0600` on Unix-like systems.
 
+## Catalog
+
+Catalog commands require a server with the declarative Catalog API. A definition replaces the complete selected resource: omitted objects are removed, and omitted collections are empty. Start from `get` when editing an existing resource.
+
+```sh
+scope catalog get table scopedb.public.events > events.yaml
+# Edit events.yaml.
+scope catalog apply table scopedb.public.events -f events.yaml
+```
+
+`apply` displays a unified YAML diff on stderr. Press Enter to approve all changes, including deletions, or Ctrl-C to cancel. Use `--yes` in automation. Output defaults to YAML; `--format json` produces JSON. Files accept either format, and `-f -` reads stdin.
+
+For agents and reviewed changes, save a plan and apply it explicitly:
+
+```sh
+scope catalog plan table scopedb.public.events -f events.yaml > plan.yaml
+scope catalog apply --plan plan.yaml
+# GitOps: save the actual before/after result as an audit artifact.
+scope catalog apply table scopedb.public.events -f events.yaml --yes > applied.yaml
+```
+
+A plan contains the original request, normalized before/after definitions, connection, and catalog version. Machine-authenticated plans also bind to the API key through a hash, without including the key itself. `apply --plan` is explicit approval and does not prompt or reread the source file. Treat the plan as a snapshot; edit the definition and regenerate the plan to change it. If the catalog changes, apply fails and asks you to plan again. Planning alone can also be used for audits. The output of an apply is its actual before/after state.
+
+Resources are `databases`, `database DB`, `schemas DB`, `schema DB.SCHEMA`, `tables DB.SCHEMA`, `table DB.SCHEMA.TABLE`, `views DB.SCHEMA`, and `view DB.SCHEMA.VIEW`. Names must be fully qualified. Bare names are case insensitive; use backticks to preserve case or include dots and special characters, for example ``'scopedb.public.`Events.Daily`'``.
+
+```sh
+scope catalog drop table scopedb.public.events
+scope catalog plan table scopedb.public.events --drop > drop.yaml
+scope catalog apply --plan drop.yaml
+scope catalog drop tables scopedb.public --yes
+```
+
+Dropping a collection clears its members and keeps its parent. `drop databases` clears the tenant's complete user catalog. Confirmation is a CLI step; the HTTP API itself has no deletion approval parameter.
+
 ## JSON output
 
 Business commands support `--format json` for scripts while keeping their usual human-readable output by default. Existing query, status, workspace list/show, API key list/create, and doctor JSON results keep their current shapes; action commands return an object describing the result.

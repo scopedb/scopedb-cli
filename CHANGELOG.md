@@ -10,6 +10,8 @@ All significant changes to this project will be documented in this file.
 
 ### New features
 
+* `scope catalog` exports YAML or JSON definitions, plans changes without writing, applies saved plans with automatic version checks, and deletes objects or clears collections. Interactive apply displays a YAML diff for confirmation; `--yes` supports automation.
+
 * `scope login`, `logout`, `workspace use`, `api-key revoke`, `console`, and `version` now support `--format json` for machine-readable action results.
 * `scope workspace list` and `api-key list` accept `--limit` to cap displayed results without changing the default of showing all items.
 
