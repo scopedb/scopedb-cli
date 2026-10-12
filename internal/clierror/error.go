@@ -17,6 +17,7 @@ package clierror
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -49,6 +50,19 @@ func (e *Error) Error() string {
 }
 
 func (e *Error) Unwrap() error { return e.Err }
+
+// causeText returns the underlying failure for diagnostics. A cause that the
+// message already repeats is dropped, and callers must never wrap a secret.
+func (e *Error) causeText() string {
+	if e.Err == nil {
+		return ""
+	}
+	text := e.Err.Error()
+	if text == "" || strings.Contains(e.Error(), text) {
+		return ""
+	}
+	return text
+}
 
 // New creates a CLI error with an exit code and user-facing message.
 func New(code int, message string) *Error {
@@ -86,6 +100,9 @@ func Render(err error) string {
 	}
 
 	message := fmt.Sprintf("Error: %s\n", cliErr.Error())
+	if cause := cliErr.causeText(); cause != "" {
+		message += fmt.Sprintf("Caused by: %s\n", cause)
+	}
 	if cliErr.RequestID != "" {
 		message += fmt.Sprintf("Request ID: %s\n", cliErr.RequestID)
 	}
