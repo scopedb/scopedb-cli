@@ -25,6 +25,7 @@ All significant changes to this project will be documented in this file.
 
 ### Improvements
 
+* Report the underlying cause when the CLI renders an error, in the terminal output and in `scope doctor` details, so a failure such as a credential store problem explains itself.
 * `scope workspace use` identifies the selected login workspace and warns when environment credentials override data commands or form an incomplete pair.
 * `scope doctor` supports `--timeout` for slower connections and `--timeout 0` to disable per-check limits (individual control-plane requests retain a 15-second limit), includes recovery hints and request IDs in failed checks, and preserves exit code 130 when interrupted.
 * `scope auth login` hides verification codes entered at a terminal and warns that `--code` exposes the value in process arguments.
