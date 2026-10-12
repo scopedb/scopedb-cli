@@ -85,6 +85,10 @@ func Render(err error) string {
 		return fmt.Sprintf("Error: %s\n", err)
 	}
 
+	if cliErr.Code == ExitInterrupted && cliErr.Hint == "" {
+		return "\n"
+	}
+
 	message := fmt.Sprintf("Error: %s\n", cliErr.Error())
 	if cliErr.RequestID != "" {
 		message += fmt.Sprintf("Request ID: %s\n", cliErr.RequestID)

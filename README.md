@@ -77,6 +77,48 @@ scope query 'FROM system.tables LIMIT 10' --format csv --output tables.csv
 
 Files created with `scope query --output` have permissions `0600` on Unix-like systems.
 
+## Catalog
+
+Catalog commands require a server with the declarative Catalog API. `get`, `apply`, and `plan` default to the entire tenant. Select one resource with `--database DB`, `--schema DB.SCHEMA`, `--table DB.SCHEMA.TABLE`, or `--view DB.SCHEMA.VIEW`. These scope flags are mutually exclusive and require fully qualified names. Bare names are case insensitive; use backticks to preserve case or include dots and special characters, for example ``'scopedb.public.`Events.Daily`'``.
+
+Browse resource names, then export the definition to edit:
+
+```sh
+scope catalog list databases
+scope catalog list schemas --database scopedb
+scope catalog list tables --schema scopedb.public
+scope catalog get --table scopedb.public.events > events.yaml
+# Edit events.yaml.
+scope catalog apply --table scopedb.public.events -f events.yaml
+```
+
+`list databases`, `list schemas`, `list tables`, and `list views` default to the entire tenant and return fully qualified names. A definition replaces the complete selected resource: omitted objects are removed, and omitted collections are empty. Start from `get` when editing an existing resource. To manage the entire tenant, use `scope catalog get > catalog.yaml` and `scope catalog apply -f catalog.yaml`.
+
+`apply` displays a unified YAML diff on stderr. Changes that may permanently lose data display a warning before confirmation. Press Enter to approve the displayed changes, or Ctrl-C to cancel. Use `--yes` in automation and additionally pass `--allow-destructive` to permit data loss. Output defaults to YAML; `--format json` produces JSON. Files accept either format, and `-f -` reads stdin.
+
+For agents and reviewed changes, save a plan and apply it explicitly:
+
+```sh
+scope catalog plan --table scopedb.public.events -f events.yaml > plan.yaml
+scope catalog apply --plan plan.yaml
+# GitOps: save the actual before/after result as an audit artifact.
+scope catalog apply --table scopedb.public.events -f events.yaml --yes > applied.yaml
+```
+
+`plan` displays a YAML diff on stderr and writes the complete snapshot to stdout. A plan contains the original request, normalized before/after definitions, a `destructive` risk flag, connection, and catalog version. Machine-authenticated plans also bind to the API key through a hash, without including the key itself. Plans retain any custom storage credentials in the submitted definition; protect them like the source configuration.
+
+`apply --plan` does not prompt or reread the source file; destructive plans require `--allow-destructive`. Treat the plan as a snapshot; edit the definition and regenerate the plan to change it. If the catalog changes, apply fails and asks you to plan again. Plans include any deletions caused by the replacement definition. Planning alone can also be used for audits.
+
+The output of an apply contains its actual before/after state and the `destructive` flag. Data loss risks include removing tables or physical columns, shortening retention, and changing deduplication on existing tables.
+
+```sh
+scope catalog drop --table scopedb.public.events
+scope catalog drop --table scopedb.public.events --yes --allow-destructive
+scope catalog drop --all --yes --allow-destructive
+```
+
+`drop` requires a resource scope or `--all` to clear the tenant's complete user catalog. `drop` displays the deletion diff and asks for confirmation; use `--yes --allow-destructive` to automate deleting stored data. To clear only the tables in a schema, export that schema, set `tables: []`, and apply the edited definition. The CLI sends `allow_destructive=true` after interactive approval or an explicit flag; the server checks every request independently.
+
 ## JSON output
 
 Business commands support `--format json` for scripts while keeping their usual human-readable output by default. Action commands return an object describing the result; `scope auth logout` reports `changed: true` when it clears an existing login and `changed: false` when already logged out.

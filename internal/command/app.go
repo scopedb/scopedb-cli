@@ -94,11 +94,7 @@ func newApp(deps Dependencies) *app {
 	if deps.IsInputTerminal == nil {
 		deps.IsInputTerminal = func() bool {
 			file, ok := deps.In.(*os.File)
-			if !ok {
-				return false
-			}
-			info, err := file.Stat()
-			return err == nil && info.Mode()&os.ModeCharDevice != 0
+			return ok && term.IsTerminal(int(file.Fd()))
 		}
 	}
 	if deps.OpenURL == nil {
@@ -256,6 +252,10 @@ func NormalizeError(err error) error {
 	var ready *clierror.Error
 	if errors.As(err, &ready) {
 		return err
+	}
+	var catalogErr *dataplane.CatalogError
+	if errors.As(err, &catalogErr) {
+		return normalizeCatalogError(catalogErr)
 	}
 	var interrupted *dataplane.InterruptedError
 	if errors.As(err, &interrupted) || errors.Is(err, context.Canceled) {

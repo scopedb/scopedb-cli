@@ -13,6 +13,7 @@ All significant changes to this project will be documented in this file.
 
 ### New features
 
+* `scope catalog` lists fully qualified resource names, exports YAML or JSON definitions, plans changes, and applies saved plans with automatic version checks. Commands default to the entire tenant or accept an explicit resource scope. Plan and apply display YAML diffs; interactive apply confirms potential data loss, while automation and saved plans require `--allow-destructive` for destructive changes. Drop deletes a selected object or clears the tenant with `--all`.
 * `scope auth login`, `auth logout`, `workspace use`, `api-key revoke`, `console`, and `version` support `--format json` for machine-readable action results. Logout reports whether it cleared an existing login with `changed`.
 * `scope workspace list` and `api-key list` accept `--limit` to cap displayed results without changing the default of showing all items.
 
