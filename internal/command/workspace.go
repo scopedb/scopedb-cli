@@ -17,6 +17,7 @@ package command
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/scopedb/scopedb-cli/internal/auth"
@@ -37,7 +38,7 @@ func (a *app) newWorkspaceCommand() *cobra.Command {
 	command.AddCommand(
 		a.newWorkspaceListCommand(),
 		a.newWorkspaceUseCommand(),
-		a.newWorkspaceShowCommand(),
+		a.newWorkspaceGetCommand(),
 	)
 	return command
 }
@@ -95,7 +96,7 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
+	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
 	command.Flags().IntVarP(&limit, "limit", "L", 0, "maximum results to display (0 means all)")
 	return command
 }
@@ -110,8 +111,10 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
 		Use:   "use <id-or-name>",
-		Short: "Select the workspace used by subsequent commands",
-		Args:  exactArgs(1),
+		Short: "Select the workspace for your login session",
+		Long: "Select the workspace for your login session.\n" +
+			"Data commands use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when set, regardless of this selection.",
+		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTextFormat(format); err != nil {
 				return err
@@ -131,24 +134,33 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if workspace.ID == session.CurrentWorkspaceID {
-				if format == structuredFormatJSON {
-					return writeJSON(a.out, workspaceUseResult{ID: workspace.ID, DisplayName: workspace.DisplayName, Changed: false})
+			changed := workspace.ID != session.CurrentWorkspaceID
+			if changed {
+				if err := runtime.auth.SelectWorkspace(cmd.Context(), state, workspace.ID); err != nil {
+					return NormalizeError(err)
 				}
-				_, err := fmt.Fprintf(a.out, "Already using workspace %s (%s).\n", workspace.Name(), workspace.ID)
-				return NormalizeError(err)
 			}
-			if err := runtime.auth.SelectWorkspace(cmd.Context(), state, workspace.ID); err != nil {
-				return NormalizeError(err)
+			if _, active, machineErr := runtime.auth.MachineAccess(); machineErr != nil {
+				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands require both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY; set both or unset both to use your login workspace."); err != nil {
+					return NormalizeError(err)
+				}
+			} else if active {
+				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands still use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY from the environment; unset both to use your login workspace."); err != nil {
+					return NormalizeError(err)
+				}
 			}
 			if format == structuredFormatJSON {
-				return writeJSON(a.out, workspaceUseResult{ID: workspace.ID, DisplayName: workspace.DisplayName, Changed: true})
+				return writeJSON(a.out, workspaceUseResult{ID: workspace.ID, DisplayName: workspace.DisplayName, Changed: changed})
 			}
-			_, err = fmt.Fprintf(a.out, "Now using workspace %s (%s).\n", workspace.Name(), workspace.ID)
+			if !changed {
+				_, err := fmt.Fprintf(a.out, "Already using workspace %s (%s) for your login session.\n", workspace.Name(), workspace.ID)
+				return NormalizeError(err)
+			}
+			_, err = fmt.Fprintf(a.out, "Now using workspace %s (%s) for your login session.\n", workspace.Name(), workspace.ID)
 			return NormalizeError(err)
 		},
 	}
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatText, "output format: text or json")
+	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	return command
 }
 
@@ -158,11 +170,30 @@ type workspaceUseResult struct {
 	Changed     bool    `json:"changed"`
 }
 
-func (a *app) newWorkspaceShowCommand() *cobra.Command {
+type workspaceView struct {
+	Workspace struct {
+		ID          string  `json:"id"`
+		DisplayName *string `json:"display_name"`
+	} `json:"workspace"`
+	Connection struct {
+		Endpoint   string `json:"endpoint"`
+		AuthScheme string `json:"auth_scheme"`
+	} `json:"connection"`
+	Placement struct {
+		Provider string `json:"provider"`
+		Region   string `json:"region"`
+	} `json:"placement"`
+	Provisioning struct {
+		Status    string     `json:"status"`
+		UpdatedAt *time.Time `json:"updated_at"`
+	} `json:"provisioning"`
+}
+
+func (a *app) newWorkspaceGetCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
-		Use:   "show",
-		Short: "Show the current workspace",
+		Use:   "get",
+		Short: "Get details of your login session's current workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
@@ -181,7 +212,16 @@ func (a *app) newWorkspaceShowCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			if format == structuredFormatJSON {
-				return writeJSON(a.out, details)
+				var view workspaceView
+				view.Workspace.ID = details.Workspace.ID
+				view.Workspace.DisplayName = details.Workspace.DisplayName
+				view.Connection.Endpoint = details.Connection.APIBaseURL
+				view.Connection.AuthScheme = details.Connection.AuthScheme
+				view.Placement.Provider = details.Placement.Provider
+				view.Placement.Region = details.Placement.Region
+				view.Provisioning.Status = details.Provisioning.Status
+				view.Provisioning.UpdatedAt = details.Provisioning.UpdatedAt
+				return writeJSON(a.out, view)
 			}
 			t := newTable(a.out, "FIELD", "VALUE")
 			t.AppendRows([]table.Row{
@@ -197,7 +237,7 @@ func (a *app) newWorkspaceShowCommand() *cobra.Command {
 			return nil
 		},
 	}
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
+	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
 	return command
 }
 

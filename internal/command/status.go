@@ -22,22 +22,25 @@ import (
 )
 
 type statusView struct {
-	AuthMode          string `json:"auth_mode"`
-	ControlURL        string `json:"control_url,omitempty"`
-	User              string `json:"user,omitempty"`
-	UserStatus        string `json:"user_status,omitempty"`
-	WorkspaceID       string `json:"workspace_id,omitempty"`
-	WorkspaceName     string `json:"workspace_name,omitempty"`
-	Endpoint          string `json:"endpoint,omitempty"`
-	ProvisioningState string `json:"provisioning_state,omitempty"`
+	AuthMode         string `json:"auth_mode"`
+	ControlURL       string `json:"control_url,omitempty"`
+	Email            string `json:"email,omitempty"`
+	CredentialSource string `json:"credential_source"`
+	UserStatus       string `json:"user_status,omitempty"`
+	WorkspaceID      string `json:"workspace_id,omitempty"`
+	WorkspaceName    string `json:"workspace_name,omitempty"`
+	Endpoint         string `json:"endpoint,omitempty"`
 }
 
 func (a *app) newStatusCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
 		Use:   "status",
-		Short: "Show authentication and workspace status",
-		Args:  cobra.NoArgs,
+		Short: "Show authentication source, identity, and connection target",
+		Long: "Show authentication source, identity, and connection target.\n" +
+			"Uses environment credentials when set; otherwise verifies your login session.\n" +
+			"Run 'scope doctor' to verify query access or 'scope workspace get' for deployment details.",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
 				return err
@@ -50,7 +53,9 @@ func (a *app) newStatusCommand() *cobra.Command {
 				if machineErr != nil {
 					return NormalizeError(machineErr)
 				}
-				return renderStatus(a.out, format, statusView{AuthMode: access.Mode, Endpoint: access.Endpoint})
+				return renderStatus(a.out, format, statusView{
+					AuthMode: access.Mode, CredentialSource: "environment", Endpoint: access.Endpoint,
+				})
 			}
 
 			state, session, err := runtime.auth.LoadSession(cmd.Context())
@@ -58,11 +63,12 @@ func (a *app) newStatusCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			view := statusView{
-				AuthMode:    "session",
-				ControlURL:  runtime.config.ControlURL,
-				User:        session.User.Email,
-				UserStatus:  session.User.Status,
-				WorkspaceID: state.WorkspaceID,
+				AuthMode:         "session",
+				ControlURL:       runtime.config.ControlURL,
+				Email:            session.User.Email,
+				CredentialSource: runtime.config.CredentialStore,
+				UserStatus:       session.User.Status,
+				WorkspaceID:      state.WorkspaceID,
 			}
 			if state.WorkspaceID != "" {
 				details, err := runtime.control.GetWorkspace(cmd.Context(), state.SessionToken, state.WorkspaceID)
@@ -71,7 +77,6 @@ func (a *app) newStatusCommand() *cobra.Command {
 				}
 				view.WorkspaceName = details.Workspace.Name()
 				view.Endpoint = details.Connection.APIBaseURL
-				view.ProvisioningState = details.Provisioning.Status
 			}
 			if err := a.writeWorkspaceSetup(session); err != nil {
 				return err
@@ -79,7 +84,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 			return renderStatus(a.out, format, view)
 		},
 	}
-	command.Flags().StringVarP(&format, "format", "f", structuredFormatTable, "output format: table or json")
+	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
 	return command
 }
 
@@ -90,12 +95,12 @@ func renderStatus(out io.Writer, format string, view statusView) error {
 	t := newTable(out, "FIELD", "VALUE")
 	t.AppendRows([]table.Row{
 		{"Auth mode", view.AuthMode},
-		{"User", emptyDash(view.User)},
+		{"Credential source", view.CredentialSource},
+		{"Email", emptyDash(view.Email)},
 		{"User status", emptyDash(view.UserStatus)},
 		{"Workspace", emptyDash(view.WorkspaceName)},
 		{"Workspace ID", emptyDash(view.WorkspaceID)},
 		{"Endpoint", emptyDash(view.Endpoint)},
-		{"Provisioning", emptyDash(view.ProvisioningState)},
 		{"Control URL", emptyDash(view.ControlURL)},
 	})
 	t.Render()

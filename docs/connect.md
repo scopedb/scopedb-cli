@@ -1,17 +1,19 @@
 # Connect the CLI and your application
 
-Use `scope login` for terminal exploration. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring; SDKs do not read it.
+Use `scope auth login` for terminal exploration. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring; SDKs do not read it.
 
 ## Verify your login
 
 ```sh
-scope login
-scope status
+scope auth login
+scope auth status
 scope doctor
 scope query 'SELECT 1 AS ready'
 ```
 
-If your account is awaiting approval or has no workspace, follow the instructions from `scope status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id-or-name>`.
+If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id-or-name>`.
+
+`scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`. In login mode it verifies your session; in environment mode it displays the configured endpoint without validating the API key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
 
 `scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
 
@@ -20,7 +22,7 @@ If your account is awaiting approval or has no workspace, follow the instruction
 Show the selected workspace's endpoint and create a key for your application:
 
 ```sh
-scope workspace show
+scope workspace get
 scope api-key create my-app --expires-in 720h
 ```
 
@@ -31,16 +33,18 @@ Copy the workspace's data-plane endpoint, without appending `/v1/statements`. Se
 ```sh
 export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
 export SCOPEDB_API_KEY="your-api-key"
-scope status
+scope auth status
 scope doctor --timeout 15s
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-`scope status` shows `api_key` mode when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. Workspace selection and API key management still use your login. To return to login-based queries, unset both variables:
+`scope auth status` shows `api_key` mode when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login session and warns when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
 
 ```sh
 unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
 ```
+
+To end your login session, run `scope auth logout` after unsetting both variables. The command refuses to log out while machine credentials are configured; it does not revoke application API keys.
 
 ## Connect an SDK
 
@@ -60,16 +64,16 @@ Start with `SELECT 1 AS ready` before querying application tables. Keep keys in 
 scope doctor --format json --timeout 15s
 ```
 
-Each remote check has its own timeout. Resolving login credentials and running the test query share one check's timeout. Cancellation may take an additional five seconds while the CLI attempts to cancel an already-submitted query.
+Each remote check has its own timeout, defaulting to five seconds. Resolving login credentials and running the test query share one check's timeout. `--timeout 0` disables this per-check limit; individual control-plane HTTP requests retain their 15-second limit. Ctrl+C can interrupt checks in either mode. Cancellation may take an additional five seconds while the CLI attempts to cancel an already-submitted query.
 
 If a timed-out query reports that server cancellation could not be confirmed, retain the statement ID and check its outcome before retrying. The statement may have completed or still be running; repeating a write could duplicate its effects. A successful cancellation request only confirms cancellation when the returned statement status is `cancelled`.
 
 | Symptom                          | Next step                                                                                                 |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Only one connection variable set | Set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or unset both to use your login.                       |
-| Not logged in                    | Run `scope login`, or configure both connection variables.                                                |
+| Not logged in                    | Run `scope auth login`, or configure both connection variables.                                           |
 | No workspace selected            | Run `scope workspace list`, then `scope workspace use <id-or-name>`.                                      |
-| Workspace is still provisioning  | Check `scope status` or the Console and retry when the workspace is ready.                                |
+| Workspace is still provisioning  | Check `scope workspace get` or the Console and retry when the workspace is ready.                         |
 | API key rejected                 | Check that the endpoint and key belong to the same workspace and the key has not expired or been revoked. |
 | Operation timed out              | Check network access to the endpoint and retry with a larger `--timeout`.                                 |
 

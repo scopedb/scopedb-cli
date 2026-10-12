@@ -273,7 +273,7 @@ func NormalizeError(err error) error {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitTemporary, "operation timed out", err), "increase --timeout and retry")
 	}
 	if errors.Is(err, auth.ErrNotLoggedIn) {
-		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "not logged in", err), "run 'scope login'")
+		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "not logged in", err), "run 'scope auth login'")
 	}
 	if errors.Is(err, auth.ErrInvalidMachineEnv) {
 		return clierror.Wrap(clierror.ExitUsage, err.Error(), err)
@@ -295,7 +295,7 @@ func NormalizeError(err error) error {
 		result := clierror.Wrap(code, controlErr.Error(), err)
 		result.RequestID = controlErr.RequestID
 		if code == clierror.ExitAuth {
-			result.Hint = "run 'scope login' or check the active workspace"
+			result.Hint = "run 'scope auth login' or check the active workspace"
 		} else if controlErr.RetryAfter > 0 {
 			result.Hint = "retry after " + controlErr.RetryAfter.Round(time.Second).String()
 		}

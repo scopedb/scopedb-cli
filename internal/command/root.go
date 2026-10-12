@@ -47,9 +47,7 @@ func NewRoot(deps Dependencies) *cobra.Command {
 	root.PersistentFlags().StringVar(&a.consoleURLFlag, "console-url", "", "ScopeDB console URL")
 
 	root.AddCommand(
-		a.newLoginCommand(),
-		a.newLogoutCommand(),
-		a.newStatusCommand(),
+		a.newAuthCommand(),
 		a.newWorkspaceCommand(),
 		a.newQueryCommand(),
 		a.newAPIKeyCommand(),
@@ -59,6 +57,19 @@ func NewRoot(deps Dependencies) *cobra.Command {
 		newCompletionCommand(root),
 	)
 	return root
+}
+
+func (a *app) newAuthCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "auth",
+		Short: "Manage CLI authentication",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return cmd.Help()
+		},
+	}
+	command.AddCommand(a.newLoginCommand(), a.newLogoutCommand(), a.newStatusCommand())
+	return command
 }
 
 func usageError(message string) error {
