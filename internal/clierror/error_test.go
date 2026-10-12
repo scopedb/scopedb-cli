@@ -21,20 +21,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCauseReturnsDistinctUnderlyingFailure(t *testing.T) {
-	err := Wrap(ExitGeneral, "login succeeded, but credentials could not be stored", errors.New("write credentials to OS keyring: exit status 1"))
-	require.Equal(t, "write credentials to OS keyring: exit status 1", err.cause())
-}
-
-func TestCauseIsEmptyWhenMessageAlreadyContainsIt(t *testing.T) {
-	err := Wrap(ExitNotFound, "workspace not found", errors.New("workspace not found"))
-	require.Empty(t, err.cause())
-}
-
-func TestCauseIsEmptyWithoutUnderlyingFailure(t *testing.T) {
-	require.Empty(t, New(ExitUsage, "email must not be empty").cause())
-}
-
 type wrapper struct {
 	message string
 	err     error
@@ -58,6 +44,18 @@ func TestRenderPrintsCauseBeforeRequestIDAndHint(t *testing.T) {
 func TestRenderOmitsCauseWhenMessageRepeatsIt(t *testing.T) {
 	err := Wrap(ExitNotFound, "workspace not found", errors.New("workspace not found"))
 	require.Equal(t, "Error: workspace not found\n", Render(err))
+}
+
+func TestRenderOmitsCauseWithoutUnderlyingFailure(t *testing.T) {
+	require.Equal(t, "Error: email must not be empty\n", Render(New(ExitUsage, "email must not be empty")))
+}
+
+func TestRenderKeepsJoinedCauseOnOneLine(t *testing.T) {
+	err := Wrap(ExitGeneral, "login succeeded, but credentials could not be stored", errors.New("write credentials to OS keyring: exit status 1"))
+	err.Message += " and previous credentials could not be restored"
+	err.Err = errors.Join(err.Err, errors.New("restore previous credentials: permission denied"))
+	require.Equal(t, "Error: login succeeded, but credentials could not be stored and previous credentials could not be restored\n"+
+		"Caused by: write credentials to OS keyring: exit status 1; restore previous credentials: permission denied\n", Render(err))
 }
 
 func TestCompactJoinsPartsInOrder(t *testing.T) {

@@ -52,7 +52,8 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error { return e.Err }
 
 // cause is empty when the message already contains it, so a cause that only
-// repeats the message is never rendered twice. Callers must never wrap a secret.
+// repeats the message is never rendered twice. The result is folded onto one line, because
+// joined errors and server messages may contain newlines. Callers must never wrap a secret.
 func (e *Error) cause() string {
 	if e.Err == nil {
 		return ""
@@ -64,7 +65,7 @@ func (e *Error) cause() string {
 	for {
 		cause := err.Error()
 		if cause != "" && !strings.Contains(message, cause) {
-			return cause
+			return singleLine(cause)
 		}
 		next := errors.Unwrap(err)
 		if next == nil {
@@ -72,6 +73,18 @@ func (e *Error) cause() string {
 		}
 		err = next
 	}
+}
+
+// singleLine folds the newlines joined errors use, so each rendered cause stays on its own line.
+func singleLine(text string) string {
+	if !strings.ContainsAny(text, "\r\n") {
+		return text
+	}
+	lines := strings.FieldsFunc(text, func(r rune) bool { return r == '\r' || r == '\n' })
+	for i, line := range lines {
+		lines[i] = strings.TrimSpace(line)
+	}
+	return strings.Join(lines, "; ")
 }
 
 // New creates a CLI error with an exit code and user-facing message.
