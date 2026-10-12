@@ -87,13 +87,13 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 	require.Zero(t, revoked.Load())
 
 	for _, phase := range []struct {
-		name       string
-		status     string
-		workspaces []controlplane.Workspace
-		message    string
-		hint       string
-		listNotice string
-		exitCode   int
+		name           string
+		status         string
+		workspaces     []controlplane.Workspace
+		message        string
+		hint           string
+		wantListNotice string
+		exitCode       int
 	}{
 		{"pending", "pending", nil, "awaiting approval", "scope console --open", "awaiting approval", clierror.ExitAuth},
 		{"approved", "active", nil, "no workspaces", "create your first workspace", "no workspaces", clierror.ExitUsage},
@@ -121,10 +121,10 @@ func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
 			require.NotNil(t, workspaces)
 			require.Len(t, workspaces, len(phase.workspaces))
 			require.NotContains(t, listDiagnostics, "no workspace is selected")
-			if phase.listNotice == "" {
+			if phase.wantListNotice == "" {
 				require.Empty(t, listDiagnostics)
 			} else {
-				require.Contains(t, listDiagnostics, phase.listNotice)
+				require.Contains(t, listDiagnostics, phase.wantListNotice)
 			}
 
 			out, _, err = runCommand(t, "doctor", "--format", "json")
