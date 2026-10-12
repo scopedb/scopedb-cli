@@ -17,6 +17,7 @@ package command
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -214,6 +215,20 @@ func setupLoginTest(t *testing.T, handler http.Handler) (*credential.PlaintextSt
 	paths, err := config.ResolvePaths()
 	require.NoError(t, err)
 	return credential.NewPlaintextStore(paths.CredentialsFile), server.URL
+}
+
+func TestLoginReportsUnreachableControlPlane(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	controlURL := "http://" + listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	_, _, err = runCommand(t, "login", "--email", "dev@example.com", "--code", "123456", "--control-url", controlURL)
+	require.Error(t, err)
+	rendered := clierror.Render(NormalizeError(err))
+	require.Contains(t, rendered, "cannot reach ScopeDB control plane")
+	require.Contains(t, rendered, "connection refused")
+	require.NotContains(t, rendered, "Caused by:")
 }
 
 func TestFailedLoginDoesNotChangeConfig(t *testing.T) {
