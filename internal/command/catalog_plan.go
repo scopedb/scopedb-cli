@@ -39,7 +39,7 @@ type catalogPlan struct {
 	Resource       catalogResource `json:"resource"`
 	Definition     json.RawMessage `json:"definition"`
 	ETag           string          `json:"etag"`
-	scopedb.CatalogResult
+	scopedb.CatalogResult[json.RawMessage]
 }
 
 func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogResource, options catalogOptions) error {
@@ -77,7 +77,7 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 			method, plan.Definition = http.MethodPut, definition
 		}
 	}
-	segments, err := plan.Resource.segments()
+	names, err := plan.Resource.names()
 	if err != nil {
 		return err
 	}
@@ -104,8 +104,8 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 		return err
 	}
 	defer client.Close()
-	catalog := client.Catalog(segments...)
-	mutate := func(ctx context.Context, controls scopedb.CatalogOptions) (scopedb.CatalogResult, error) {
+	catalog := plan.Resource.resolve(client, names)
+	mutate := func(ctx context.Context, controls scopedb.CatalogOptions) (scopedb.CatalogResult[json.RawMessage], error) {
 		if method == http.MethodDelete {
 			return catalog.Delete(ctx, controls)
 		}

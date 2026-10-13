@@ -32,7 +32,7 @@ func catalogNames(resource catalogResource, kind string, definition json.RawMess
 	if err := json.Unmarshal(definition, &document); err != nil {
 		return nil, fmt.Errorf("invalid catalog response: %w", err)
 	}
-	names, err := parseCatalogName(resource.Name)
+	names, err := resource.names()
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,6 @@ func catalogNames(resource catalogResource, kind string, definition json.RawMess
 		databases = []entry{document}
 	case "schema":
 		databases = []entry{{Name: names[0], Schemas: []entry{document}}}
-
 	}
 	result := []string{}
 	for _, database := range databases {

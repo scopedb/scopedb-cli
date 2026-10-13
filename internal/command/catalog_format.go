@@ -88,7 +88,7 @@ func writeCatalog(writer io.Writer, value any, format string) error {
 	return err
 }
 
-func catalogDiff(resource catalogResource, change scopedb.CatalogResult) (string, error) {
+func catalogDiff(resource catalogResource, change scopedb.CatalogResult[json.RawMessage]) (string, error) {
 	before, err := yaml.FromJSON(change.Before)
 	if err != nil {
 		return "", err

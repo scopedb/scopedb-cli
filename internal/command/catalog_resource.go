@@ -15,10 +15,13 @@
 package command
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 	"unicode"
+
+	scopedb "github.com/scopedb/goscopedb"
 )
 
 type catalogResource struct {
@@ -26,7 +29,7 @@ type catalogResource struct {
 	Name string `json:"name,omitempty"`
 }
 
-func (r catalogResource) segments() ([]string, error) {
+func (r catalogResource) names() ([]string, error) {
 	var count int
 	switch r.Kind {
 	case "catalog":
@@ -47,24 +50,26 @@ func (r catalogResource) segments() ([]string, error) {
 	if len(names) != count {
 		return nil, usageError(fmt.Sprintf("%s requires %d name component(s)", r.Kind, count))
 	}
-	var segments []string
-	for i, name := range names {
-		if i == 0 {
-			segments = append(segments, "databases")
-		}
-		if i == 1 {
-			segments = append(segments, "schemas")
-		}
-		if i == 2 {
-			collection := "tables"
-			if r.Kind == "view" {
-				collection = "views"
-			}
-			segments = append(segments, collection)
-		}
-		segments = append(segments, name)
+	return names, nil
+}
+
+// resolve receives the name components validated before resolving credentials.
+func (r catalogResource) resolve(client *scopedb.Client, names []string) *scopedb.CatalogResource[json.RawMessage] {
+	catalog := client.Catalog()
+	switch r.Kind {
+	case "catalog":
+		return catalog.Raw()
+	case "database":
+		return catalog.Database(names[0]).Raw()
+	case "schema":
+		return catalog.Schema(names[0], names[1]).Raw()
+	case "table":
+		return catalog.Table(names[0], names[1], names[2]).Raw()
+	case "view":
+		return catalog.View(names[0], names[1], names[2]).Raw()
+	default:
+		panic("unvalidated catalog resource")
 	}
-	return segments, nil
 }
 
 func (r catalogResource) validateList(kind string) error {

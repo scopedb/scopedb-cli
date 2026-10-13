@@ -131,7 +131,7 @@ func (a *app) runCatalog(cmd *cobra.Command, action string, args []string, optio
 	if action != "get" && action != "list" {
 		return a.changeCatalog(cmd, action, resource, options)
 	}
-	segments, err := resource.segments()
+	names, err := resource.names()
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (a *app) runCatalog(cmd *cobra.Command, action string, args []string, optio
 		return err
 	}
 	defer client.Close()
-	catalog := client.Catalog(segments...)
+	catalog := resource.resolve(client, names)
 	ctx, cancel := options.requestContext(cmd.Context())
 	defer cancel()
 	snapshot, err := catalog.Get(ctx)
