@@ -7,7 +7,7 @@ toolchain go1.27.1
 require (
 	github.com/jedib0t/go-pretty/v6 v6.8.3
 	github.com/pelletier/go-toml/v2 v2.4.3
-	github.com/scopedb/goscopedb v0.6.3
+	github.com/scopedb/goscopedb v0.6.4-0.20261013102911-103c1819ac5e
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	github.com/zalando/go-keyring v0.2.8

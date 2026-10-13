@@ -77,6 +77,8 @@ scope query 'FROM system.tables LIMIT 10' --format csv --output tables.csv
 
 Files created with `scope query --output` have permissions `0600` on Unix-like systems.
 
+Queries use the ScopeDB 0.6 statement protocol. `--timeout` limits client-side waiting (default: five minutes) and attempts server cancellation when it expires. `--timeout 0` disables this client limit; the server's default one-hour elapsed-time limit still applies.
+
 ## JSON output
 
 Business commands support `--format json` for scripts while keeping their usual human-readable output by default. Action commands return an object describing the result; `scope auth logout` reports `changed: true` when it clears an existing login and `changed: false` when already logged out.
