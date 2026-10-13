@@ -17,6 +17,7 @@ package clierror
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -50,6 +51,34 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
+func (e *Error) cause() string {
+	if e.Err == nil {
+		return ""
+	}
+	message := e.Error()
+	err := e.Err
+	// A wrapper often repeats the message while the detail sits further down,
+	// such as a transport failure inside a control-plane error.
+	for {
+		cause := err.Error()
+		if cause != "" && !strings.Contains(message, cause) {
+			if !strings.ContainsAny(cause, "\r\n") {
+				return cause
+			}
+			lines := strings.FieldsFunc(cause, func(r rune) bool { return r == '\r' || r == '\n' })
+			for i, line := range lines {
+				lines[i] = strings.TrimSpace(line)
+			}
+			return strings.Join(lines, "; ")
+		}
+		next := errors.Unwrap(err)
+		if next == nil {
+			return ""
+		}
+		err = next
+	}
+}
+
 // New creates a CLI error with an exit code and user-facing message.
 func New(code int, message string) *Error {
 	return &Error{Code: code, Message: message}
@@ -78,6 +107,26 @@ func ExitCode(err error) int {
 	return ExitGeneral
 }
 
+// Compact writes the message, cause, request ID, and hint as one string for
+// reports that list one entry per failure. Callers must never wrap a secret.
+func Compact(err error) string {
+	var cliErr *Error
+	if !errors.As(err, &cliErr) {
+		return fmt.Sprint(err)
+	}
+	parts := []string{cliErr.Error()}
+	if cause := cliErr.cause(); cause != "" {
+		parts = append(parts, cause)
+	}
+	if cliErr.RequestID != "" {
+		parts = append(parts, "request ID: "+cliErr.RequestID)
+	}
+	if cliErr.Hint != "" {
+		parts = append(parts, cliErr.Hint)
+	}
+	return strings.Join(parts, "; ")
+}
+
 // Render writes a stable, secret-safe error message.
 func Render(err error) string {
 	var cliErr *Error
@@ -89,12 +138,15 @@ func Render(err error) string {
 		return "\n"
 	}
 
-	message := fmt.Sprintf("Error: %s\n", cliErr.Error())
+	lines := fmt.Sprintf("Error: %s\n", cliErr.Error())
+	if cause := cliErr.cause(); cause != "" {
+		lines += fmt.Sprintf("Caused by: %s\n", cause)
+	}
 	if cliErr.RequestID != "" {
-		message += fmt.Sprintf("Request ID: %s\n", cliErr.RequestID)
+		lines += fmt.Sprintf("Request ID: %s\n", cliErr.RequestID)
 	}
 	if cliErr.Hint != "" {
-		message += fmt.Sprintf("Hint: %s\n", cliErr.Hint)
+		lines += fmt.Sprintf("Hint: %s\n", cliErr.Hint)
 	}
-	return message
+	return lines
 }

@@ -82,7 +82,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				cancel()
 				if healthErr != nil {
 					report.OK = false
-					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "fail", Details: doctorErrorDetails(healthErr)})
+					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "fail", Details: clierror.Compact(NormalizeError(healthErr))})
 				} else {
 					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "pass", Details: runtime.config.ControlURL})
 				}
@@ -99,7 +99,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					sessionCancel()
 					if sessionErr != nil {
 						report.OK = false
-						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: doctorErrorDetails(sessionErr)})
+						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(sessionErr))})
 					} else {
 						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: session.User.Email})
 						if setupErr := workspaceSetupError(auth.RequireWorkspace(session)); setupErr != nil {
@@ -140,7 +140,7 @@ func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext,
 	if err != nil {
 		report.OK = false
 		check.Status = "fail"
-		check.Details = doctorErrorDetails(err)
+		check.Details = clierror.Compact(NormalizeError(err))
 		if clierror.ExitCode(NormalizeError(err)) == clierror.ExitAuth && access.Mode == "api_key" {
 			check.Details += "; check SCOPEDB_ENDPOINT and SCOPEDB_API_KEY belong to the same workspace and the key has not expired or been revoked"
 		}
@@ -153,21 +153,6 @@ func checkContext(ctx context.Context, timeout time.Duration) (context.Context, 
 		return context.WithCancel(ctx)
 	}
 	return context.WithTimeout(ctx, timeout)
-}
-
-func doctorErrorDetails(err error) string {
-	normalized := NormalizeError(err)
-	details := normalized.Error()
-	var cliErr *clierror.Error
-	if errors.As(normalized, &cliErr) {
-		if cliErr.RequestID != "" {
-			details += "; request ID: " + cliErr.RequestID
-		}
-		if cliErr.Hint != "" {
-			details += "; " + cliErr.Hint
-		}
-	}
-	return details
 }
 
 func renderDoctor(out io.Writer, format string, report doctorReport) error {
