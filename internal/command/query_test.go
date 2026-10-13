@@ -29,6 +29,39 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestQueryReportsStatementFailure(t *testing.T) {
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		Out: &out, ErrOut: &diagnostics,
+		Getenv: func(name string) string {
+			switch name {
+			case "SCOPEDB_ENDPOINT":
+				return "https://data.example.com"
+			case "SCOPEDB_API_KEY":
+				return "fixture-secret"
+			default:
+				return ""
+			}
+		},
+		HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"statement_id":"01989a4e-4ee2-7e63-87a5-65ac3b5161dc","status":"failed","created_at":"2026-09-09T00:00:00Z","progress":{},"error":{"code":"statement_failed","message":"unknown function UNKNOWN_FUNCTION"}}`)),
+				Request:    r,
+			}, nil
+		})},
+	})
+	root.SetArgs([]string{"query", "SELECT UNKNOWN_FUNCTION()"})
+	err := root.ExecuteContext(t.Context())
+	require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
+	require.Empty(t, out.String())
+	rendered := clierror.Render(err)
+	require.Contains(t, rendered, "unknown function UNKNOWN_FUNCTION")
+	require.NotContains(t, rendered+diagnostics.String(), "fixture-secret")
+}
+
 func TestQueryTimeoutReportsServerCancellation(t *testing.T) {
 	const statementID = "01989a4e-4ee2-7e63-87a5-65ac3b5161dc"
 	for _, cancelStatus := range []string{"cancelled", "finished", "failed", "running", "unavailable"} {

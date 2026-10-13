@@ -18,6 +18,8 @@ All significant changes to this project will be documented in this file.
 
 ### Bug fixes
 
+* Queries use the ScopeDB 0.6 statement protocol and show the server's failure reason instead of a generic statement failure.
+
 * `scope doctor` now verifies query access for a logged-in workspace, reporting provisioning, token exchange, and query failures that previously went unchecked.
 * Query timeout errors retain the statement ID and report when server cancellation could not be confirmed, so users can check the outcome before retrying.
 * `scope auth login` no longer saves endpoint and credential-store settings before authentication succeeds; if the final configuration write fails, it restores the previous valid credentials.
