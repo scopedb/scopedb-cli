@@ -77,6 +77,60 @@ scope query 'FROM system.tables LIMIT 10' --format csv --output tables.csv
 
 Files created with `scope query --output` have permissions `0600` on Unix-like systems.
 
+## Catalog
+
+Catalog commands require a server with the declarative Catalog API. `get`, `apply`, and `plan` default to the entire tenant. Select one resource with `--database DB`, `--schema DB.SCHEMA`, `--table DB.SCHEMA.TABLE`, or `--view DB.SCHEMA.VIEW`. These scope flags are mutually exclusive and require fully qualified names. Bare names are case insensitive; use backticks to preserve case or include dots and special characters, for example ``'scopedb.public.`Events.Daily`'``.
+
+Browse resource names, then export the definition to edit:
+
+```sh
+scope catalog list databases
+scope catalog list schemas --database scopedb
+scope catalog list tables --schema scopedb.public
+scope catalog get --table scopedb.public.events -o events.yaml
+# Edit events.yaml.
+scope catalog apply --table scopedb.public.events -f events.yaml
+```
+
+`list databases`, `list schemas`, `list tables`, and `list views` default to the entire tenant and return fully qualified names. Limit schemas with `--database`; limit tables or views with `--database` or `--schema`. Listing reads the complete selected resource and extracts its names locally. A definition replaces the complete selected resource: omitted objects are removed, and omitted collections are empty. Start from `get` when editing an existing resource. To manage the entire tenant, use `scope catalog get > catalog.yaml` and `scope catalog apply -f catalog.yaml`.
+
+`apply -f` displays a unified YAML diff on stderr. Changes that may permanently lose data display a warning before confirmation. Press Enter to approve the displayed changes, or Ctrl-C to cancel. Use `--yes` in automation and additionally pass `--allow-destructive` to permit data loss. Output defaults to YAML; `--format json` produces JSON. Files accept either format, and `-f -` reads stdin.
+
+For agents and reviewed changes, save a plan and apply it explicitly:
+
+```sh
+scope catalog plan --table scopedb.public.events -f events.yaml -o plan.yaml
+scope catalog apply --plan plan.yaml
+# GitOps: save the actual before/after result as an audit artifact.
+scope catalog apply --table scopedb.public.events -f events.yaml --yes -o applied.yaml
+```
+
+`plan` displays a YAML diff on stderr. Use `--output FILE` to save the complete plan, or `--output -` to write it to stdout. A plan contains the original request, normalized before/after definitions, a `destructive` risk flag, connection, and catalog version. Machine-authenticated plans also bind to the API key through a hash, without including the key itself. Plans retain any custom storage credentials in the submitted definition; protect them like the source configuration.
+
+`apply --plan` submits the saved request and reports a short result on stderr without prompting, redisplaying the saved diff, or rereading the source file; destructive plans require `--allow-destructive`. Treat the plan as a snapshot; edit the definition and regenerate the plan to change it. If the catalog changes, apply fails and asks you to plan again. Plans include any deletions caused by the replacement definition. Planning alone can also be used for audits.
+
+With `--output`, apply and drop save the actual before/after state and the `destructive` flag. Data loss risks include removing tables or physical columns, shortening retention, and changing deduplication on existing tables.
+
+```sh
+scope catalog drop --table scopedb.public.events
+scope catalog drop --table scopedb.public.events --yes --allow-destructive
+scope catalog drop --all --yes --allow-destructive
+```
+
+`drop` requires a resource scope or `--all` to clear the tenant's complete user catalog. `drop` displays the deletion diff and asks for confirmation; use `--yes --allow-destructive` to automate deleting stored data. To clear only the tables in a schema, export that schema, set `tables: []`, and apply the edited definition. The CLI sends `allow_destructive=true` after interactive approval or an explicit flag; the server checks every request independently.
+
+Catalog reports, diffs, warnings, and confirmation prompts always go to stderr. Structured output uses YAML by default; `--format json` changes only its encoding, not its destination. The filename extension does not select a format.
+
+| Command      | Default output                       | `--output FILE`                    | `--output -`                 |
+| ------------ | ------------------------------------ | ---------------------------------- | ---------------------------- |
+| `get`        | Full definition on stdout            | Definition in file                 | Definition on stdout         |
+| `list`       | Fully qualified names on stdout      | Names in file                      | Names on stdout              |
+| `plan`       | Diff and warnings on stderr          | Saved plan in file, report stderr  | Plan stdout, report stderr   |
+| `apply`      | Diff and execution result on stderr  | Result in file, report stderr      | Result stdout, report stderr |
+| `drop`       | Diff and execution result on stderr  | Result in file, report stderr      | Result stdout, report stderr |
+
+`--output` has the short form `-o`. Output files use permissions `0600` on Unix-like systems. Existing files require `--force`, which only permits overwriting the local file; data-loss authorization remains `--allow-destructive`. If a server write succeeds but saving the result fails, the CLI reports that the change was applied and exits with an error. Read the catalog before deciding whether to submit another change.
+
 ## JSON output
 
 Business commands support `--format json` for scripts while keeping their usual human-readable output by default. Action commands return an object describing the result; `scope auth logout` reports `changed: true` when it clears an existing login and `changed: false` when already logged out.

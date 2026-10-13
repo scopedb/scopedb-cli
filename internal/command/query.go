@@ -16,16 +16,12 @@ package command
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/scopedb/scopedb-cli/internal/clierror"
-	"github.com/scopedb/scopedb-cli/internal/fileutil"
 	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -159,45 +155,4 @@ func readLimited(reader io.Reader, limit int64) ([]byte, error) {
 		return nil, usageError(fmt.Sprintf("ScopeQL statement exceeds %d bytes", limit))
 	}
 	return data, nil
-}
-
-func writeResultFile(path string, force bool, render func(io.Writer) error) error {
-	if path == "" {
-		return errors.New("output path must not be empty")
-	}
-	if _, err := os.Stat(path); err == nil && !force {
-		return clierror.WithHint(clierror.New(clierror.ExitGeneral, fmt.Sprintf("output file %s already exists", path)), "pass --force to overwrite it")
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect output file: %w", err)
-	}
-
-	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".scope-result-*")
-	if err != nil {
-		return fmt.Errorf("create temporary output file: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("set output file permissions: %w", err)
-	}
-	if err := render(temporary); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("sync output file: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close output file: %w", err)
-	}
-	if err := fileutil.Commit(temporaryPath, path, force); err != nil {
-		if !force && errors.Is(err, os.ErrExist) {
-			return clierror.WithHint(clierror.New(clierror.ExitGeneral, fmt.Sprintf("output file %s was created concurrently", path)), "choose another path or pass --force")
-		}
-		return fmt.Errorf("replace output file: %w", err)
-	}
-	return nil
 }

@@ -19,9 +19,6 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -91,18 +88,4 @@ func TestQueryTimeoutReportsServerCancellation(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestQueryOutputFileHasRestrictedPermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows file permissions use ACLs")
-	}
-	path := filepath.Join(t.TempDir(), "results.json")
-	require.NoError(t, writeResultFile(path, false, func(w io.Writer) error {
-		_, err := io.WriteString(w, `[{"email":"private@example.com"}]`)
-		return err
-	}))
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }

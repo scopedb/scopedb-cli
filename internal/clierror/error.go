@@ -133,6 +133,11 @@ func Render(err error) string {
 	if !errors.As(err, &cliErr) {
 		return fmt.Sprintf("Error: %s\n", err)
 	}
+
+	if cliErr.Code == ExitInterrupted && cliErr.Hint == "" {
+		return "\n"
+	}
+
 	lines := fmt.Sprintf("Error: %s\n", cliErr.Error())
 	if cause := cliErr.cause(); cause != "" {
 		lines += fmt.Sprintf("Caused by: %s\n", cause)
