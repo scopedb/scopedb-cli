@@ -30,6 +30,8 @@ type catalogOptions struct {
 	file             string
 	plan             string
 	format           string
+	output           string
+	force            bool
 	all              bool
 	yes              bool
 	allowDestructive bool
@@ -52,7 +54,7 @@ func (a *app) newCatalogActionCommand(action string) *cobra.Command {
 	description := map[string]string{
 		"get":   "Export a resource definition",
 		"list":  "List fully qualified resource names",
-		"plan":  "Validate a definition and save its plan without writing",
+		"plan":  "Review changes without writing; optionally save a plan",
 		"apply": "Review and apply a definition or saved plan",
 		"drop":  "Delete an object or clear the tenant",
 	}[action]
@@ -72,7 +74,13 @@ func (a *app) newCatalogActionCommand(action string) *cobra.Command {
 	if action == "drop" {
 		command.Flags().BoolVar(&options.all, "all", false, "clear the tenant's complete user catalog")
 	}
-	command.Flags().StringVar(&options.format, "format", "yaml", "output format: yaml or json")
+	defaultOutput := ""
+	if action == "get" || action == "list" {
+		defaultOutput = "-"
+	}
+	command.Flags().StringVarP(&options.output, "output", "o", defaultOutput, "write structured output to a file; use - for stdout")
+	command.Flags().BoolVar(&options.force, "force", false, "overwrite an existing output file")
+	command.Flags().StringVar(&options.format, "format", "yaml", "structured output format: yaml or json")
 	command.Flags().DurationVar(&options.timeout, "timeout", 5*time.Minute, "request timeout; 0 disables the limit")
 	if action == "apply" || action == "plan" {
 		command.Flags().StringVarP(&options.file, "file", "f", "", "definition file; use - for stdin")
@@ -95,12 +103,12 @@ func (a *app) runCatalog(cmd *cobra.Command, action string, args []string, optio
 	if options.timeout < 0 {
 		return usageError("--timeout must not be negative")
 	}
-	resource := catalogResource{Kind: "databases"}
+	resource := catalogResource{Kind: "catalog"}
 	for _, kind := range []string{"database", "schema", "table", "view"} {
 		if !cmd.Flags().Changed(kind) {
 			continue
 		}
-		if resource.Kind != "databases" || options.all {
+		if resource.Kind != "catalog" || options.all {
 			return usageError("select only one catalog scope")
 		}
 		if options.plan != "" {
@@ -112,7 +120,7 @@ func (a *app) runCatalog(cmd *cobra.Command, action string, args []string, optio
 		}
 		resource = catalogResource{Kind: kind, Name: name}
 	}
-	if action == "drop" && resource.Kind == "databases" && !options.all {
+	if action == "drop" && resource.Kind == "catalog" && !options.all {
 		return usageError("select a resource to drop, or use --all to clear the tenant")
 	}
 	if action == "list" {
@@ -152,9 +160,9 @@ func (a *app) runCatalog(cmd *cobra.Command, action string, args []string, optio
 		if err != nil {
 			return err
 		}
-		return writeCatalog(a.out, names, options.format)
+		return a.writeCatalogOutput(names, options)
 	}
-	return writeCatalog(a.out, snapshot.Definition, options.format)
+	return a.writeCatalogOutput(snapshot.Definition, options)
 }
 
 // Time spent reviewing a diff does not consume either request's timeout.

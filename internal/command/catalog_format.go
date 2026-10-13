@@ -54,6 +54,23 @@ func (a *app) readCatalog(path string) (json.RawMessage, error) {
 	return result, nil
 }
 
+func (a *app) writeCatalogOutput(value any, options catalogOptions) error {
+	switch options.output {
+	case "":
+		return nil
+	case "-":
+		return writeCatalog(a.out, value, options.format)
+	default:
+		if err := writeResultFile(options.output, options.force, func(w io.Writer) error {
+			return writeCatalog(w, value, options.format)
+		}); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(a.errOut, "Saved to %s.\n", options.output)
+		return err
+	}
+}
+
 func writeCatalog(writer io.Writer, value any, format string) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {

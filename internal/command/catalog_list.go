@@ -42,15 +42,7 @@ func catalogNames(resource catalogResource, kind string, definition json.RawMess
 		databases = []entry{document}
 	case "schema":
 		databases = []entry{{Name: names[0], Schemas: []entry{document}}}
-	case "table", "view":
-		schema := entry{Name: names[1]}
-		if resource.Kind == "table" {
-			schema.Tables = []entry{document}
-		}
-		if resource.Kind == "view" {
-			schema.Views = []entry{document}
-		}
-		databases = []entry{{Name: names[0], Schemas: []entry{schema}}}
+
 	}
 	result := []string{}
 	for _, database := range databases {

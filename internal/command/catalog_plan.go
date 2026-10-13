@@ -126,7 +126,13 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 		if err != nil {
 			return err
 		}
-		return writeCatalog(a.out, result, options.format)
+		if _, err := fmt.Fprintln(a.errOut, "Applied."); err != nil {
+			return clierror.Wrap(clierror.ExitGeneral, "catalog applied, but reporting the result failed: "+err.Error(), err)
+		}
+		if err := a.writeCatalogOutput(result, options); err != nil {
+			return clierror.Wrap(clierror.ExitGeneral, "catalog applied, but writing the result failed: "+err.Error(), err)
+		}
+		return nil
 	}
 	ctx, cancel := options.requestContext(cmd.Context())
 	change, err := mutate(ctx, scopedb.CatalogOptions{DryRun: true})
@@ -154,7 +160,7 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 		}
 	}
 	if action == "plan" {
-		return writeCatalog(a.out, plan, options.format)
+		return a.writeCatalogOutput(plan, options)
 	}
 	if plan.Destructive && !options.allowDestructive && options.yes {
 		return usageError("changes may permanently lose data; review the diff and pass --allow-destructive")
@@ -173,7 +179,17 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 	if err != nil {
 		return err
 	}
-	return writeCatalog(a.out, result, options.format)
+	message := "Applied."
+	if action == "drop" {
+		message = "Dropped."
+	}
+	if _, err := fmt.Fprintln(a.errOut, message); err != nil {
+		return clierror.Wrap(clierror.ExitGeneral, "catalog applied, but reporting the result failed: "+err.Error(), err)
+	}
+	if err := a.writeCatalogOutput(result, options); err != nil {
+		return clierror.Wrap(clierror.ExitGeneral, "catalog applied, but writing the result failed: "+err.Error(), err)
+	}
+	return nil
 }
 
 func (a *app) confirmCatalog(ctx context.Context, stdinConsumed bool) error {

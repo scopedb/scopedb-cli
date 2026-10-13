@@ -40,7 +40,7 @@ func TestCatalogPlanApply(t *testing.T) {
 	apiKey := "fixture-secret"
 	client := &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
 		require.Equal(t, "Bearer fixture-secret", r.Header.Get("Authorization"))
-		require.Equal(t, "/prefix/v1/databases/db/schemas/public/tables/a%2Fb", r.URL.EscapedPath())
+		require.Equal(t, "/prefix/v1/catalog/databases/db/schemas/public/tables/a%2Fb", r.URL.EscapedPath())
 		require.Equal(t, http.MethodPut, r.Method)
 		var definition map[string]any
 		require.NoError(t, json.NewDecoder(r.Body).Decode(&definition))
@@ -79,7 +79,7 @@ func TestCatalogPlanApply(t *testing.T) {
 		root.SetArgs(args)
 		return root.ExecuteContext(t.Context())
 	}
-	require.NoError(t, run("name: a/b\ncomment: yes\nstorage:\n  secret_access_key: storage-secret\n", "catalog", "plan", "--table", "db.public.`a/b`", "-f", "-"))
+	require.NoError(t, run("name: a/b\ncomment: yes\nstorage:\n  secret_access_key: storage-secret\n", "catalog", "plan", "--table", "db.public.`a/b`", "-f", "-", "--output", "-"))
 	saved := out.String()
 	require.NotContains(t, saved, "fixture-secret")
 	require.NotContains(t, diagnostics.String(), "storage-secret")
@@ -92,8 +92,8 @@ func TestCatalogPlanApply(t *testing.T) {
 	require.NoError(t, run(saved, "catalog", "apply", "--plan", "-", "--allow-destructive"))
 	require.Equal(t, 1, writes)
 	require.Equal(t, 1, plans, "saved plan must not be refreshed before applying")
-	require.Empty(t, diagnostics.String(), "saved plans apply without redisplaying the reviewed diff")
-	require.Contains(t, out.String(), "columns: []")
+	require.Equal(t, "Applied.\n", diagnostics.String(), "saved plans apply without redisplaying the reviewed diff")
+	require.Empty(t, out.String())
 	apiKey = "another-workspace-key"
 	err := run(saved, "catalog", "apply", "--plan", "-")
 	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
@@ -179,8 +179,8 @@ func TestCatalogDrop(t *testing.T) {
 		resource                  []string
 		method, path, body, after string
 	}{
-		{[]string{"--table", "db.public.t"}, http.MethodDelete, "/v1/databases/db/schemas/public/tables/t", "", "null"},
-		{[]string{"--all"}, http.MethodPut, "/v1/databases", `{"databases":[]}`, `{"databases":[]}`},
+		{[]string{"--table", "db.public.t"}, http.MethodDelete, "/v1/catalog/databases/db/schemas/public/tables/t", "", "null"},
+		{[]string{"--all"}, http.MethodPut, "/v1/catalog", `{"databases":[]}`, `{"databases":[]}`},
 	} {
 		t.Run(tc.resource[0], func(t *testing.T) {
 			var out, diagnostics bytes.Buffer
@@ -212,7 +212,7 @@ func TestCatalogDrop(t *testing.T) {
 				})},
 			}
 			root := NewRoot(deps)
-			root.SetArgs(append(append([]string{"catalog", "drop"}, tc.resource...), "--yes", "--allow-destructive", "--format", "json"))
+			root.SetArgs(append(append([]string{"catalog", "drop"}, tc.resource...), "--yes", "--allow-destructive", "--format", "json", "--output", "-"))
 			require.NoError(t, root.ExecuteContext(t.Context()))
 			require.Equal(t, 2, requests)
 			require.JSONEq(t, `{"before":{"name":"t"},"after":`+tc.after+`,"destructive":true}`, out.String())
@@ -353,11 +353,11 @@ func TestCatalogBrowse(t *testing.T) {
 	database := map[string]any{"name": "db", "schemas": []any{schema}}
 	document := map[string]any{"databases": []any{database, map[string]any{"name": "empty", "schemas": []any{}}}}
 	responses := map[string]any{
-		"/v1/databases":                                       document,
-		"/v1/databases/db":                                    database,
-		"/v1/databases/db/schemas/public":                     schema,
-		"/v1/databases/empty":                                 map[string]any{"name": "empty", "schemas": []any{}},
-		"/v1/databases/db/schemas/public/tables/" + tableName: table,
+		"/v1/catalog":                                                 document,
+		"/v1/catalog/databases/db":                                    database,
+		"/v1/catalog/databases/db/schemas/public":                     schema,
+		"/v1/catalog/databases/empty":                                 map[string]any{"name": "empty", "schemas": []any{}},
+		"/v1/catalog/databases/db/schemas/public/tables/" + tableName: table,
 	}
 	var out, diagnostics bytes.Buffer
 	run := func(args ...string) {
@@ -391,7 +391,6 @@ func TestCatalogBrowse(t *testing.T) {
 		{[]string{"schemas"}, []string{"db.public"}},
 		{[]string{"views"}, []string{"db.public.recent"}},
 		{[]string{"schemas", "--database", "db"}, []string{"db.public"}},
-		{[]string{"schemas", "--schema", "db.public"}, []string{"db.public"}},
 		{[]string{"views", "--schema", "db.public"}, []string{"db.public.recent"}},
 		{[]string{"tables", "--database", "empty"}, []string{}},
 	} {
@@ -425,7 +424,7 @@ func TestCatalogTenantApply(t *testing.T) {
 		HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
 			requests++
 			require.Equal(t, http.MethodPut, r.Method)
-			require.Equal(t, "/v1/databases", r.URL.Path)
+			require.Equal(t, "/v1/catalog", r.URL.Path)
 			body, err := io.ReadAll(r.Body)
 			require.NoError(t, err)
 			require.JSONEq(t, `{"databases":[]}`, string(body))
@@ -437,7 +436,7 @@ func TestCatalogTenantApply(t *testing.T) {
 			return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"9"`}}, Body: io.NopCloser(strings.NewReader(`{"before":{"databases":[{"name":"db"}]},"after":{"databases":[]},"destructive":false}`)), Request: r}, nil
 		})},
 	})
-	root.SetArgs([]string{"catalog", "apply", "-f", "-", "--yes", "--format", "json"})
+	root.SetArgs([]string{"catalog", "apply", "-f", "-", "--yes", "--format", "json", "--output", "-"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
 	require.Equal(t, 2, requests)
 	require.Contains(t, diagnostics.String(), "-databases:")
@@ -453,6 +452,9 @@ func TestCatalogScopes(t *testing.T) {
 		{"drop"},
 		{"drop", "--all", "--database", "db"},
 		{"list", "databases", "--schema", "db.public"},
+		{"list", "databases", "--database", "db"},
+		{"list", "schemas", "--schema", "db.public"},
+		{"list", "tables", "--table", "db.public.t"},
 		{"list", "tables", "--view", "db.public.v"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
@@ -461,4 +463,66 @@ func TestCatalogScopes(t *testing.T) {
 			require.Equal(t, clierror.ExitUsage, clierror.ExitCode(root.ExecuteContext(t.Context())))
 		})
 	}
+}
+
+func TestCatalogOutput(t *testing.T) {
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	var out, diagnostics bytes.Buffer
+	writes := 0
+	result := `{"before":{"databases":[]},"after":{"databases":[{"name":"db"}]},"destructive":false}`
+	client := &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+		body := result
+		if r.Method == http.MethodGet {
+			body = `{"databases":[{"name":"db"}]}`
+		} else if r.URL.Query().Get("dry_run") != "true" {
+			writes++
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	})}
+	run := func(args ...string) error {
+		out.Reset()
+		diagnostics.Reset()
+		root := NewRoot(Dependencies{In: strings.NewReader("databases: [{name: db}]\n"), Out: &out, ErrOut: &diagnostics, HTTPClient: client})
+		root.SetArgs(append([]string{"catalog"}, args...))
+		return root.ExecuteContext(t.Context())
+	}
+	// Selecting a format does not enable structured output for a report command.
+	require.NoError(t, run("plan", "-f", "-", "--format", "json"))
+	require.Empty(t, out.String())
+	require.Contains(t, diagnostics.String(), "+- name: db")
+
+	path := filepath.Join(t.TempDir(), "plan.yaml")
+	require.NoError(t, run("plan", "-f", "-", "-o", path))
+	require.Empty(t, out.String())
+	saved, err := os.ReadFile(path)
+	require.NoError(t, err)
+	data, err := yaml.ToJSON(saved)
+	require.NoError(t, err)
+	var plan catalogPlan
+	require.NoError(t, json.Unmarshal(data, &plan))
+	require.Equal(t, "catalog", plan.Resource.Kind)
+	require.Equal(t, `"1"`, plan.ETag)
+	require.Contains(t, diagnostics.String(), path)
+	require.ErrorContains(t, run("plan", "-f", "-", "-o", path), "already exists")
+	require.NoError(t, run("plan", "-f", "-", "-o", path, "--force"))
+
+	require.NoError(t, run("apply", "--plan", path, "--output", "-", "--format", "json"))
+	require.JSONEq(t, result, out.String())
+	require.Equal(t, "Applied.\n", diagnostics.String())
+	require.Equal(t, 1, writes)
+
+	err = run("apply", "--plan", path, "--output", path)
+	require.Contains(t, clierror.Render(err), "catalog applied, but writing the result failed")
+	require.NotContains(t, clierror.Render(err), "pass --force")
+	require.Equal(t, 2, writes, "output failure must not retry a committed request")
+	require.Empty(t, out.String())
+
+	definition := filepath.Join(t.TempDir(), "catalog.yaml")
+	require.NoError(t, run("get", "--output", definition, "--format", "json"))
+	data, err = os.ReadFile(definition)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"databases":[{"name":"db"}]}`, string(data))
+	require.Empty(t, out.String())
 }

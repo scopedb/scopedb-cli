@@ -29,7 +29,7 @@ type catalogResource struct {
 func (r catalogResource) segments() ([]string, error) {
 	var count int
 	switch r.Kind {
-	case "databases":
+	case "catalog":
 		count = 0
 	case "database":
 		count = 1
@@ -38,7 +38,7 @@ func (r catalogResource) segments() ([]string, error) {
 	case "table", "view":
 		count = 3
 	default:
-		return nil, usageError("resource must be databases, database, schema, table, or view")
+		return nil, usageError("resource must be catalog, database, schema, table, or view")
 	}
 	names, err := parseCatalogName(r.Name)
 	if err != nil {
@@ -47,8 +47,11 @@ func (r catalogResource) segments() ([]string, error) {
 	if len(names) != count {
 		return nil, usageError(fmt.Sprintf("%s requires %d name component(s)", r.Kind, count))
 	}
-	segments := []string{"databases"}
+	var segments []string
 	for i, name := range names {
+		if i == 0 {
+			segments = append(segments, "databases")
+		}
 		if i == 1 {
 			segments = append(segments, "schemas")
 		}
@@ -71,16 +74,18 @@ func (r catalogResource) validateList(kind string) error {
 		return usageError("list requires databases, schemas, tables, or views")
 	}
 	switch r.Kind {
-	case "schema":
-		if kind == "databases" {
-			return usageError("cannot list databases within a schema")
+	case "catalog":
+		return nil
+	case "database":
+		if kind != "databases" {
+			return nil
 		}
-	case "table", "view":
-		if kind != r.Kind+"s" {
-			return usageError("cannot list " + kind + " within a " + r.Kind)
+	case "schema":
+		if kind == "tables" || kind == "views" {
+			return nil
 		}
 	}
-	return nil
+	return usageError("cannot list " + kind + " within a " + r.Kind)
 }
 
 func formatCatalogName(names ...string) string {
@@ -160,7 +165,7 @@ func parseCatalogName(input string) ([]string, error) {
 			name = strings.ToLower(name)
 		}
 		if name == "" || strings.ContainsRune(name, '\x00') {
-			return nil, usageError("empty resource names must be managed through their parent collection")
+			return nil, usageError("empty resource names must be managed through their parent definition")
 		}
 		names = append(names, name)
 		remaining = strings.TrimSpace(remaining)
