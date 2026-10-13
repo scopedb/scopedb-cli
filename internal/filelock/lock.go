@@ -12,12 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !darwin && !linux && !windows
+// Package filelock serializes credential refresh across CLI processes.
+package filelock
 
-package command
+// Lock is an exclusive advisory lock on a file. Close releases it and is safe to
+// call more than once.
+type Lock interface {
+	Close() error
+}
 
-import "errors"
-
-func hideTerminalInput(int) (func() error, error) {
-	return nil, errors.New("terminal echo control is unavailable on this platform")
+// Acquire blocks until it holds the exclusive lock on path, creating the file if
+// it does not exist. Callers must Close the returned lock.
+func Acquire(path string) (Lock, error) {
+	return acquire(path)
 }

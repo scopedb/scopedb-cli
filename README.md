@@ -52,17 +52,18 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-`scope auth login` prompts for an email address and verification code, then stores the session in the operating system keyring. A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status or create your first workspace in the Console. Once a workspace is available, select it without logging in again:
+`scope auth login` opens your browser, asks you to approve the request in the ScopeDB Console, and stores the login in the operating system keyring. On a machine without a browser, such as an SSH session, use `scope auth login --device` and approve the printed code from another device. The CLI never switches between the two flows on its own.
+
+A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status or create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
 ```sh
 scope workspace list
 scope workspace use <id-or-name>
+scope workspace create --name analytics
 scope auth status
 ```
 
-`scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
-
-The verification code is hidden when entered at a terminal. For piped input, provide `--email` and send the code on stdin; passing `--code` exposes it in process arguments.
+The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
 
 `scope console [page]` provides shortcuts to Console pages: `home` (default), `query`, `data`, `keys`, and `connect`. For example, `scope console query` prints the query page URL; add `--open` to also open it in your browser.
 
@@ -84,13 +85,12 @@ Business commands support `--format json` for scripts while keeping their usual 
 ```sh
 scope auth status --format json
 scope workspace use <id-or-name> --format json
-scope api-key revoke <name> --yes --format json
 scope console --format json
 ```
 
 Results go to stdout; prompts, warnings, and errors go to stderr. `scope doctor --format json` prints its report and exits nonzero if checks fail. `scope version --format json` prints machine-readable version information; `--json` is also supported.
 
-`scope workspace list` and `scope api-key list` accept `--limit N` to show at most N items. The default and `--limit 0` show all items. This limits displayed results without reducing the amount fetched.
+`scope workspace list` accepts `--limit N` to show at most N items. The default and `--limit 0` show all items. This limits displayed results without reducing the amount fetched.
 
 Run `scope --help` or `scope <command> --help` for the complete command reference. See the [ScopeDB documentation](https://docs.scopedb.io/) for ScopeQL and service documentation.
 
@@ -108,7 +108,7 @@ scope query --format json 'SELECT 1 AS ready'
 
 Both variables are required and override the saved login for queries, `auth status`, and connection checks. Setting only one fails instead of falling back to your login. Unset both to return to your logged-in workspace.
 
-For SDK setup, get the endpoint with `scope workspace get` and create an application key with `scope api-key create <name>`. Use the same endpoint and key in your SDK configuration, then run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
+For SDK setup, get the endpoint with `scope workspace get` and create an application key in the [Console](https://console.scopedb.io/keys). Use the same endpoint and key in your SDK configuration, then run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
 
 ## Development
 

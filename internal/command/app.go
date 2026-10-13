@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	scopedb "github.com/scopedb/goscopedb"
@@ -36,7 +37,6 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/dataplane"
 	"github.com/scopedb/scopedb-cli/internal/version"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 type credentialFactory func(string, config.Paths) (credential.Store, error)
@@ -51,6 +51,7 @@ type Dependencies struct {
 	IsInputTerminal func() bool
 	OpenURL         func(string) error
 	Now             func() time.Time
+	Sleep           func(time.Duration)
 	Getenv          func(string) string
 }
 
@@ -65,6 +66,7 @@ type app struct {
 	isInputTerminal   func() bool
 	openURL           func(string) error
 	now               func() time.Time
+	sleep             func(time.Duration)
 	getenv            func(string) string
 	controlURLFlag    string
 	consoleURLFlag    string
@@ -76,6 +78,46 @@ type runtimeContext struct {
 	control     *controlplane.Client
 	credentials credential.Store
 	auth        *auth.Manager
+
+	oauthMu sync.Mutex
+	oauth   *controlplane.OAuth
+}
+
+// oauthClient discovers the authorization server once per process, on the first request that needs
+// a token endpoint.
+func (r *runtimeContext) oauthClient(ctx context.Context) (*controlplane.OAuth, error) {
+	r.oauthMu.Lock()
+	defer r.oauthMu.Unlock()
+	if r.oauth != nil {
+		return r.oauth, nil
+	}
+	client, err := r.control.DiscoverOAuth(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.oauth = client
+	return client, nil
+}
+
+// runtimeOAuth adapts the lazily discovered authorization server to the auth manager.
+type runtimeOAuth struct {
+	runtime *runtimeContext
+}
+
+func (o *runtimeOAuth) RefreshToken(ctx context.Context, refreshToken string) (controlplane.TokenSet, error) {
+	client, err := o.runtime.oauthClient(ctx)
+	if err != nil {
+		return controlplane.TokenSet{}, err
+	}
+	return client.RefreshToken(ctx, refreshToken)
+}
+
+func (o *runtimeOAuth) RevokeToken(ctx context.Context, token string) error {
+	client, err := o.runtime.oauthClient(ctx)
+	if err != nil {
+		return err
+	}
+	return client.RevokeToken(ctx, token)
 }
 
 func newApp(deps Dependencies) *app {
@@ -107,6 +149,9 @@ func newApp(deps Dependencies) *app {
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
+	if deps.Sleep == nil {
+		deps.Sleep = time.Sleep
+	}
 	if deps.Getenv == nil {
 		deps.Getenv = os.Getenv
 	}
@@ -121,6 +166,7 @@ func newApp(deps Dependencies) *app {
 		isInputTerminal:   deps.IsInputTerminal,
 		openURL:           deps.OpenURL,
 		now:               deps.Now,
+		sleep:             deps.Sleep,
 		getenv:            deps.Getenv,
 	}
 }
@@ -155,20 +201,23 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 	if err != nil {
 		return nil, err
 	}
-	manager := &auth.Manager{
-		ControlURL:  cfg.ControlURL,
-		Control:     control,
-		Credentials: credentials,
-		Now:         a.now,
-		Getenv:      a.getenv,
-	}
-	return &runtimeContext{
+	runtime := &runtimeContext{
 		paths:       paths,
 		config:      cfg,
 		control:     control,
 		credentials: credentials,
-		auth:        manager,
-	}, nil
+	}
+	runtime.auth = &auth.Manager{
+		ControlURL:  cfg.ControlURL,
+		Control:     control,
+		OAuth:       &runtimeOAuth{runtime: runtime},
+		Credentials: credentials,
+		LockFile:    paths.LockFile,
+		Now:         a.now,
+		Sleep:       a.sleep,
+		Getenv:      a.getenv,
+	}
+	return runtime, nil
 }
 
 func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
@@ -177,59 +226,6 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 		return nil, err
 	}
 	return a.newRuntime(paths, cfg)
-}
-
-func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
-	if prompt != "" {
-		if _, err := fmt.Fprint(a.errOut, prompt); err != nil {
-			return "", err
-		}
-	}
-	type input struct {
-		val string
-		err error
-	}
-	done := make(chan input, 1)
-	go func() {
-		val, err := a.input.ReadString('\n')
-		done <- input{val, err}
-	}()
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case result := <-done:
-		if result.err != nil && !errors.Is(result.err, io.EOF) {
-			return "", result.err
-		}
-		return strings.TrimSpace(result.val), nil
-	}
-}
-
-// readVerificationCode hides input on a terminal and still accepts piped stdin.
-func (a *app) readVerificationCode(ctx context.Context) (string, error) {
-	if !a.isInputTerminal() {
-		return a.readLine(ctx, "")
-	}
-	file, ok := a.in.(*os.File)
-	if !ok || !term.IsTerminal(int(file.Fd())) {
-		return a.readLine(ctx, "Verification code: ")
-	}
-	restore, err := hideTerminalInput(int(file.Fd()))
-	if err != nil {
-		return "", fmt.Errorf("hide verification code: %w", err)
-	}
-	value, readErr := a.readLine(ctx, "Verification code: ")
-	restoreErr := restore()
-	if _, err := fmt.Fprintln(a.errOut); err != nil {
-		return "", err
-	}
-	if readErr != nil {
-		return "", readErr
-	}
-	if restoreErr != nil {
-		return "", fmt.Errorf("restore terminal echo: %w", restoreErr)
-	}
-	return value, nil
 }
 
 func openURL(target string) error {
@@ -275,11 +271,34 @@ func NormalizeError(err error) error {
 	if errors.Is(err, auth.ErrNotLoggedIn) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "not logged in", err), "run 'scope auth login'")
 	}
+	if errors.Is(err, auth.ErrLoginExpired) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "run 'scope auth login'")
+	}
 	if errors.Is(err, auth.ErrInvalidMachineEnv) {
 		return clierror.Wrap(clierror.ExitUsage, err.Error(), err)
 	}
 	if setupErr := workspaceSetupError(err); setupErr != nil {
 		return setupErr
+	}
+	var oauthErr *controlplane.OAuthError
+	if errors.As(err, &oauthErr) {
+		code := clierror.ExitGeneral
+		switch {
+		case oauthErr.Code == "invalid_grant" || oauthErr.Code == "invalid_client" || oauthErr.Code == "access_denied":
+			code = clierror.ExitAuth
+		case oauthErr.Code == "invalid_request" || oauthErr.Code == "invalid_scope" || oauthErr.Code == "unsupported_grant_type":
+			code = clierror.ExitUsage
+		case oauthErr.Retryable:
+			code = clierror.ExitTemporary
+		}
+		result := clierror.Wrap(code, oauthErr.Error(), err)
+		result.RequestID = oauthErr.RequestID
+		if code == clierror.ExitAuth {
+			result.Hint = "run 'scope auth login'"
+		} else if oauthErr.RetryAfter > 0 {
+			result.Hint = "retry after " + oauthErr.RetryAfter.Round(time.Second).String()
+		}
+		return result
 	}
 	var controlErr *controlplane.Error
 	if errors.As(err, &controlErr) {

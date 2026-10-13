@@ -16,357 +16,293 @@ package command
 
 import (
 	"bytes"
-	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
-	"strings"
-	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoginThroughApprovalAndWorkspaceSelection(t *testing.T) {
-	var session atomic.Value
-	session.Store(controlplane.Session{
-		User:       controlplane.User{Email: "dev@example.com", Status: "pending"},
-		Workspaces: []controlplane.Workspace{},
-	})
-	var revoked atomic.Int32
-	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		current := session.Load().(controlplane.Session)
-		if strings.HasPrefix(r.URL.Path, "/api/session") || strings.HasPrefix(r.URL.Path, "/api/workspaces") {
-			token := "session-secret"
-			if current.CurrentWorkspaceID != "" {
-				token = "rotated-secret"
-			}
-			assert.Equal(t, "Bearer "+token, r.Header.Get("Authorization"))
-		}
-		switch r.Method + " " + r.URL.Path {
-		case "POST /api/login":
-			_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
-		case "POST /api/login/verify":
-			_, _ = w.Write([]byte(`{"token":"session-secret"}`))
-		case "GET /api/session":
-			assert.NoError(t, json.NewEncoder(w).Encode(current))
-		case "GET /healthz":
-			w.WriteHeader(http.StatusOK)
-		case "POST /api/session/workspace":
-			var body map[string]string
-			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-			assert.Equal(t, "ws-1", body["workspace_id"])
-			current.CurrentWorkspaceID = "ws-1"
-			session.Store(current)
-			_, _ = w.Write([]byte(`{"token":"rotated-secret","workspace_id":"ws-1"}`))
-		case "GET /api/workspaces/ws-1":
-			_, _ = w.Write([]byte(`{"workspace":{"id":"ws-1","display_name":"Analytics"},"connection":{"api_base_url":"https://data.example.com","auth_scheme":"Bearer"},"placement":{"provider":"aws","region":"us-east-1"},"provisioning":{"status":"ready","updated_at":"2026-09-15T00:00:00Z"}}`))
-		case "DELETE /api/session":
-			revoked.Add(1)
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
+func TestLoopbackLoginStoresTokens(t *testing.T) {
+	fake, store := setupCLITest(t)
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"email":"dev@example.com"}`, out)
+	require.Contains(t, diagnostics, "Open this URL to approve the login")
 
-	out, diagnostics, err := runCommand(t, "auth", "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage", "--format", "json")
+	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"email":"dev@example.com","workspace_id":null}`, out)
-	require.Contains(t, diagnostics, "awaiting approval")
-	state, err := store.Load(controlURL)
-	require.NoError(t, err)
-	require.Equal(t, "session-secret", state.SessionToken)
+	require.Equal(t, "oat_access", state.AccessToken)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+	require.False(t, state.AccessTokenExpiresAt.IsZero())
+	require.False(t, state.RefreshTokenExpiresAt.IsZero())
 	require.Empty(t, state.WorkspaceID)
-	require.Zero(t, revoked.Load())
+	require.NotEmpty(t, fake.AuthorizationQuery.Get("code_challenge"))
+	require.Equal(t, "S256", fake.AuthorizationQuery.Get("code_challenge_method"))
+	require.Equal(t, controlplane.ClientID, fake.AuthorizationQuery.Get("client_id"))
+	require.Equal(t, controlplane.ScopePlatform, fake.AuthorizationQuery.Get("scope"))
+	require.NotEmpty(t, fake.TokenForms[0].Get("code_verifier"))
+}
 
-	for _, phase := range []struct {
-		name           string
-		status         string
-		workspaces     []controlplane.Workspace
-		message        string
-		hint           string
-		wantListNotice string
-		exitCode       int
+func TestLoopbackLoginRejectsMismatchedCallback(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		state     string
+		issuer    string
+		wantError string
 	}{
-		{"pending", "pending", nil, "awaiting approval", "scope console --open", "awaiting approval", clierror.ExitAuth},
-		{"approved", "active", nil, "no workspaces", "create your first workspace", "no workspaces", clierror.ExitUsage},
-		{"created", "active", []controlplane.Workspace{{ID: "ws-1", DisplayName: new("Analytics")}}, "no workspace is selected", "scope workspace use", "", clierror.ExitUsage},
+		{"foreign state", "not-the-state", "", "did not belong to this request"},
+		{"foreign issuer", "", "https://elsewhere.example.com", "no credentials were saved"},
 	} {
-		t.Run(phase.name, func(t *testing.T) {
-			session.Store(controlplane.Session{
-				User:       controlplane.User{Email: "dev@example.com", Status: phase.status},
-				Workspaces: phase.workspaces,
+		t.Run(tc.name, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			var out, diagnostics bytes.Buffer
+			root := NewRoot(Dependencies{
+				Out: &out, ErrOut: &diagnostics,
+				Getenv: func(string) string { return "" },
+				Sleep:  func(time.Duration) {},
+				OpenURL: func(target string) error {
+					parsed, err := url.Parse(target)
+					require.NoError(t, err)
+					callback, err := url.Parse(parsed.Query().Get("redirect_uri"))
+					require.NoError(t, err)
+					query := callback.Query()
+					query.Set("code", fake.AuthorizationCode)
+					state := parsed.Query().Get("state")
+					if tc.state != "" {
+						state = tc.state
+					}
+					query.Set("state", state)
+					issuer := fake.Issuer
+					if tc.issuer != "" {
+						issuer = tc.issuer
+					}
+					query.Set("iss", issuer)
+					callback.RawQuery = query.Encode()
+					response, err := http.Get(callback.String())
+					if err != nil {
+						return err
+					}
+					return response.Body.Close()
+				},
 			})
-			out, diagnostics, err := runCommand(t, "auth", "status", "--format", "json")
-			require.NoError(t, err)
-			var status map[string]any
-			require.NoError(t, json.Unmarshal([]byte(out), &status))
-			require.Equal(t, "dev@example.com", status["email"])
-			require.Equal(t, phase.status, status["user_status"])
-			require.NotContains(t, status, "workspace_id")
-			require.Contains(t, diagnostics, phase.message)
-			require.Contains(t, diagnostics, phase.hint)
-
-			out, listDiagnostics, err := runCommand(t, "workspace", "list", "--format", "json")
-			require.NoError(t, err)
-			var workspaces []workspaceListItem
-			require.NoError(t, json.Unmarshal([]byte(out), &workspaces))
-			require.NotNil(t, workspaces)
-			require.Len(t, workspaces, len(phase.workspaces))
-			require.NotContains(t, listDiagnostics, "no workspace is selected")
-			if phase.wantListNotice == "" {
-				require.Empty(t, listDiagnostics)
-			} else {
-				require.Contains(t, listDiagnostics, phase.wantListNotice)
-			}
-
-			out, _, err = runCommand(t, "doctor", "--format", "json")
-			require.NoError(t, err)
-			var report doctorReport
-			require.NoError(t, json.Unmarshal([]byte(out), &report))
-			require.True(t, report.OK)
-			require.Contains(t, report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "dev@example.com"})
-			require.Contains(t, out, phase.message)
-
-			for _, args := range [][]string{
-				{"workspace", "get"},
-				{"query", "SELECT 1 AS ready"},
-				{"api-key", "list"},
-				{"api-key", "create", "automation"},
-				{"api-key", "revoke", "automation", "--yes"},
-			} {
-				out, _, err := runCommand(t, args...)
-				require.Equal(t, phase.exitCode, clierror.ExitCode(err), "%v: %v", args, err)
-				require.Empty(t, out)
-				require.Contains(t, clierror.Render(err), phase.hint)
-			}
+			root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"})
+			require.ErrorContains(t, root.ExecuteContext(t.Context()), tc.wantError)
+			_, loadErr := store.Load(fake.URL)
+			require.ErrorIs(t, loadErr, credential.ErrNotFound)
+			require.Empty(t, fake.TokenForms)
+			require.NotContains(t, out.String()+diagnostics.String(), fake.AuthorizationCode)
 		})
 	}
-
-	out, _, err = runCommand(t, "workspace", "use", "Analytics")
-	require.NoError(t, err)
-	require.Contains(t, out, "Now using workspace Analytics (ws-1)")
-	state, err = store.Load(controlURL)
-	require.NoError(t, err)
-	require.Equal(t, "rotated-secret", state.SessionToken)
-	require.Equal(t, "ws-1", state.WorkspaceID)
-
-	out, diagnostics, err = runCommand(t, "auth", "status", "--format", "json")
-	require.NoError(t, err)
-	require.Empty(t, diagnostics)
-	var status statusView
-	require.NoError(t, json.Unmarshal([]byte(out), &status))
-	require.Equal(t, "ws-1", status.WorkspaceID)
-	require.Equal(t, "Analytics", status.WorkspaceName)
-	require.Equal(t, "https://data.example.com", status.Endpoint)
-
-	_, _, err = runCommand(t, "auth", "logout")
-	require.NoError(t, err)
-	require.EqualValues(t, 1, revoked.Load())
-	_, err = store.Load(controlURL)
-	require.ErrorIs(t, err, credential.ErrNotFound)
 }
 
-func TestLoginKeepsSessionWhenStatusLookupFails(t *testing.T) {
-	var revoked atomic.Bool
-	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
-		case "POST /api/login":
-			_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
-		case "POST /api/login/verify":
-			_, _ = w.Write([]byte(`{"token":"session-secret"}`))
-		case "GET /api/session":
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
-		case "DELETE /api/session":
-			revoked.Store(true)
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
-	out, diagnostics, err := runCommand(t, "auth", "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
-	require.NoError(t, err)
-	require.Contains(t, out, "Logged in as dev@example.com.")
-	require.Contains(t, diagnostics, "scope auth status")
-	state, err := store.Load(controlURL)
-	require.NoError(t, err)
-	require.Equal(t, "session-secret", state.SessionToken)
-	require.False(t, revoked.Load())
-
-	_, _, err = runCommand(t, "auth", "logout")
-	require.NoError(t, err)
-	require.True(t, revoked.Load())
-	_, err = store.Load(controlURL)
-	require.ErrorIs(t, err, credential.ErrNotFound)
+func TestLoopbackLoginReportsDeniedAuthorization(t *testing.T) {
+	fake, store := setupCLITest(t)
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		Out: &out, ErrOut: &diagnostics,
+		Getenv: func(string) string { return "" },
+		Sleep:  func(time.Duration) {},
+		OpenURL: func(target string) error {
+			parsed, err := url.Parse(target)
+			require.NoError(t, err)
+			callback, err := url.Parse(parsed.Query().Get("redirect_uri"))
+			require.NoError(t, err)
+			query := callback.Query()
+			query.Set("error", "access_denied")
+			query.Set("state", parsed.Query().Get("state"))
+			query.Set("iss", fake.Issuer)
+			callback.RawQuery = query.Encode()
+			response, err := http.Get(callback.String())
+			if err != nil {
+				return err
+			}
+			return response.Body.Close()
+		},
+	})
+	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"})
+	err := root.ExecuteContext(t.Context())
+	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
+	require.Contains(t, err.Error(), "denied")
+	_, loadErr := store.Load(fake.URL)
+	require.ErrorIs(t, loadErr, credential.ErrNotFound)
 }
 
-func setupLoginTest(t *testing.T, handler http.Handler) (*credential.PlaintextStore, string) {
-	t.Helper()
-	server := httptest.NewServer(handler)
+func TestDeviceLoginPollsUntilApproved(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.DeviceOutcomes = []string{"authorization_pending", "slow_down", ""}
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"email":"dev@example.com"}`, out)
+	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
+	require.Equal(t, 3, fake.DevicePolls)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+}
+
+func TestDeviceLoginFailureOutcomes(t *testing.T) {
+	for _, tc := range []struct {
+		outcome   string
+		wantError string
+	}{
+		{"access_denied", "denied"},
+		{"expired_token", "expired"},
+		{"invalid_grant", "can no longer be redeemed"},
+	} {
+		t.Run(tc.outcome, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.DeviceOutcomes = []string{tc.outcome}
+			out, _, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage")
+			require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
+			require.Contains(t, err.Error(), tc.wantError)
+			require.Empty(t, out)
+			_, loadErr := store.Load(fake.URL)
+			require.ErrorIs(t, loadErr, credential.ErrNotFound)
+		})
+	}
+}
+
+func TestDeviceLoginRejectsIncompleteResponse(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.UserCode = ""
+	_, _, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage")
+	require.ErrorContains(t, err, "incomplete device authorization")
+}
+
+func TestLoginRequiresDeviceInSSHSession(t *testing.T) {
+	fake, store := setupCLITest(t)
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		Out: &out, ErrOut: &diagnostics,
+		Sleep: func(time.Duration) {},
+		Getenv: func(name string) string {
+			if name == "SSH_CONNECTION" {
+				return "10.0.0.2 52100 10.0.0.1 22"
+			}
+			return ""
+		},
+	})
+	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"})
+	err := root.ExecuteContext(t.Context())
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "--device")
+	_, loadErr := store.Load(fake.URL)
+	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+}
+
+func TestDiscoveryRejectsForeignIssuer(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.MetadataMutate = func(metadata *controlplane.AuthorizationServerMetadata) {
+		metadata.Issuer = "https://elsewhere.example.com"
+	}
+	_, _, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
+	require.ErrorContains(t, err, "issuer")
+}
+
+func TestDiscoveryRejectsForeignEndpoint(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.MetadataMutate = func(metadata *controlplane.AuthorizationServerMetadata) {
+		metadata.TokenEndpoint = "https://elsewhere.example.com/oauth/token"
+	}
+	_, _, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
+	require.ErrorContains(t, err, "token_endpoint")
+}
+
+func TestDiscoveryRequiresPKCEAndIssuerParameter(t *testing.T) {
+	for _, mutate := range []func(*controlplane.AuthorizationServerMetadata){
+		func(metadata *controlplane.AuthorizationServerMetadata) {
+			metadata.CodeChallengeMethodsSupported = []string{"plain"}
+		},
+		func(metadata *controlplane.AuthorizationServerMetadata) {
+			metadata.AuthorizationResponseIssParameterSupported = false
+		},
+	} {
+		fake, _ := setupCLITest(t)
+		fake.MetadataMutate = mutate
+		_, _, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
+		require.Error(t, err)
+	}
+}
+
+func TestLoginWithoutOAuthSupportReportsGuidance(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
 	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	t.Setenv("SCOPEDB_CONTROL_URL", server.URL)
-	t.Setenv("SCOPEDB_CONSOLE_URL", "")
-	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
-	paths, err := config.ResolvePaths()
-	require.NoError(t, err)
-	return credential.NewPlaintextStore(paths.CredentialsFile), server.URL
+	_, _, err := runCommand(t, "--control-url", server.URL, "auth", "login", "--insecure-storage")
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "does not offer CLI login")
+	require.Contains(t, clierror.Render(err), "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 }
 
-func TestLoginReportsUnreachableControlPlane(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	controlURL := "http://" + listener.Addr().String()
-	require.NoError(t, listener.Close())
-
-	_, _, err = runCommand(t, "auth", "login", "--email", "dev@example.com", "--code", "123456", "--control-url", controlURL)
-	require.Error(t, err)
-	rendered := clierror.Render(NormalizeError(err))
-	require.Contains(t, rendered, "Error: cannot reach ScopeDB control plane")
-	require.Contains(t, rendered, "Caused by: ")
-	require.Contains(t, rendered, "connection refused")
-}
-
-func TestFailedLoginDoesNotChangeConfig(t *testing.T) {
-	_, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/login":
-			_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
-		case "/api/login/verify":
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"message":"invalid code"}`))
-		default:
-			t.Errorf("unexpected request: %s", r.URL.Path)
+func TestLoginKeepsCredentialsWhenAccountLookupFails(t *testing.T) {
+	fake, store := setupCLITest(t)
+	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/user" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+			return
 		}
+		fake.serve(w, r)
 	}))
-	paths, err := config.ResolvePaths()
+	t.Cleanup(controlServer.Close)
+	fake.URL = controlServer.URL
+	fake.Issuer = controlServer.URL
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
 	require.NoError(t, err)
-	require.NoError(t, config.Save(paths, config.Config{
-		ControlURL:      "https://old.example.com",
-		ConsoleURL:      config.DefaultConsoleURL,
-		CredentialStore: config.CredentialStorePlaintext,
-	}))
-	before, err := os.ReadFile(paths.Config)
+	require.Contains(t, out, "Logged in.")
+	require.Contains(t, diagnostics, "scope auth status")
+	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
-	out, _, err := runCommand(t, "--control-url", controlURL, "auth", "login", "--email", "dev@example.com", "--code", "bad-code", "--format", "json")
-	require.Error(t, err)
-	require.Empty(t, out)
-	after, err := os.ReadFile(paths.Config)
-	require.NoError(t, err)
-	require.Equal(t, before, after)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
 }
 
-func TestLoginReadsVerificationCodeFromStdin(t *testing.T) {
-	_, _ = setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.URL.Path {
-		case "/api/login":
-			_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
-		case "/api/login/verify":
-			var request map[string]string
-			assert.NoError(t, json.NewDecoder(r.Body).Decode(&request))
-			assert.Equal(t, "123456", request["code"])
-			_, _ = w.Write([]byte(`{"token":"session-secret","workspace_id":"ws-1"}`))
-		default:
-			t.Errorf("unexpected request: %s", r.URL.Path)
-		}
-	}))
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{In: strings.NewReader("123456\n"), Out: &out, ErrOut: &diagnostics})
-	root.SetArgs([]string{"auth", "login", "--email", "dev@example.com", "--insecure-storage", "--format", "json"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.JSONEq(t, `{"email":"dev@example.com","workspace_id":"ws-1"}`, out.String())
-	require.NotContains(t, out.String()+diagnostics.String(), "123456")
-	require.NotContains(t, out.String()+diagnostics.String(), "session-secret")
-}
-
-func TestLoginRecoversInvalidProfileWithoutLosingOtherOrigins(t *testing.T) {
-	store, controlURL, revoked := setupSuccessfulLogin(t)
-	const otherURL = "https://other.example.com"
-	require.NoError(t, store.Save(otherURL, credential.State{SessionToken: "other-session"}))
-	require.NoError(t, store.Save(controlURL, credential.State{}))
-	_, err := store.Load(controlURL)
-	require.ErrorIs(t, err, credential.ErrInvalidState)
-
-	_, _, err = runCommand(t, "auth", "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
+func TestLoginReportsWorkspaceSetup(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.User.Status = "pending"
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
 	require.NoError(t, err)
-	recovered, err := store.Load(controlURL)
-	require.NoError(t, err)
-	require.Equal(t, "session-secret", recovered.SessionToken)
-	require.Equal(t, "ws-1", recovered.WorkspaceID)
-	preserved, err := store.Load(otherURL)
-	require.NoError(t, err)
-	require.Equal(t, "other-session", preserved.SessionToken)
-	require.Zero(t, revoked.Load())
-}
-
-func TestLoginPreservesUnreadableCredentialFile(t *testing.T) {
-	_, _, revoked := setupSuccessfulLogin(t)
-	paths, err := config.ResolvePaths()
-	require.NoError(t, err)
-	const broken = `{"version":1,"profiles":`
-	require.NoError(t, os.WriteFile(paths.CredentialsFile, []byte(broken), 0o600))
-	out, _, err := runCommand(t, "auth", "login", "--email", "dev@example.com", "--code", "123456", "--insecure-storage")
-	require.ErrorContains(t, err, "existing credentials could not be read")
-	require.EqualValues(t, 1, revoked.Load())
-	require.Empty(t, out)
-	preserved, err := os.ReadFile(paths.CredentialsFile)
-	require.NoError(t, err)
-	require.Equal(t, broken, string(preserved))
-	_, err = os.Stat(paths.Config)
-	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, diagnostics, "awaiting approval")
+	require.Contains(t, diagnostics, "scope console --open")
 }
 
 func TestLoginRollsBackFailedPersistence(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		prior bool
-		fail  func(config.Paths) error
-	}{
-		{"credential write", true, func(config.Paths) error { return os.ErrPermission }},
-		{"config write", true, func(paths config.Paths) error { return os.Mkdir(paths.Config, 0o700) }},
-		{"first login", false, func(paths config.Paths) error { return os.Mkdir(paths.Config, 0o700) }},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			store, controlURL, revoked := setupSuccessfulLogin(t)
-			if tc.prior {
-				require.NoError(t, store.Save(controlURL, credential.State{SessionToken: "prior-secret"}))
-			}
-			var out, diagnostics bytes.Buffer
-			root := NewRoot(Dependencies{
-				In: strings.NewReader(""), Out: &out, ErrOut: &diagnostics,
-				CredentialStore: func(_ string, paths config.Paths) (credential.Store, error) {
-					return &interruptSaveStore{Store: store, afterSave: func() error { return tc.fail(paths) }}, nil
-				},
-			})
-			root.SetArgs([]string{"auth", "login", "--email", "dev@example.com", "--code", "123456", "--format", "json"})
-			err := root.ExecuteContext(t.Context())
-			require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
-			require.EqualValues(t, 1, revoked.Load())
-			require.Empty(t, out.String())
-			state, err := store.Load(controlURL)
-			if tc.prior {
-				require.NoError(t, err)
-				require.Equal(t, "prior-secret", state.SessionToken)
-			} else {
-				require.ErrorIs(t, err, credential.ErrNotFound)
-			}
-		})
-	}
+	fake, store := setupCLITest(t)
+	paths, err := config.ResolvePaths()
+	require.NoError(t, err)
+	// The first credential write succeeds and then blocks the configuration write, so the login
+	// must be rolled back and its grant revoked.
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		Out: &out, ErrOut: &diagnostics,
+		Getenv:  func(string) string { return "" },
+		Sleep:   func(time.Duration) {},
+		OpenURL: fake.authorizationURL(t),
+		CredentialStore: func(_ string, paths config.Paths) (credential.Store, error) {
+			return &interruptSaveStore{Store: store, afterSave: func() error { return os.Mkdir(paths.Config, 0o700) }}, nil
+		},
+	})
+	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage", "--format", "json"})
+	err = root.ExecuteContext(t.Context())
+	require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(NormalizeError(err)))
+	require.Empty(t, out.String())
+	require.Equal(t, []string{"ort_refresh"}, fake.RevokedTokens)
+	_, loadErr := store.Load(fake.URL)
+	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+	_ = paths
 }
 
+// interruptSaveStore fails every save after the first one succeeds.
 type interruptSaveStore struct {
 	credential.Store
 	afterSave func() error
@@ -383,40 +319,113 @@ func (s *interruptSaveStore) Save(controlURL string, state credential.State) err
 	return nil
 }
 
-func setupSuccessfulLogin(t *testing.T) (*credential.PlaintextStore, string, *atomic.Int32) {
-	t.Helper()
-	var revoked atomic.Int32
-	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch r.Method + " " + r.URL.Path {
-		case "POST /api/login":
-			_, _ = w.Write([]byte(`{"login_challenge":"challenge-secret"}`))
-		case "POST /api/login/verify":
-			_, _ = w.Write([]byte(`{"token":"session-secret","workspace_id":"ws-1"}`))
-		case "DELETE /api/session":
-			assert.Equal(t, "Bearer session-secret", r.Header.Get("Authorization"))
-			revoked.Add(1)
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	return store, controlURL, &revoked
+func TestLoginPreservesUnreadableCredentialFile(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	paths, err := config.ResolvePaths()
+	require.NoError(t, err)
+	const broken = `{"version":1,"profiles":`
+	require.NoError(t, os.WriteFile(paths.CredentialsFile, []byte(broken), 0o600))
+
+	out, _, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
+	require.ErrorContains(t, err, "existing credentials could not be read")
+	require.Equal(t, []string{"ort_refresh"}, fake.RevokedTokens)
+	require.Empty(t, out)
+	preserved, err := os.ReadFile(paths.CredentialsFile)
+	require.NoError(t, err)
+	require.Equal(t, broken, string(preserved))
 }
 
-func runCommand(t *testing.T, args ...string) (string, string, error) {
-	t.Helper()
+func TestLoginRecoversFromOlderStoredState(t *testing.T) {
+	fake, store := setupCLITest(t)
+	paths, err := config.ResolvePaths()
+	require.NoError(t, err)
+	// Version 1 stored a browser session token, which an OAuth login can never use again.
+	legacy := `{"version":1,"profiles":{"` + profileKeyFor(fake.URL) + `":{"version":1,"control_url":"` + fake.URL + `","session_token":"legacy-secret"}}}`
+	require.NoError(t, os.MkdirAll(paths.Directory, 0o700))
+	require.NoError(t, os.WriteFile(paths.CredentialsFile, []byte(legacy), 0o600))
+
+	out, _, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"email":"dev@example.com"}`, out)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+	require.NotContains(t, out, "legacy-secret")
+}
+
+func TestLogoutRevokesAndRemovesCredentials(t *testing.T) {
+	fake, store := setupCLITest(t)
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, diagnostics, err := runCommand(t, "--control-url", fake.URL, "auth", "logout", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"changed":true}`, out)
+	require.Empty(t, diagnostics)
+	require.Equal(t, []string{"ort_refresh"}, fake.RevokedTokens)
+	_, loadErr := store.Load(fake.URL)
+	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+
+	out, _, err = runCommand(t, "--control-url", fake.URL, "auth", "logout", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"changed":false}`, out)
+}
+
+func TestLogoutKeepsLocalRemovalWhenRevocationFails(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.RevokedStatus = http.StatusInternalServerError
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runCommand(t, "--control-url", fake.URL, "auth", "logout", "--format", "json")
+	require.Error(t, err)
+	require.Empty(t, out)
+	require.Contains(t, clierror.Render(err), "local credentials removed")
+	require.Contains(t, clierror.Render(err), "revoked in the Console")
+	_, loadErr := store.Load(fake.URL)
+	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+}
+
+func TestLogoutRejectsEnvironmentCredentials(t *testing.T) {
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
-		In:     strings.NewReader(""),
-		Out:    &out,
-		ErrOut: &diagnostics,
-		Getenv: func(string) string { return "" },
+		Out: &out, ErrOut: &diagnostics,
+		Sleep: func(time.Duration) {},
+		Getenv: func(name string) string {
+			switch name {
+			case "SCOPEDB_ENDPOINT":
+				return "https://data.example.com"
+			case "SCOPEDB_API_KEY":
+				return "machine-secret"
+			}
+			return ""
+		},
 	})
-	root.SetArgs(args)
+	root.SetArgs([]string{"auth", "logout", "--format", "json"})
 	err := root.ExecuteContext(t.Context())
-	for _, secret := range []string{"session-secret", "rotated-secret", "challenge-secret", "123456"} {
-		require.NotContains(t, out.String()+diagnostics.String(), secret)
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+	require.Empty(t, out.String())
+	require.NotContains(t, diagnostics.String(), "machine-secret")
+}
+
+func TestLoginReportsUnreachableControlPlane(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	controlURL := "http://" + listener.Addr().String()
+	require.NoError(t, listener.Close())
+
+	_, _, err = runCommand(t, "auth", "login", "--insecure-storage", "--control-url", controlURL)
+	require.Error(t, err)
+	rendered := clierror.Render(NormalizeError(err))
+	require.Contains(t, rendered, "cannot reach ScopeDB control plane")
+	require.Contains(t, rendered, "Caused by: ")
+	require.Contains(t, rendered, "connection refused")
+}
+
+func TestLoginDoesNotPrintSecrets(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	combined := out + diagnostics
+	for _, secret := range []string{"oat_access", "ort_refresh", fake.AuthorizationCode} {
+		require.NotContains(t, combined, secret)
 	}
-	return out.String(), diagnostics.String(), err
 }

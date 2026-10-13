@@ -80,36 +80,30 @@ func NewClient(baseURL, userAgent string, httpClient *http.Client) (*Client, err
 	return &Client{baseURL: parsed.String(), http: httpClient, userAgent: userAgent}, nil
 }
 
-func (c *Client) BeginLogin(ctx context.Context, email string) (LoginBeginResponse, error) {
-	var response LoginBeginResponse
-	err := c.doJSON(ctx, http.MethodPost, "/api/login", "", map[string]string{"email": email}, &response)
+func (c *Client) GetUser(ctx context.Context, token string) (User, error) {
+	var response User
+	err := c.doJSON(ctx, http.MethodGet, "/api/user", token, nil, &response)
 	return response, err
 }
 
-func (c *Client) VerifyLogin(ctx context.Context, challenge, code string) (LoginResponse, error) {
-	var response LoginResponse
-	err := c.doJSON(ctx, http.MethodPost, "/api/login/verify", "", map[string]string{
-		"login_challenge": challenge,
-		"code":            code,
-	}, &response)
+func (c *Client) ListWorkspaces(ctx context.Context, token string) ([]Workspace, error) {
+	var response WorkspacesResponse
+	err := c.doJSON(ctx, http.MethodGet, "/api/workspaces", token, nil, &response)
+	if response.Workspaces == nil && err == nil {
+		response.Workspaces = []Workspace{}
+	}
+	return response.Workspaces, err
+}
+
+func (c *Client) CreateWorkspace(ctx context.Context, token string, request CreateWorkspaceRequest) (CreateWorkspaceResponse, error) {
+	var response CreateWorkspaceResponse
+	err := c.doJSON(ctx, http.MethodPost, "/api/workspaces", token, request, &response)
 	return response, err
 }
 
-func (c *Client) GetSession(ctx context.Context, token string) (Session, error) {
-	var response Session
-	err := c.doJSON(ctx, http.MethodGet, "/api/session", token, nil, &response)
-	return response, err
-}
-
-func (c *Client) DeleteSession(ctx context.Context, token string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/api/session", token, nil, nil)
-}
-
-func (c *Client) SelectWorkspace(ctx context.Context, token, workspaceID string) (LoginResponse, error) {
-	var response LoginResponse
-	err := c.doJSON(ctx, http.MethodPost, "/api/session/workspace", token, map[string]string{
-		"workspace_id": workspaceID,
-	}, &response)
+func (c *Client) GetSignupConfig(ctx context.Context) (SignupConfig, error) {
+	var response SignupConfig
+	err := c.doJSON(ctx, http.MethodGet, "/api/signup/config", "", nil, &response)
 	return response, err
 }
 
@@ -123,25 +117,6 @@ func (c *Client) ExchangeToken(ctx context.Context, token, workspaceID string) (
 	var response TokenExchangeResponse
 	err := c.doJSON(ctx, http.MethodPost, workspacePath(workspaceID)+"/token-exchange", token, struct{}{}, &response)
 	return response, err
-}
-
-func (c *Client) ListAPIKeys(ctx context.Context, token, workspaceID string) ([]APIKey, error) {
-	var response []APIKey
-	err := c.doJSON(ctx, http.MethodGet, workspacePath(workspaceID)+"/api-keys", token, nil, &response)
-	if response == nil && err == nil {
-		response = []APIKey{}
-	}
-	return response, err
-}
-
-func (c *Client) CreateAPIKey(ctx context.Context, token, workspaceID string, request CreateAPIKeyRequest) (APIKey, error) {
-	var response APIKey
-	err := c.doJSON(ctx, http.MethodPost, workspacePath(workspaceID)+"/api-keys", token, request, &response)
-	return response, err
-}
-
-func (c *Client) RevokeAPIKey(ctx context.Context, token, workspaceID, name string) error {
-	return c.doJSON(ctx, http.MethodDelete, workspacePath(workspaceID)+"/api-keys/"+url.PathEscape(name), token, nil, nil)
 }
 
 func (c *Client) Health(ctx context.Context) error {

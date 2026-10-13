@@ -16,6 +16,7 @@ package command
 
 import (
 	"io"
+	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/spf13/cobra"
@@ -27,6 +28,7 @@ type statusView struct {
 	Email            string `json:"email,omitempty"`
 	CredentialSource string `json:"credential_source"`
 	UserStatus       string `json:"user_status,omitempty"`
+	LoginExpiresAt   string `json:"login_expires_at,omitempty"`
 	WorkspaceID      string `json:"workspace_id,omitempty"`
 	WorkspaceName    string `json:"workspace_name,omitempty"`
 	Endpoint         string `json:"endpoint,omitempty"`
@@ -38,7 +40,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 		Use:   "status",
 		Short: "Show authentication source, identity, and connection target",
 		Long: "Show authentication source, identity, and connection target.\n" +
-			"Uses environment credentials when set; otherwise verifies your login session.\n" +
+			"Uses environment credentials when set; otherwise verifies your CLI login.\n" +
 			"Run 'scope doctor' to verify query access or 'scope workspace get' for deployment details.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -58,27 +60,32 @@ func (a *app) newStatusCommand() *cobra.Command {
 				})
 			}
 
-			state, session, err := runtime.auth.LoadSession(cmd.Context())
+			account, err := runtime.auth.Account(cmd.Context())
+			if err != nil {
+				return NormalizeError(err)
+			}
+			state, err := runtime.auth.LoadAccess(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
 			view := statusView{
-				AuthMode:         "session",
+				AuthMode:         "oauth",
 				ControlURL:       runtime.config.ControlURL,
-				Email:            session.User.Email,
+				Email:            account.User.Email,
 				CredentialSource: runtime.config.CredentialStore,
-				UserStatus:       session.User.Status,
-				WorkspaceID:      state.WorkspaceID,
+				UserStatus:       account.User.Status,
+				LoginExpiresAt:   loginExpiry(state.RefreshTokenExpiresAt),
+				WorkspaceID:      account.SelectedWorkspaceID,
 			}
-			if state.WorkspaceID != "" {
-				details, err := runtime.control.GetWorkspace(cmd.Context(), state.SessionToken, state.WorkspaceID)
+			if account.SelectedWorkspaceID != "" {
+				details, err := runtime.control.GetWorkspace(cmd.Context(), state.AccessToken, account.SelectedWorkspaceID)
 				if err != nil {
 					return NormalizeError(err)
 				}
 				view.WorkspaceName = details.Workspace.Name()
 				view.Endpoint = details.Connection.APIBaseURL
 			}
-			if err := a.writeWorkspaceSetup(session); err != nil {
+			if err := a.writeWorkspaceSetup(account); err != nil {
 				return err
 			}
 			return renderStatus(a.out, format, view)
@@ -86,6 +93,15 @@ func (a *app) newStatusCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
 	return command
+}
+
+// loginExpiry formats the refresh-token expiry. A server that does not report one leaves the time
+// zero, and the status stays silent about a lifetime nobody knows.
+func loginExpiry(expiresAt time.Time) string {
+	if expiresAt.IsZero() {
+		return ""
+	}
+	return expiresAt.UTC().Format(time.RFC3339)
 }
 
 func renderStatus(out io.Writer, format string, view statusView) error {
@@ -98,6 +114,7 @@ func renderStatus(out io.Writer, format string, view statusView) error {
 		{"Credential source", view.CredentialSource},
 		{"Email", emptyDash(view.Email)},
 		{"User status", emptyDash(view.UserStatus)},
+		{"Login expires", emptyDash(view.LoginExpiresAt)},
 		{"Workspace", emptyDash(view.WorkspaceName)},
 		{"Workspace ID", emptyDash(view.WorkspaceID)},
 		{"Endpoint", emptyDash(view.Endpoint)},
