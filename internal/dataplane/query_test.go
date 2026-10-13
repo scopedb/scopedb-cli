@@ -42,7 +42,7 @@ func TestExecuteCancelsSubmittedStatementOnInterrupt(t *testing.T) {
 			<-request.Context().Done()
 		case http.MethodPost + " /v1/statements/" + statementID + "/cancel":
 			cancelCalled.Store(true)
-			_, _ = writer.Write([]byte(`{"statement_id":"` + statementID + `","status":"cancelled","created_at":"2026-09-09T00:00:00Z","message":"cancelled by client"}`))
+			_, _ = writer.Write([]byte(`{"statement_id":"` + statementID + `","status":"cancelled","created_at":"2026-09-09T00:00:00Z"}`))
 		default:
 			assert.Failf(t, "unexpected request", "%s %s", request.Method, request.URL.Path)
 			writer.WriteHeader(http.StatusNotFound)

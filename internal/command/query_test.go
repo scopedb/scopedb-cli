@@ -94,7 +94,7 @@ func TestQueryTimeoutReportsServerCancellation(t *testing.T) {
 						cancelCalls++
 						require.NoError(t, r.Context().Err(), "server cancellation must have a fresh context")
 						if cancelStatus != "unavailable" {
-							body = `{"statement_id":"` + statementID + `","status":"` + cancelStatus + `","created_at":"2026-09-09T00:00:00Z","message":"fixture cancellation result"}`
+							body = `{"statement_id":"` + statementID + `","status":"` + cancelStatus + `","created_at":"2026-09-09T00:00:00Z"}`
 						} else {
 							status = http.StatusServiceUnavailable
 							body = `{"message":"unavailable"}`
