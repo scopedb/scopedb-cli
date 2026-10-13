@@ -93,11 +93,17 @@ func TestQueryTimeoutReportsServerCancellation(t *testing.T) {
 					case "POST /v1/statements/" + statementID + "/cancel":
 						cancelCalls++
 						require.NoError(t, r.Context().Err(), "server cancellation must have a fresh context")
-						if cancelStatus != "unavailable" {
-							body = `{"statement_id":"` + statementID + `","status":"` + cancelStatus + `","created_at":"2026-09-09T00:00:00Z"}`
-						} else {
+						body = `{"statement_id":"` + statementID + `","status":"` + cancelStatus + `","created_at":"2026-09-09T00:00:00Z","progress":{}`
+						switch cancelStatus {
+						case "finished":
+							body += `,"result_set":{"metadata":{"fields":[],"num_rows":0},"format":"json","rows":[]}`
+						case "failed":
+							body += `,"error":{"code":"statement_failed","message":"query failed"}`
+						}
+						body += `}`
+						if cancelStatus == "unavailable" {
 							status = http.StatusServiceUnavailable
-							body = `{"message":"unavailable"}`
+							body = `{"code":"unavailable","message":"unavailable"}`
 						}
 					default:
 						t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
