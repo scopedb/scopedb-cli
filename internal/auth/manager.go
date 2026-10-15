@@ -206,7 +206,7 @@ func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error
 type LogoutCleanupError struct{ Err error }
 
 func (e *LogoutCleanupError) Error() string {
-	return "local credentials removed, but the login could not be revoked: " + e.Err.Error()
+	return fmt.Sprintf("local credentials removed, but the login could not be revoked: %s", e.Err)
 }
 
 func (e *LogoutCleanupError) Unwrap() error { return e.Err }
@@ -316,10 +316,11 @@ func RequireWorkspace(account Account) error {
 }
 
 // refresh rotates the stored refresh token under an exclusive file lock, because several CLI
-// processes share one credential store and rotation is single use. The served window in §7.3
-// covers a single process retrying, not unsynchronized processes.
+// processes share one credential store and rotation is single use. The server serves the token a
+// rotation consumed again for a minute, which covers one process retrying a lost response, not
+// unsynchronized processes.
 func (m *Manager) refresh(ctx context.Context, state credential.State) (credential.State, error) {
-	lock, err := filelock.Acquire(m.LockFile)
+	lock, err := filelock.Acquire(ctx, m.LockFile)
 	if err != nil {
 		return credential.State{}, err
 	}

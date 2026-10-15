@@ -6,7 +6,7 @@ All significant changes to this project will be documented in this file.
 
 ### Breaking changes
 
-* `scope auth login` approves a login in the ScopeDB Console instead of requesting an email verification code. `--email`, `--code`, and the interactive code prompt are gone, and the login no longer stores a browser session.
+* `scope auth login` approves a login in the ScopeDB Console instead of requesting an email verification code. `--email`, `--code`, and the interactive code prompt are gone, and the login no longer stores a browser session. Its `--format json` result carries only `email`, which is omitted when the account could not be read.
 * `scope api-key` is removed. The CLI authenticates as a delegated client that cannot create, list, or revoke persistent API keys; manage them in the Console instead.
 * `scope workspace use` stores the workspace locally for the current login instead of rotating a credential, so it no longer changes the workspace of another machine or a Console session. `scope auth status` still reports the selected workspace.
 * Authentication commands are grouped under `scope auth`: replace `scope login`, `scope logout`, and `scope status` with `scope auth login`, `scope auth logout`, and `scope auth status`. Replace `scope workspace show` with `scope workspace get`. The old command paths are not aliases.

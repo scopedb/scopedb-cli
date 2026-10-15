@@ -80,7 +80,6 @@ func TestClientCreateWorkspaceContract(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "ws-new", created.WorkspaceID)
-	require.Empty(t, created.Token)
 }
 
 func TestClientPreservesStructuredHTTPError(t *testing.T) {

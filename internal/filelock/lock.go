@@ -15,14 +15,23 @@
 // Package filelock serializes credential refresh across CLI processes.
 package filelock
 
+import (
+	"context"
+	"time"
+)
+
 // Lock is an exclusive advisory lock on a file. Close releases it and is safe to
 // call more than once.
 type Lock interface {
 	Close() error
 }
 
-// Acquire blocks until it holds the exclusive lock on path, creating the file if
-// it does not exist. Callers must Close the returned lock.
-func Acquire(path string) (Lock, error) {
-	return acquire(path)
+// lockRetryInterval is how often a non-blocking acquire attempt retries while another process holds
+// the lock.
+const lockRetryInterval = 50 * time.Millisecond
+
+// Acquire waits for the exclusive lock on path, creating the file if it does not exist, and gives up
+// when the context ends. Callers must Close the returned lock.
+func Acquire(ctx context.Context, path string) (Lock, error) {
+	return acquire(ctx, path)
 }

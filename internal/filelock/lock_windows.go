@@ -17,9 +17,12 @@
 package filelock
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -29,7 +32,7 @@ type winlock struct {
 	overlapped windows.Overlapped
 }
 
-func acquire(path string) (Lock, error) {
+func acquire(ctx context.Context, path string) (Lock, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, fmt.Errorf("create lock directory: %w", err)
 	}
@@ -38,12 +41,26 @@ func acquire(path string) (Lock, error) {
 		return nil, fmt.Errorf("open credential lock: %w", err)
 	}
 	lock := &winlock{file: file}
-	err = windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &lock.overlapped)
-	if err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("lock credentials: %w", err)
+	handle := windows.Handle(file.Fd())
+	// The attempts are non-blocking so the wait stays interruptible: a blocking LockFileEx cannot
+	// observe the context, which would hang the process past Ctrl+C behind a wedged holder.
+	for {
+		lock.overlapped = windows.Overlapped{}
+		err = windows.LockFileEx(handle, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &lock.overlapped)
+		if err == nil {
+			return lock, nil
+		}
+		if !errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			_ = file.Close()
+			return nil, fmt.Errorf("lock credentials: %w", err)
+		}
+		select {
+		case <-ctx.Done():
+			_ = file.Close()
+			return nil, fmt.Errorf("wait for the credential lock: %w", ctx.Err())
+		case <-time.After(lockRetryInterval):
+		}
 	}
-	return lock, nil
 }
 
 func (l *winlock) Close() error {

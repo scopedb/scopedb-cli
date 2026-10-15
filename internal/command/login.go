@@ -146,10 +146,8 @@ func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (co
 	if _, err := fmt.Fprintf(a.errOut, "Open this URL to approve the login:\n%s\n", target); err != nil {
 		return controlplane.TokenSet{}, err
 	}
-	if err := a.openURL(target); err != nil {
-		if _, writeErr := fmt.Fprintf(a.errOut, "Could not open a browser: %s\n", err); writeErr != nil {
-			return controlplane.TokenSet{}, writeErr
-		}
+	if err := a.openBrowser(target); err != nil {
+		return controlplane.TokenSet{}, err
 	}
 
 	waitCtx, cancel := context.WithTimeout(ctx, authorizationRequestTTL)
@@ -181,17 +179,15 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 	if err != nil {
 		return controlplane.TokenSet{}, err
 	}
-	if device.DeviceCode == "" || device.UserCode == "" || device.VerificationURI == "" {
+	if device.DeviceCode == "" || device.UserCode == "" || device.VerificationURI == "" || device.ExpiresIn <= 0 {
 		return controlplane.TokenSet{}, errors.New("ScopeDB returned an incomplete device authorization")
 	}
 	if _, err := fmt.Fprintf(a.errOut, "To approve this login, open %s and enter the code:\n\n    %s\n\n", device.VerificationURI, device.UserCode); err != nil {
 		return controlplane.TokenSet{}, err
 	}
 	if device.VerificationURIComplete != "" {
-		if err := a.openURL(device.VerificationURIComplete); err != nil {
-			if _, writeErr := fmt.Fprintf(a.errOut, "Could not open a browser: %s\n", err); writeErr != nil {
-				return controlplane.TokenSet{}, writeErr
-			}
+		if err := a.openBrowser(device.VerificationURIComplete); err != nil {
+			return controlplane.TokenSet{}, err
 		}
 	}
 
@@ -245,27 +241,62 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 		if ctx.Err() != nil {
 			return controlplane.TokenSet{}, ctx.Err()
 		}
-		a.sleep(backoff)
+		if err := a.waitForPoll(ctx, backoff); err != nil {
+			return controlplane.TokenSet{}, err
+		}
 	}
 }
 
-// loginAccountEmail reports the account the new login belongs to. A failed lookup must not undo a
-// login that is already stored.
+// openBrowser opens the approval page and warns when that is not possible; the printed URL is the
+// fallback either way.
+func (a *app) openBrowser(target string) error {
+	if err := a.openURL(target); err != nil {
+		if _, writeErr := fmt.Fprintf(a.errOut, "Could not open a browser: %s\n", err); writeErr != nil {
+			return writeErr
+		}
+	}
+	return nil
+}
+
+// waitForPoll waits out one polling interval. The timer is interrupted by the context, so Ctrl+C
+// ends a device-code wait instead of being swallowed by a backoff of up to deviceMaxBackoff.
+func (a *app) waitForPoll(ctx context.Context, interval time.Duration) error {
+	waited := make(chan struct{})
+	go func() {
+		defer close(waited)
+		a.sleep(interval)
+	}()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-waited:
+		return nil
+	}
+}
+
+// loginAccountEmail reports the account the new login belongs to, and tells the user what still
+// prevents the CLI from using a workspace. A failed lookup must not undo a login that is already
+// stored, so its warning is best effort.
 func (a *app) loginAccountEmail(ctx context.Context, runtime *runtimeContext, token string) string {
 	lookupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	user, err := runtime.control.GetUser(lookupCtx, token)
 	if err != nil {
-		if _, writeErr := fmt.Fprintln(a.errOut, "Could not check account status. Run 'scope auth status' to retry."); writeErr != nil {
-			return ""
-		}
-		return ""
+		return a.warnAccountUnchecked()
 	}
-	account := auth.Account{User: user, Workspaces: []controlplane.Workspace{}}
-	if err := a.writeWorkspaceSetup(account); err != nil {
+	workspaces, err := runtime.control.ListWorkspaces(lookupCtx, token)
+	if err != nil {
+		return a.warnAccountUnchecked()
+	}
+	if err := a.writeWorkspaceSetup(auth.Account{User: user, Workspaces: workspaces}); err != nil {
 		return ""
 	}
 	return user.Email
+}
+
+func (a *app) warnAccountUnchecked() string {
+	_, _ = fmt.Fprintln(a.errOut, "Could not check account status. Run 'scope auth status' to retry.")
+	return ""
 }
 
 func describeAuthorizationError(callback oauth.Callback) string {

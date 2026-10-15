@@ -276,6 +276,16 @@ func TestLoginReportsWorkspaceSetup(t *testing.T) {
 	require.Contains(t, diagnostics, "scope console --open")
 }
 
+func TestLoginReportsTheWorkspacesTheAccountOwns(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.NotContains(t, diagnostics, "no workspaces")
+	require.Contains(t, diagnostics, "no workspace is selected")
+}
+
 func TestLoginRollsBackFailedPersistence(t *testing.T) {
 	fake, store := setupCLITest(t)
 	paths, err := config.ResolvePaths()

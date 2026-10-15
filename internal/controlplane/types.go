@@ -83,10 +83,8 @@ type CreateWorkspaceRequest struct {
 	Region      string `json:"region"`
 }
 
-// CreateWorkspaceResponse carries the workspace that was created. The token is empty for an OAuth
-// credential, which is never rotated to change workspace.
+// CreateWorkspaceResponse carries the workspace that was created.
 type CreateWorkspaceResponse struct {
-	Token       string `json:"token"`
 	WorkspaceID string `json:"workspace_id"`
 }
 
