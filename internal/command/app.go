@@ -49,6 +49,7 @@ type Dependencies struct {
 	HTTPClient      *http.Client
 	CredentialStore credentialFactory
 	IsInputTerminal func() bool
+	IsErrorTerminal func() bool
 	OpenURL         func(string) error
 	Now             func() time.Time
 	Sleep           func(time.Duration)
@@ -64,6 +65,7 @@ type app struct {
 	query             *dataplane.QueryService
 	credentialFactory credentialFactory
 	isInputTerminal   func() bool
+	isErrorTerminal   func() bool
 	openURL           func(string) error
 	now               func() time.Time
 	sleep             func(time.Duration)
@@ -134,14 +136,10 @@ func newApp(deps Dependencies) *app {
 		deps.CredentialStore = credential.New
 	}
 	if deps.IsInputTerminal == nil {
-		deps.IsInputTerminal = func() bool {
-			file, ok := deps.In.(*os.File)
-			if !ok {
-				return false
-			}
-			info, err := file.Stat()
-			return err == nil && info.Mode()&os.ModeCharDevice != 0
-		}
+		deps.IsInputTerminal = func() bool { return isCharDevice(deps.In) }
+	}
+	if deps.IsErrorTerminal == nil {
+		deps.IsErrorTerminal = func() bool { return isCharDevice(deps.ErrOut) }
 	}
 	if deps.OpenURL == nil {
 		deps.OpenURL = openURL
@@ -164,6 +162,7 @@ func newApp(deps Dependencies) *app {
 		query:             &dataplane.QueryService{HTTPClient: deps.HTTPClient},
 		credentialFactory: deps.CredentialStore,
 		isInputTerminal:   deps.IsInputTerminal,
+		isErrorTerminal:   deps.IsErrorTerminal,
 		openURL:           deps.OpenURL,
 		now:               deps.Now,
 		sleep:             deps.Sleep,
@@ -226,6 +225,17 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 		return nil, err
 	}
 	return a.newRuntime(paths, cfg)
+}
+
+// isCharDevice reports whether an injected stream is a terminal rather than a file, pipe, or test
+// buffer.
+func isCharDevice(stream any) bool {
+	file, ok := stream.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
 func openURL(target string) error {

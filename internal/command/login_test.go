@@ -236,6 +236,54 @@ func TestDeviceLoginFallsBackToThePlainVerificationURL(t *testing.T) {
 	require.Contains(t, diagnostics.String(), "BCDF-GHJK-LMNP")
 }
 
+func TestDeviceLoginReportsTheServerLifetime(t *testing.T) {
+	for _, tc := range []struct {
+		seconds int64
+		want    string
+	}{
+		{45, "expires in 45s"},
+		{125, "expires in 2m5s"},
+		{600, "expires in 10m"},
+		{3660, "expires in 1h1m"},
+	} {
+		t.Run(fmt.Sprintf("%ds", tc.seconds), func(t *testing.T) {
+			fake, _ := setupCLITest(t)
+			fake.DeviceExpiresIn = tc.seconds
+			_, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage")
+			require.NoError(t, err)
+			require.Contains(t, diagnostics, "Waiting for authorization... ("+tc.want+"; Ctrl+C to cancel)")
+		})
+	}
+}
+
+func TestDeviceLoginWaitsWithoutControlSequences(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"email":"dev@example.com"}`, out)
+	require.Contains(t, diagnostics, "Waiting for authorization... (expires in 10m; Ctrl+C to cancel)")
+	require.NotContains(t, diagnostics, "\x1b")
+	require.NotContains(t, out, "\x1b")
+}
+
+func TestDeviceLoginSpinsTheWaitOnATerminal(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		Out: &out, ErrOut: &diagnostics,
+		Getenv:          func(string) string { return "" },
+		Sleep:           func(time.Duration) {},
+		OpenURL:         func(string) error { return nil },
+		IsErrorTerminal: func() bool { return true },
+	})
+	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--device", "--insecure-storage"})
+	require.NoError(t, root.ExecuteContext(t.Context()))
+	require.Contains(t, diagnostics.String(), "\r")
+	require.Contains(t, diagnostics.String(), "Waiting for authorization")
+	require.Contains(t, diagnostics.String(), "\x1b[K")
+	require.NotContains(t, out.String(), "\x1b")
+}
+
 func TestLoginRequiresDeviceInSSHSession(t *testing.T) {
 	fake, store := setupCLITest(t)
 	var out, diagnostics bytes.Buffer

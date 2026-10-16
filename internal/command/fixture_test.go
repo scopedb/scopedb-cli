@@ -50,6 +50,7 @@ type fakeControlPlane struct {
 	UserCode              string
 	DeviceCode            string
 	DeviceOutcomes        []string
+	DeviceExpiresIn       int64
 	DeviceCompleteURI     *string
 
 	User                controlplane.User
@@ -140,7 +141,10 @@ func (f *fakeControlPlane) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(status)
 	case r.URL.Path == "/oauth/device/authorization":
-		expiresIn := int64(600)
+		expiresIn := f.DeviceExpiresIn
+		if expiresIn <= 0 {
+			expiresIn = 600
+		}
 		if f.DeviceCode == "" {
 			f.DeviceCode = "device-1"
 		}

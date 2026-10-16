@@ -16,7 +16,7 @@ All significant changes to this project will be documented in this file.
 
 ### New features
 
-* `scope auth login` opens a browser and completes the login through a loopback redirect, and `scope auth login --device` prints a prefilled verification link and code to approve from another device for SSH sessions and containers, opening a browser only with `--open`. The CLI no longer fails over between the two flows.
+* `scope auth login` opens a browser and completes the login through a loopback redirect, and `scope auth login --device` prints a prefilled verification link and code to approve from another device for SSH sessions and containers, opening a browser only with `--open` and showing a waiting message with the request's remaining lifetime until the login is approved, denied, or expires. The CLI no longer fails over between the two flows.
 * The CLI login is renewed automatically before its access token expires, using a rotating refresh token that is shared safely between concurrent `scope` processes.
 * `scope auth logout` revokes the login in ScopeDB before removing local credentials, so a signed-out CLI cannot keep using its grant.
 * `scope workspace create` creates a workspace, defaulting to the deployment's default placement. `scope workspace list` shows whether each workspace is ready, still provisioning, or scheduled for deletion, and the CLI refuses to select a workspace that is scheduled for deletion.

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/scopedb/scopedb-cli/internal/auth"
@@ -198,6 +199,9 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth, openB
 		}
 	}
 
+	stopWaiting := a.startAuthorizationWait(time.Duration(device.ExpiresIn) * time.Second)
+	defer stopWaiting()
+
 	interval := time.Duration(device.Interval) * time.Second
 	if interval <= 0 {
 		interval = devicePollInterval
@@ -293,6 +297,67 @@ func (a *app) waitForPoll(ctx context.Context, interval time.Duration) error {
 		return ctx.Err()
 	case <-waited:
 		return nil
+	}
+}
+
+// startAuthorizationWait reports the wait for approval on stderr and returns the function that stops
+// the indicator. An interactive terminal gets an animated spinner; any other stderr gets one plain
+// line, so redirected output and `--format json` stdout stay free of terminal control sequences.
+func (a *app) startAuthorizationWait(lifetime time.Duration) func() {
+	message := fmt.Sprintf("Waiting for authorization... (expires in %s; Ctrl+C to cancel)", describeLifetime(lifetime))
+	if !a.isErrorTerminal() {
+		_, _ = fmt.Fprintln(a.errOut, message)
+		return func() {}
+	}
+
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	frames := []string{"|", "/", "-", "\\"}
+	go func() {
+		defer close(done)
+		defer func() { _, _ = fmt.Fprint(a.errOut, "\r\x1b[K") }()
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for index := 0; ; index++ {
+			if _, err := fmt.Fprintf(a.errOut, "\r%s %s", frames[index%len(frames)], message); err != nil {
+				return
+			}
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			close(stop)
+			<-done
+		})
+	}
+}
+
+// describeLifetime renders the server-provided authorization lifetime for the waiting line, dropping
+// zero components so the common ten-minute device flow reads as "10m".
+func describeLifetime(lifetime time.Duration) string {
+	total := int64(lifetime / time.Second)
+	if total <= 0 {
+		return "0s"
+	}
+	hours := total / 3600
+	minutes := total % 3600 / 60
+	seconds := total % 60
+	switch {
+	case hours > 0:
+		return fmt.Sprintf("%dh%dm", hours, minutes)
+	case minutes > 0 && seconds > 0:
+		return fmt.Sprintf("%dm%ds", minutes, seconds)
+	case minutes > 0:
+		return fmt.Sprintf("%dm", minutes)
+	default:
+		return fmt.Sprintf("%ds", seconds)
 	}
 }
 
