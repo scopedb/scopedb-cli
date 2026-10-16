@@ -390,7 +390,7 @@ func (m *Manager) refresh(ctx context.Context, state credential.State) (credenti
 			// The reuse-detection and idle-expiry rules end the whole grant, so the stored
 			// credentials can never work again.
 			_ = m.Credentials.Delete(m.ControlURL)
-			return credential.State{}, fmt.Errorf("%w: %s; run 'scope auth login'", ErrLoginExpired, refreshErr)
+			return credential.State{}, fmt.Errorf("%w: %s", ErrLoginExpired, refreshErr)
 		}
 		if attempt < refreshRetryLimit && m.now().Before(deadline) && retryableRefresh(refreshErr) {
 			m.sleep(refreshRetryDelay)
