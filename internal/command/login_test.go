@@ -16,6 +16,7 @@ package command
 
 import (
 	"bytes"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -176,6 +177,63 @@ func TestDeviceLoginRejectsIncompleteResponse(t *testing.T) {
 	fake.UserCode = ""
 	_, _, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage")
 	require.ErrorContains(t, err, "incomplete device authorization")
+}
+
+func TestDeviceLoginPrintsThePrefilledLinkAndKeepsTheCode(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"email":"dev@example.com"}`, out)
+	require.Contains(t, diagnostics, "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP")
+	require.Contains(t, diagnostics, "https://console.example.com/oauth/device and enter the code")
+	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
+}
+
+func TestDeviceLoginOpensTheBrowserOnlyWithOpen(t *testing.T) {
+	for _, open := range []bool{false, true} {
+		t.Run(fmt.Sprintf("open=%t", open), func(t *testing.T) {
+			fake, _ := setupCLITest(t)
+			var out, diagnostics bytes.Buffer
+			var opened []string
+			args := []string{"--control-url", fake.URL, "auth", "login", "--device", "--insecure-storage"}
+			if open {
+				args = append(args, "--open")
+			}
+			root := NewRoot(Dependencies{
+				Out: &out, ErrOut: &diagnostics,
+				Getenv:  func(string) string { return "" },
+				Sleep:   func(time.Duration) {},
+				OpenURL: func(target string) error { opened = append(opened, target); return nil },
+			})
+			root.SetArgs(args)
+			require.NoError(t, root.ExecuteContext(t.Context()))
+			if open {
+				require.Equal(t, []string{"https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP"}, opened)
+			} else {
+				require.Empty(t, opened)
+			}
+		})
+	}
+}
+
+func TestDeviceLoginFallsBackToThePlainVerificationURL(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	empty := ""
+	fake.DeviceCompleteURI = &empty
+	var out, diagnostics bytes.Buffer
+	var opened []string
+	root := NewRoot(Dependencies{
+		Out: &out, ErrOut: &diagnostics,
+		Getenv:  func(string) string { return "" },
+		Sleep:   func(time.Duration) {},
+		OpenURL: func(target string) error { opened = append(opened, target); return nil },
+	})
+	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--device", "--open", "--insecure-storage"})
+	require.NoError(t, root.ExecuteContext(t.Context()))
+	require.Equal(t, []string{"https://console.example.com/oauth/device"}, opened)
+	require.Contains(t, diagnostics.String(), "open https://console.example.com/oauth/device and enter the code")
+	require.NotContains(t, diagnostics.String(), "#user_code=")
+	require.Contains(t, diagnostics.String(), "BCDF-GHJK-LMNP")
 }
 
 func TestLoginRequiresDeviceInSSHSession(t *testing.T) {

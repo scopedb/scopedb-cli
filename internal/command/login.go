@@ -42,6 +42,7 @@ const (
 
 func (a *app) newLoginCommand() *cobra.Command {
 	var device bool
+	var openBrowser bool
 	var insecureStorage bool
 	var format string
 	command := &cobra.Command{
@@ -49,7 +50,8 @@ func (a *app) newLoginCommand() *cobra.Command {
 		Short: "Log in through the browser",
 		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
 			"The default flow opens a browser and receives the authorization on a loopback address.\n" +
-			"Use --device on a machine without a browser, such as an SSH session, to approve the login from another device.",
+			"Use --device on a machine without a browser, such as an SSH session, to approve the login from another device;\n" +
+			"add --open to also open the verification page in the browser on this machine.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateTextFormat(format); err != nil {
@@ -93,7 +95,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 
 			var tokens controlplane.TokenSet
 			if device {
-				tokens, err = a.deviceLogin(cmd.Context(), client)
+				tokens, err = a.deviceLogin(cmd.Context(), client, openBrowser)
 			} else {
 				tokens, err = a.loopbackLogin(cmd.Context(), client)
 			}
@@ -117,6 +119,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&device, "device", false, "log in with a user code on another device instead of a loopback browser redirect")
+	command.Flags().BoolVar(&openBrowser, "open", false, "open the verification page in the browser with --device")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	return command
@@ -173,8 +176,8 @@ func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (co
 }
 
 // deviceLogin runs RFC 8628 Device Authorization. It is the only flow that works without a browser
-// on the machine running the CLI.
-func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
+// on the machine running the CLI, so it never opens one unless the user asks for it.
+func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth, openBrowser bool) (controlplane.TokenSet, error) {
 	device, err := client.StartDeviceAuthorization(ctx)
 	if err != nil {
 		return controlplane.TokenSet{}, err
@@ -182,11 +185,15 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 	if device.DeviceCode == "" || device.UserCode == "" || device.VerificationURI == "" || device.ExpiresIn <= 0 {
 		return controlplane.TokenSet{}, errors.New("ScopeDB returned an incomplete device authorization")
 	}
-	if _, err := fmt.Fprintf(a.errOut, "To approve this login, open %s and enter the code:\n\n    %s\n\n", device.VerificationURI, device.UserCode); err != nil {
+	if err := a.writeDeviceInstructions(device); err != nil {
 		return controlplane.TokenSet{}, err
 	}
-	if device.VerificationURIComplete != "" {
-		if err := a.openBrowser(device.VerificationURIComplete); err != nil {
+	if openBrowser {
+		target := device.VerificationURI
+		if device.VerificationURIComplete != "" {
+			target = device.VerificationURIComplete
+		}
+		if err := a.openBrowser(target); err != nil {
 			return controlplane.TokenSet{}, err
 		}
 	}
@@ -245,6 +252,21 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 			return controlplane.TokenSet{}, err
 		}
 	}
+}
+
+// writeDeviceInstructions shows how to approve the request. The prefilled link is the shortest path
+// when the server offers one, and the plain URL with the user code stays available for approving
+// from another device.
+func (a *app) writeDeviceInstructions(device controlplane.DeviceAuthorization) error {
+	if device.VerificationURIComplete == "" {
+		_, err := fmt.Fprintf(a.errOut, "To approve this login, open %s and enter the code:\n\n    %s\n\n", device.VerificationURI, device.UserCode)
+		return err
+	}
+	if _, err := fmt.Fprintf(a.errOut, "To approve this login, open:\n\n    %s\n\n", device.VerificationURIComplete); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(a.errOut, "Alternatively, open %s and enter the code:\n\n    %s\n\n", device.VerificationURI, device.UserCode)
+	return err
 }
 
 // openBrowser opens the approval page and warns when that is not possible; the printed URL is the

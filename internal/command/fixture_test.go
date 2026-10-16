@@ -50,6 +50,7 @@ type fakeControlPlane struct {
 	UserCode              string
 	DeviceCode            string
 	DeviceOutcomes        []string
+	DeviceCompleteURI     *string
 
 	User                controlplane.User
 	Workspaces          []controlplane.Workspace
@@ -143,11 +144,15 @@ func (f *fakeControlPlane) serve(w http.ResponseWriter, r *http.Request) {
 		if f.DeviceCode == "" {
 			f.DeviceCode = "device-1"
 		}
+		complete := "https://console.example.com/oauth/device#user_code=" + f.UserCode
+		if f.DeviceCompleteURI != nil {
+			complete = *f.DeviceCompleteURI
+		}
 		f.writeJSON(w, http.StatusOK, map[string]any{
 			"device_code":               f.DeviceCode,
 			"user_code":                 f.UserCode,
 			"verification_uri":          "https://console.example.com/oauth/device",
-			"verification_uri_complete": "https://console.example.com/oauth/device#user_code=" + f.UserCode,
+			"verification_uri_complete": complete,
 			"expires_in":                expiresIn,
 			"interval":                  0,
 		})

@@ -52,7 +52,7 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-`scope auth login` opens your browser, asks you to approve the request in the ScopeDB Console, and stores the login in the operating system keyring. On a machine without a browser, such as an SSH session, use `scope auth login --device` and approve the printed code from another device. The CLI never switches between the two flows on its own.
+`scope auth login` opens your browser, asks you to approve the request in the ScopeDB Console, and stores the login in the operating system keyring. On a machine without a browser, such as an SSH session, use `scope auth login --device` and approve the printed link or code from another device; add `--open` to open the prefilled link in a browser on the machine running the CLI. The CLI never switches between the two flows on its own.
 
 A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status or create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
