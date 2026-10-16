@@ -37,6 +37,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/dataplane"
 	"github.com/scopedb/scopedb-cli/internal/version"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 type credentialFactory func(string, config.Paths) (credential.Store, error)
@@ -50,6 +51,7 @@ type Dependencies struct {
 	CredentialStore credentialFactory
 	IsInputTerminal func() bool
 	IsErrorTerminal func() bool
+	MakeRaw         func() (restore func(), err error)
 	OpenURL         func(string) error
 	Now             func() time.Time
 	Sleep           func(time.Duration)
@@ -66,6 +68,7 @@ type app struct {
 	credentialFactory credentialFactory
 	isInputTerminal   func() bool
 	isErrorTerminal   func() bool
+	makeRaw           func() (restore func(), err error)
 	openURL           func(string) error
 	now               func() time.Time
 	sleep             func(time.Duration)
@@ -141,6 +144,9 @@ func newApp(deps Dependencies) *app {
 	if deps.IsErrorTerminal == nil {
 		deps.IsErrorTerminal = func() bool { return isCharDevice(deps.ErrOut) }
 	}
+	if deps.MakeRaw == nil {
+		deps.MakeRaw = func() (func(), error) { return makeInputRaw(deps.In) }
+	}
 	if deps.OpenURL == nil {
 		deps.OpenURL = openURL
 	}
@@ -163,6 +169,7 @@ func newApp(deps Dependencies) *app {
 		credentialFactory: deps.CredentialStore,
 		isInputTerminal:   deps.IsInputTerminal,
 		isErrorTerminal:   deps.IsErrorTerminal,
+		makeRaw:           deps.MakeRaw,
 		openURL:           deps.OpenURL,
 		now:               deps.Now,
 		sleep:             deps.Sleep,
@@ -236,6 +243,20 @@ func isCharDevice(stream any) bool {
 	}
 	info, err := file.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// makeInputRaw switches the terminal to raw mode so a menu can read one keystroke at a time.
+func makeInputRaw(input io.Reader) (func(), error) {
+	file, ok := input.(*os.File)
+	if !ok {
+		return nil, errors.New("input is not a terminal")
+	}
+	fd := int(file.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, err
+	}
+	return func() { _ = term.Restore(fd, state) }, nil
 }
 
 func openURL(target string) error {

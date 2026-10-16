@@ -1,0 +1,230 @@
+// Copyright 2026 ScopeDB, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package command
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"strconv"
+	"strings"
+)
+
+// errMenuCancelled reports that the user dismissed a menu. It is never a usage error and leaves no
+// state behind, so each caller decides what to print.
+var errMenuCancelled = errors.New("menu cancelled")
+
+type menuOption struct {
+	label string
+	note  string
+}
+
+const (
+	// The cursor glyph needs a UTF-8 terminal, which the arrow-key menu already requires.
+	menuCursor = "❯ "
+	menuIndent = "  "
+
+	// cursorUp moves the cursor to the start of the line n rows above, for an in-place redraw.
+	cursorUp = "\x1b[%dA"
+	// clearLine clears from the cursor to the end of the line.
+	clearLine = "\r\x1b[K"
+	// clearBlock clears from the cursor to the end of the screen, removing the menu and its hint.
+	clearBlock = "\r\x1b[J"
+
+	menuHint = "↑/↓ to navigate · enter to select · q to cancel"
+)
+
+// chooseMenu asks a single-choice question with an arrow-key menu, redrawing the block in place so
+// the cursor never scrolls. Terminals that cannot be put in raw mode get a numbered prompt instead.
+func (a *app) chooseMenu(question string, options []menuOption) (int, error) {
+	if len(options) == 0 {
+		return 0, errors.New("menu needs at least one option")
+	}
+	if a.isInputTerminal != nil && a.isInputTerminal() {
+		restore, err := a.makeRaw()
+		if err == nil {
+			return a.chooseMenuRaw(question, options, restore)
+		}
+	}
+	return a.chooseMenuNumbered(question, options)
+}
+
+func (a *app) chooseMenuRaw(question string, options []menuOption, restore func()) (int, error) {
+	selected := 0
+	// A read error leaves the terminal in the state that caused it, so every exit path restores.
+	defer restore()
+
+	if err := a.renderMenuFrame(question, options, selected, false); err != nil {
+		return 0, err
+	}
+	for {
+		key, err := a.readMenuKey()
+		if err != nil {
+			_ = a.eraseMenu(len(options))
+			return 0, err
+		}
+		switch key {
+		case "up":
+			selected = (selected - 1 + len(options)) % len(options)
+		case "down":
+			selected = (selected + 1) % len(options)
+		case "enter":
+			if err := a.eraseMenu(len(options)); err != nil {
+				return 0, err
+			}
+			if _, err := fmt.Fprintf(a.errOut, "✔ %s\n", options[selected].label); err != nil {
+				return 0, err
+			}
+			return selected, nil
+		case "cancel":
+			if err := a.eraseMenu(len(options)); err != nil {
+				return 0, err
+			}
+			return 0, errMenuCancelled
+		default:
+			if digit, ok := menuDigit(key); ok && digit < len(options) {
+				selected = digit
+			}
+		}
+		if err := a.renderMenuFrame(question, options, selected, true); err != nil {
+			return 0, err
+		}
+	}
+}
+
+// readMenuKey reads one keystroke. A lone ESC is an abort, which is why the escape sequence is
+// consumed one byte at a time instead of through a line-oriented reader.
+func (a *app) readMenuKey() (string, error) {
+	key, err := a.input.ReadByte()
+	if err != nil {
+		return "", err
+	}
+	switch key {
+	case '\r', '\n':
+		return "enter", nil
+	case 0x03, 'q':
+		return "cancel", nil
+	case '\x1b':
+		next, err := a.input.ReadByte()
+		if err != nil {
+			return "cancel", nil
+		}
+		if next != '[' {
+			return "", nil
+		}
+		final, err := a.input.ReadByte()
+		if err != nil {
+			return "", nil
+		}
+		switch final {
+		case 'A':
+			return "up", nil
+		case 'B':
+			return "down", nil
+		}
+		return "", nil
+	case 'k':
+		return "up", nil
+	case 'j':
+		return "down", nil
+	default:
+		return string(key), nil
+	}
+}
+
+// renderMenuFrame redraws the question and options in place. The frame moves the cursor back up to
+// the first option afterwards, and the caller keeps it there, so the terminal never scrolls.
+func (a *app) renderMenuFrame(question string, options []menuOption, selected int, redraw bool) error {
+	var frame strings.Builder
+	if redraw {
+		fmt.Fprintf(&frame, cursorUp, len(options)+1)
+	}
+	frame.WriteString(clearLine)
+	frame.WriteString("? ")
+	frame.WriteString(question)
+	frame.WriteString("\n")
+	for index, option := range options {
+		if redraw {
+			frame.WriteString("\x1b[K")
+		}
+		if index == selected {
+			frame.WriteString(menuCursor)
+		} else {
+			frame.WriteString(menuIndent)
+		}
+		fmt.Fprintf(&frame, "%d. %s", index+1, option.label)
+		if option.note != "" {
+			fmt.Fprintf(&frame, " (%s)", option.note)
+		}
+		frame.WriteString("\n")
+	}
+	frame.WriteString("\x1b[K")
+	frame.WriteString(menuHint)
+	fmt.Fprintf(&frame, cursorUp, len(options)+1)
+	_, err := io.WriteString(a.errOut, frame.String())
+	return err
+}
+
+// eraseMenu clears the question and options so the result can replace the block.
+func (a *app) eraseMenu(options int) error {
+	_, err := fmt.Fprintf(a.errOut, cursorUp+clearBlock, options)
+	return err
+}
+
+// chooseMenuNumbered is the fallback for a terminal that cannot be read keystroke by keystroke, such
+// as a redirected stdin. It asks the same question and reads one line per answer.
+func (a *app) chooseMenuNumbered(question string, options []menuOption) (int, error) {
+	var prompt strings.Builder
+	prompt.WriteString(question)
+	prompt.WriteString("\n")
+	for index, option := range options {
+		fmt.Fprintf(&prompt, "  %d. %s", index+1, option.label)
+		if option.note != "" {
+			fmt.Fprintf(&prompt, " (%s)", option.note)
+		}
+		prompt.WriteString("\n")
+	}
+	fmt.Fprintf(&prompt, "Selection [1-%d, q to cancel]: ", len(options))
+	for {
+		if _, err := io.WriteString(a.errOut, prompt.String()); err != nil {
+			return 0, err
+		}
+		answer, err := a.input.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, err
+		}
+		answer = strings.TrimSpace(answer)
+		if answer == "" && errors.Is(err, io.EOF) {
+			return 0, errMenuCancelled
+		}
+		if answer == "" || answer == "q" {
+			return 0, errMenuCancelled
+		}
+		index, convErr := strconv.Atoi(answer)
+		if convErr == nil && index >= 1 && index <= len(options) {
+			return index - 1, nil
+		}
+		if _, err := fmt.Fprintf(a.errOut, "Enter a number between 1 and %d.\n", len(options)); err != nil {
+			return 0, err
+		}
+	}
+}
+
+func menuDigit(key string) (int, bool) {
+	if len(key) != 1 || key[0] < '1' || key[0] > '9' {
+		return 0, false
+	}
+	return int(key[0] - '1'), true
+}
