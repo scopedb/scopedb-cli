@@ -18,7 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -109,7 +111,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return err
 			}
 
-			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, workspace)
+			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, workspace, format)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -164,7 +166,7 @@ func (s loginSelection) result() loginResult {
 
 // selectLoginWorkspace decides which workspace the new login uses. The account lookup stays best
 // effort, because a login that is already stored must not fail when only the account check did.
-func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext, requested string) (loginSelection, error) {
+func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext, requested, format string) (loginSelection, error) {
 	lookupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	account, err := runtime.auth.Account(lookupCtx)
@@ -207,7 +209,20 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 		}
 		selection.workspace = &workspace
 	case len(account.Workspaces) > 1:
-		selection.candidates = account.Workspaces
+		// Only the interactive branch can ask; a skipped answer then leaves stdout empty of the
+		// candidate table, which the user already saw in the picker on stderr.
+		if a.canPrompt(format) {
+			picked, err := a.promptLoginWorkspace(lookupCtx, runtime, account)
+			if err != nil {
+				return loginSelection{}, err
+			}
+			if picked != nil {
+				selection.workspace = picked
+				return selection, nil
+			}
+		} else {
+			selection.candidates = account.Workspaces
+		}
 	}
 	if selection.workspace == nil {
 		if err := a.writeWorkspaceSetup(account); err != nil {
@@ -215,6 +230,58 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 		}
 	}
 	return selection, nil
+}
+
+// promptLoginWorkspace asks which of several owned workspaces the login should use. A nil result
+// means the user skipped or the answer could not be read, so the caller keeps today's fallback.
+func (a *app) promptLoginWorkspace(ctx context.Context, runtime *runtimeContext, account auth.Account) (*controlplane.Workspace, error) {
+	workspaces := account.Workspaces
+	count := len(workspaces)
+	for {
+		if _, err := fmt.Fprintf(a.errOut, "Select a workspace for this login:\n%sSelection [1-%d, Enter to skip]: ", describeLoginWorkspaces(workspaces), count); err != nil {
+			return nil, nil
+		}
+		answer, err := a.input.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return nil, nil
+		}
+		answer = strings.TrimSpace(answer)
+		if answer == "" {
+			return nil, nil
+		}
+		index, err := strconv.Atoi(answer)
+		if err != nil || index < 1 || index > count {
+			if _, err := fmt.Fprintf(a.errOut, "Enter a number between 1 and %d.\n", count); err != nil {
+				return nil, nil
+			}
+			continue
+		}
+		workspace := workspaces[index-1]
+		if workspace.ScheduledForDeletion() {
+			if _, err := fmt.Fprintf(a.errOut, "Workspace %s is scheduled for deletion; restore it in the Console or choose another.\n", workspace.Name()); err != nil {
+				return nil, nil
+			}
+			continue
+		}
+		if err := runtime.auth.SelectWorkspace(ctx, workspace.ID); err != nil {
+			return nil, err
+		}
+		return &workspace, nil
+	}
+}
+
+// canPrompt reports whether the session can host a question, which needs a text result on a terminal
+// at both ends: stdout stays free of the picker and its answer must be reachable.
+func (a *app) canPrompt(format string) bool {
+	return format != structuredFormatJSON && a.isInputTerminal() && a.isErrorTerminal()
+}
+
+func describeLoginWorkspaces(workspaces []controlplane.Workspace) string {
+	var lines strings.Builder
+	for index, workspace := range workspaces {
+		fmt.Fprintf(&lines, "  %d) %s (%s, %s)\n", index+1, workspace.Name(), workspace.ID, workspaceStatus(workspace))
+	}
+	return lines.String()
 }
 
 func (a *app) renderLoginSelection(selection loginSelection) error {

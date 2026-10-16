@@ -402,3 +402,22 @@ func runCommand(t *testing.T, args ...string) (string, string, error) {
 	}
 	return out.String(), diagnostics.String(), err
 }
+
+// runLoginPicker drives the workspace picker with scripted answers and explicit terminal hooks.
+func runLoginPicker(t *testing.T, fake *fakeControlPlane, input string, inputTerminal, errorTerminal bool, args ...string) (string, string, error) {
+	t.Helper()
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		In:              strings.NewReader(input),
+		Out:             &out,
+		ErrOut:          &diagnostics,
+		Getenv:          func(string) string { return "" },
+		Sleep:           func(time.Duration) {},
+		OpenURL:         fake.authorizationURL(t),
+		IsInputTerminal: func() bool { return inputTerminal },
+		IsErrorTerminal: func() bool { return errorTerminal },
+	})
+	root.SetArgs(append([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"}, args...))
+	err := root.ExecuteContext(t.Context())
+	return out.String(), diagnostics.String(), err
+}

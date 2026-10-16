@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -550,6 +551,130 @@ func TestLoginReportsSeveralWorkspaceCandidates(t *testing.T) {
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginPickerSelectsACandidate(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, diagnostics, err := runLoginPicker(t, fake, "2\n", true, true)
+	require.NoError(t, err)
+	require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", out)
+	require.Contains(t, diagnostics, "Select a workspace for this login:")
+	require.Contains(t, diagnostics, "  1) Alpha (ws-1, ready)")
+	require.Contains(t, diagnostics, "  2) Beta (ws-2, ready)")
+	require.Contains(t, diagnostics, "Selection [1-2, Enter to skip]: ")
+	require.NotContains(t, out, "Select a workspace")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-2", state.WorkspaceID)
+}
+
+func TestLoginPickerRejectsAnInvalidEntry(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, diagnostics, err := runLoginPicker(t, fake, "3\n1\n", true, true)
+	require.NoError(t, err)
+	require.Contains(t, diagnostics, "Enter a number between 1 and 2.")
+	require.Equal(t, 2, strings.Count(diagnostics, "Select a workspace for this login:"))
+	require.Contains(t, out, "Using workspace Alpha (ws-1).")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-1", state.WorkspaceID)
+}
+
+func TestLoginPickerSkipsOnAnEmptyLine(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, diagnostics, err := runLoginPicker(t, fake, "\n", true, true)
+	require.NoError(t, err)
+	require.Equal(t, "Logged in as dev@example.com.\n", out)
+	require.Contains(t, diagnostics, "Selection [1-2, Enter to skip]: ")
+	require.Contains(t, diagnostics, "no workspace is selected")
+	require.Contains(t, diagnostics, "scope workspace use <id-or-name>")
+	require.NotContains(t, out, "CURRENT")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginPickerSkipsAtEOF(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, diagnostics, err := runLoginPicker(t, fake, "", true, true)
+	require.NoError(t, err)
+	require.Equal(t, "Logged in as dev@example.com.\n", out)
+	require.Contains(t, diagnostics, "Selection [1-2, Enter to skip]: ")
+	require.Contains(t, diagnostics, "no workspace is selected")
+	require.NotContains(t, out, "CURRENT")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginPickerRefusesADeletedWorkspaceAndAsksAgain(t *testing.T) {
+	fake, store := setupCLITest(t)
+	deleted := workspaceFixture("ws-1", "Alpha")
+	deletedAt := time.Now().Add(time.Hour)
+	deleted.ScheduledForDeletionAt = &deletedAt
+	fake.Workspaces = []controlplane.Workspace{deleted, workspaceFixture("ws-2", "Beta")}
+
+	out, diagnostics, err := runLoginPicker(t, fake, "1\n2\n", true, true)
+	require.NoError(t, err)
+	require.Contains(t, diagnostics, "  1) Alpha (ws-1, scheduled for deletion)")
+	require.Contains(t, diagnostics, "Workspace Alpha is scheduled for deletion; restore it in the Console or choose another.")
+	require.Equal(t, 2, strings.Count(diagnostics, "Select a workspace for this login:"))
+	require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", out)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-2", state.WorkspaceID)
+}
+
+func TestLoginPickerStaysQuietForJSON(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, diagnostics, err := runLoginPicker(t, fake, "2\n", true, true, "--format", "json")
+	require.NoError(t, err)
+	require.NotContains(t, out, "Select a workspace")
+	require.NotContains(t, diagnostics, "Select a workspace")
+	require.JSONEq(t, `{
+		"email": "dev@example.com",
+		"workspaces": [
+			{"id": "ws-1", "display_name": "Alpha", "status": "ready", "current": false},
+			{"id": "ws-2", "display_name": "Beta", "status": "ready", "current": false}
+		]
+	}`, out)
+}
+
+func TestLoginPickerRequiresBothTerminals(t *testing.T) {
+	for _, terminals := range []struct {
+		name          string
+		inputTerminal bool
+		errorTerminal bool
+	}{
+		{"no input terminal", false, true},
+		{"no error terminal", true, false},
+	} {
+		t.Run(terminals.name, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+			out, diagnostics, err := runLoginPicker(t, fake, "2\n", terminals.inputTerminal, terminals.errorTerminal)
+			require.NoError(t, err)
+			require.NotContains(t, out+diagnostics, "Select a workspace")
+			require.Contains(t, out, "Logged in as dev@example.com.")
+			require.Contains(t, out, "CURRENT")
+			require.Contains(t, out, "Alpha")
+			require.Contains(t, diagnostics, "no workspace is selected")
+			state, err := store.Load(fake.URL)
+			require.NoError(t, err)
+			require.Empty(t, state.WorkspaceID)
+		})
+	}
 }
 
 func TestLoginWithoutWorkspacesReportsSetup(t *testing.T) {
