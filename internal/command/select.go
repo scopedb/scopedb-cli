@@ -42,6 +42,9 @@ const (
 	clearLine = "\r\x1b[K"
 	// clearBlock clears from the cursor to the end of the screen, removing the menu and its hint.
 	clearBlock = "\r\x1b[J"
+	// rawNewline ends a line while the terminal is in raw mode, where the driver no longer turns a
+	// line feed into carriage return plus line feed.
+	rawNewline = "\r\n"
 
 	menuHint = "↑/↓ to navigate · enter to select · q to cancel"
 )
@@ -66,7 +69,7 @@ func (a *app) chooseMenuRaw(question string, options []menuOption, restore func(
 	// A read error leaves the terminal in the state that caused it, so every exit path restores.
 	defer restore()
 
-	if err := a.renderMenuFrame(question, options, selected, false); err != nil {
+	if err := a.renderMenuFrame(question, options, selected); err != nil {
 		return 0, err
 	}
 	for {
@@ -84,7 +87,7 @@ func (a *app) chooseMenuRaw(question string, options []menuOption, restore func(
 			if err := a.eraseMenu(len(options)); err != nil {
 				return 0, err
 			}
-			if _, err := fmt.Fprintf(a.errOut, "✔ %s\n", options[selected].label); err != nil {
+			if _, err := fmt.Fprintf(a.errOut, "✔ %s%s", options[selected].label, rawNewline); err != nil {
 				return 0, err
 			}
 			return selected, nil
@@ -98,7 +101,7 @@ func (a *app) chooseMenuRaw(question string, options []menuOption, restore func(
 				selected = digit
 			}
 		}
-		if err := a.renderMenuFrame(question, options, selected, true); err != nil {
+		if err := a.renderMenuFrame(question, options, selected); err != nil {
 			return 0, err
 		}
 	}
@@ -144,21 +147,16 @@ func (a *app) readMenuKey() (string, error) {
 	}
 }
 
-// renderMenuFrame redraws the question and options in place. The frame moves the cursor back up to
-// the first option afterwards, and the caller keeps it there, so the terminal never scrolls.
-func (a *app) renderMenuFrame(question string, options []menuOption, selected int, redraw bool) error {
+// renderMenuFrame draws the question and options, and leaves the cursor on the question line with the
+// trailing cursorUp. Every frame starts from that same position, so a redraw replaces the block
+// instead of drawing a second one above it.
+func (a *app) renderMenuFrame(question string, options []menuOption, selected int) error {
 	var frame strings.Builder
-	if redraw {
-		fmt.Fprintf(&frame, cursorUp, len(options)+1)
-	}
 	frame.WriteString(clearLine)
 	frame.WriteString("? ")
 	frame.WriteString(question)
-	frame.WriteString("\n")
+	frame.WriteString(rawNewline)
 	for index, option := range options {
-		if redraw {
-			frame.WriteString("\x1b[K")
-		}
 		if index == selected {
 			frame.WriteString(menuCursor)
 		} else {
@@ -168,7 +166,7 @@ func (a *app) renderMenuFrame(question string, options []menuOption, selected in
 		if option.note != "" {
 			fmt.Fprintf(&frame, " (%s)", option.note)
 		}
-		frame.WriteString("\n")
+		frame.WriteString(rawNewline)
 	}
 	frame.WriteString("\x1b[K")
 	frame.WriteString(menuHint)
@@ -177,9 +175,9 @@ func (a *app) renderMenuFrame(question string, options []menuOption, selected in
 	return err
 }
 
-// eraseMenu clears the question and options so the result can replace the block.
+// eraseMenu clears the block from the question line down so the result can replace it.
 func (a *app) eraseMenu(options int) error {
-	_, err := fmt.Fprintf(a.errOut, cursorUp+clearBlock, options)
+	_, err := io.WriteString(a.errOut, clearBlock)
 	return err
 }
 

@@ -106,12 +106,19 @@ func TestChooseMenuRendersTheHighlightInPlace(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, choice)
 	rendered := diagnostics.String()
-	require.Contains(t, rendered, "❯ 1. One\n  2. Two\n")
-	require.Contains(t, rendered, "\x1b[K  1. One\n\x1b[K❯ 2. Two\n")
+
+	// The first frame draws every line from the question down and returns the cursor to the question.
+	require.Contains(t, rendered, "\r\x1b[K? Pick\r\n❯ 1. One\r\n  2. Two\r\n\x1b[K")
 	require.Contains(t, rendered, "\x1b[3A")
-	require.Contains(t, rendered, "\r\x1b[K")
-	require.Contains(t, rendered, "\x1b[2A\r\x1b[J")
-	require.True(t, strings.HasSuffix(rendered, "✔ Two\n"))
+	// The redraw starts from the question line the previous frame left the cursor on, so it must not
+	// move up again; moving up would draw the block above the visible one and leave a duplicate.
+	redraw := rendered[strings.Index(rendered, "\x1b[3A")+len("\x1b[3A"):]
+	require.True(t, strings.HasPrefix(redraw, "\r\x1b[K? Pick"))
+	require.Contains(t, redraw, "? Pick\r\n  1. One\r\n❯ 2. Two\r\n")
+	// The selection clears the block from the question line down, then reports the choice.
+	require.Contains(t, rendered, "\r\x1b[J✔ Two\r\n")
+	require.NotContains(t, rendered, "\x1b[2A")
+	require.Equal(t, strings.Count(rendered, "\r\n"), strings.Count(rendered, "\n"))
 }
 
 func TestChooseMenuCancels(t *testing.T) {
