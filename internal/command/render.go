@@ -18,8 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
-	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
 )
@@ -73,18 +71,4 @@ func newTable(writer io.Writer, header ...any) table.Writer {
 		result.AppendHeader(table.Row(header))
 	}
 	return result
-}
-
-func optionalTime(value *time.Time) string {
-	if value == nil {
-		return "-"
-	}
-	return value.UTC().Format(time.RFC3339)
-}
-
-func joinTags(tags []string) string {
-	if len(tags) == 0 {
-		return "-"
-	}
-	return strings.Join(tags, ",")
 }

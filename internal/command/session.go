@@ -20,7 +20,6 @@ import (
 
 	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
-	"github.com/scopedb/scopedb-cli/internal/controlplane"
 )
 
 func workspaceSetupError(err error) *clierror.Error {
@@ -36,8 +35,8 @@ func workspaceSetupError(err error) *clierror.Error {
 	}
 }
 
-func (a *app) writeWorkspaceSetup(session controlplane.Session) error {
-	if err := workspaceSetupError(auth.RequireWorkspace(session)); err != nil {
+func (a *app) writeWorkspaceSetup(account auth.Account) error {
+	if err := workspaceSetupError(auth.RequireWorkspace(account)); err != nil {
 		_, writeErr := fmt.Fprintf(a.errOut, "%s; %s.\n", err.Message, err.Hint)
 		return NormalizeError(writeErr)
 	}

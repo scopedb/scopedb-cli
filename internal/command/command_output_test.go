@@ -16,87 +16,90 @@ package command
 
 import (
 	"bytes"
-	"net/http"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/scopedb/scopedb-cli/internal/config"
+	"github.com/scopedb/scopedb-cli/internal/clierror"
+	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCommandJSONOutput(t *testing.T) {
-	currentWorkspace := "ws-1"
-	selections, logouts, revocations := 0, 0, 0
-	store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		token := "session-secret"
-		if currentWorkspace == "ws-2" {
-			token = "rotated-secret"
-		}
-		assert.Equal(t, "Bearer "+token, r.Header.Get("Authorization"))
-		switch r.Method + " " + r.URL.Path {
-		case "GET /api/session":
-			_, _ = w.Write([]byte(`{"user":{"email":"dev@example.com","status":"active"},"workspaces":[{"id":"ws-1","display_name":"Alpha"},{"id":"ws-2","display_name":"Beta"}],"current_workspace_id":"` + currentWorkspace + `"}`))
-		case "POST /api/session/workspace":
-			selections++
-			currentWorkspace = "ws-2"
-			_, _ = w.Write([]byte(`{"token":"rotated-secret","workspace_id":"ws-2"}`))
-		case "DELETE /api/workspaces/ws-2/api-keys/automation":
-			revocations++
-			w.WriteHeader(http.StatusNoContent)
-		case "DELETE /api/session":
-			logouts++
-			w.WriteHeader(http.StatusNoContent)
-		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			http.NotFound(w, r)
-		}
-	}))
-	paths, err := config.ResolvePaths()
-	require.NoError(t, err)
-	require.NoError(t, config.Save(paths, config.Config{
-		ControlURL: controlURL, ConsoleURL: config.DefaultConsoleURL, CredentialStore: config.CredentialStorePlaintext,
-	}))
-	require.NoError(t, store.Save(controlURL, credential.State{SessionToken: "session-secret", WorkspaceID: "ws-1"}))
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
 
 	for _, step := range []struct {
 		args string
 		json string
 	}{
+		{"workspace list --limit 1", `[{"id":"ws-1","display_name":"Alpha","status":"ready","current":true}]`},
 		{"workspace use Beta", `{"id":"ws-2","display_name":"Beta","changed":true}`},
 		{"workspace use ws-2", `{"id":"ws-2","display_name":"Beta","changed":false}`},
-		{"api-key revoke automation --yes", `{"name":"automation","revoked":true}`},
 		{"auth logout", `{"changed":true}`},
-		{"auth logout", `{"changed":false}`},
 	} {
-		out, diagnostics, err := runCommand(t, append(strings.Fields(step.args), "--format", "json")...)
+		args := append([]string{"--control-url", fake.URL}, strings.Fields(step.args)...)
+		args = append(args, "--format", "json")
+		out, diagnostics, err := runCommand(t, args...)
 		require.NoError(t, err, step.args)
 		require.Empty(t, diagnostics, step.args)
 		require.JSONEq(t, step.json, out, step.args)
 	}
-	require.Equal(t, 1, selections)
-	require.Equal(t, 1, revocations)
-	require.Equal(t, 1, logouts)
-	_, err = store.Load(controlURL)
+	_, err := store.Load(fake.URL)
 	require.ErrorIs(t, err, credential.ErrNotFound)
 }
 
-func TestRevokeJSONCancellation(t *testing.T) {
+func TestWorkspaceUseTextOutput(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, diagnostics, err := runCommand(t, "--control-url", fake.URL, "workspace", "use", "Alpha")
+	require.NoError(t, err)
+	require.Empty(t, diagnostics)
+	require.Contains(t, out, "Already using workspace Alpha (ws-1) for this login.")
+}
+
+func TestWorkspaceUseRejectsScheduledWorkspace(t *testing.T) {
+	fake, store := setupCLITest(t)
+	scheduled := workspaceFixture("ws-9", "Retiring")
+	scheduledAt := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	scheduled.ScheduledForDeletionAt = &scheduledAt
+	fake.Workspaces = []controlplane.Workspace{scheduled}
+	saveStoredLogin(t, store, fake.URL, "")
+
+	_, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "use", "ws-9")
+	require.ErrorContains(t, err, "scheduled for deletion")
+	state, loadErr := store.Load(fake.URL)
+	require.NoError(t, loadErr)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestWorkspaceUseWarnsAboutEnvironmentCredentials(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+	saveStoredLogin(t, store, fake.URL, "")
+
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
-		In: strings.NewReader("n\n"), Out: &out, ErrOut: &diagnostics,
-		IsInputTerminal: func() bool { return true },
-		CredentialStore: func(string, config.Paths) (credential.Store, error) {
-			t.Fatal("cancellation must not access credentials or call the service")
-			return nil, nil
+		Out: &out, ErrOut: &diagnostics,
+		Sleep: func(time.Duration) {},
+		Getenv: func(name string) string {
+			switch name {
+			case "SCOPEDB_ENDPOINT":
+				return "https://data.example.com"
+			case "SCOPEDB_API_KEY":
+				return "machine-secret"
+			}
+			return ""
 		},
 	})
-	root.SetArgs([]string{"api-key", "revoke", "automation", "--format", "json"})
+	root.SetArgs([]string{"--control-url", fake.URL, "workspace", "use", "Alpha"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.JSONEq(t, `{"name":"automation","revoked":false}`, out.String())
-	require.Contains(t, diagnostics.String(), "Revoke API key")
+	require.Contains(t, diagnostics.String(), "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
+	require.NotContains(t, diagnostics.String(), "machine-secret")
 }
 
 func TestConsoleOutput(t *testing.T) {
@@ -138,4 +141,12 @@ func TestVersionJSONAlias(t *testing.T) {
 	out, _, err := runCommand(t, "version", "--format", "json")
 	require.NoError(t, err)
 	require.JSONEq(t, legacy, out)
+}
+
+func TestAPIKeyCommandsAreGone(t *testing.T) {
+	out, diagnostics, err := runCommand(t, "api-key", "list")
+	require.ErrorContains(t, err, "unknown command")
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(NormalizeError(err)))
+	require.Empty(t, out)
+	require.NotContains(t, diagnostics, "api-key")
 }

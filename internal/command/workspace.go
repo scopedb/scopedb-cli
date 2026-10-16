@@ -15,7 +15,9 @@
 package command
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -39,6 +41,7 @@ func (a *app) newWorkspaceCommand() *cobra.Command {
 		a.newWorkspaceListCommand(),
 		a.newWorkspaceUseCommand(),
 		a.newWorkspaceGetCommand(),
+		a.newWorkspaceCreateCommand(),
 	)
 	return command
 }
@@ -61,38 +64,23 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			_, session, err := runtime.auth.LoadSession(cmd.Context())
+			account, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			workspaces := limitedResults(session.Workspaces, limit)
-			views := make([]workspaceListItem, 0, len(workspaces))
-			for _, workspace := range workspaces {
-				views = append(views, workspaceListItem{
-					ID:          workspace.ID,
-					DisplayName: workspace.DisplayName,
-					Current:     workspace.ID == session.CurrentWorkspaceID,
-				})
-			}
+			workspaces := limitedResults(account.Workspaces, limit)
+			views := workspaceListItems(workspaces, account.SelectedWorkspaceID)
 			// Choosing a workspace is what this command enables, so a missing
 			// selection needs no notice; only an empty account cannot be listed.
-			if len(session.Workspaces) == 0 {
-				if err := a.writeWorkspaceSetup(session); err != nil {
+			if len(account.Workspaces) == 0 {
+				if err := a.writeWorkspaceSetup(account); err != nil {
 					return err
 				}
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, views)
 			}
-			t := newTable(a.out, "CURRENT", "NAME", "ID")
-			for index, workspace := range workspaces {
-				current := ""
-				if views[index].Current {
-					current = "*"
-				}
-				t.AppendRow(table.Row{current, workspace.Name(), workspace.ID})
-			}
-			t.Render()
+			writeWorkspaceListTable(a.out, workspaces, account.SelectedWorkspaceID)
 			return nil
 		},
 	}
@@ -104,15 +92,53 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 type workspaceListItem struct {
 	ID          string  `json:"id"`
 	DisplayName *string `json:"display_name"`
+	Status      string  `json:"status"`
 	Current     bool    `json:"current"`
+}
+
+func workspaceListItemFor(workspace controlplane.Workspace, current bool) workspaceListItem {
+	return workspaceListItem{
+		ID:          workspace.ID,
+		DisplayName: workspace.DisplayName,
+		Status:      workspaceStatus(workspace),
+		Current:     current,
+	}
+}
+
+func workspaceListItems(workspaces []controlplane.Workspace, selectedID string) []workspaceListItem {
+	views := make([]workspaceListItem, 0, len(workspaces))
+	for _, workspace := range workspaces {
+		views = append(views, workspaceListItemFor(workspace, workspace.ID == selectedID))
+	}
+	return views
+}
+
+func writeWorkspaceListTable(out io.Writer, workspaces []controlplane.Workspace, selectedID string) {
+	views := workspaceListItems(workspaces, selectedID)
+	t := newTable(out, "CURRENT", "NAME", "ID", "STATUS")
+	for index, workspace := range workspaces {
+		current := ""
+		if views[index].Current {
+			current = "*"
+		}
+		t.AppendRow(table.Row{current, workspace.Name(), workspace.ID, views[index].Status})
+	}
+	t.Render()
+}
+
+func workspaceStatus(workspace controlplane.Workspace) string {
+	if workspace.ScheduledForDeletion() {
+		return "scheduled for deletion"
+	}
+	return workspace.ProvisioningStatus
 }
 
 func (a *app) newWorkspaceUseCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
 		Use:   "use <id-or-name>",
-		Short: "Select the workspace for your login session",
-		Long: "Select the workspace for your login session.\n" +
+		Short: "Select the workspace for this login",
+		Long: "Select the workspace for this login.\n" +
 			"Data commands use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when set, regardless of this selection.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -123,20 +149,26 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, session, err := runtime.auth.LoadSession(cmd.Context())
+			account, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			if len(session.Workspaces) == 0 {
-				return NormalizeError(auth.RequireWorkspace(session))
+			if len(account.Workspaces) == 0 {
+				return NormalizeError(auth.RequireWorkspace(account))
 			}
-			workspace, err := resolveWorkspace(session.Workspaces, args[0])
+			workspace, err := resolveWorkspace(account.Workspaces, args[0])
 			if err != nil {
 				return err
 			}
-			changed := workspace.ID != session.CurrentWorkspaceID
+			if workspace.ScheduledForDeletion() {
+				return clierror.WithHint(
+					clierror.New(clierror.ExitUsage, fmt.Sprintf("workspace %s (%s) is scheduled for deletion", workspace.Name(), workspace.ID)),
+					"restore it in the Console before selecting it",
+				)
+			}
+			changed := workspace.ID != account.SelectedWorkspaceID
 			if changed {
-				if err := runtime.auth.SelectWorkspace(cmd.Context(), state, workspace.ID); err != nil {
+				if err := runtime.auth.SelectWorkspace(cmd.Context(), workspace.ID); err != nil {
 					return NormalizeError(err)
 				}
 			}
@@ -153,10 +185,10 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 				return writeJSON(a.out, workspaceUseResult{ID: workspace.ID, DisplayName: workspace.DisplayName, Changed: changed})
 			}
 			if !changed {
-				_, err := fmt.Fprintf(a.out, "Already using workspace %s (%s) for your login session.\n", workspace.Name(), workspace.ID)
+				_, err := fmt.Fprintf(a.out, "Already using workspace %s (%s) for this login.\n", workspace.Name(), workspace.ID)
 				return NormalizeError(err)
 			}
-			_, err = fmt.Fprintf(a.out, "Now using workspace %s (%s) for your login session.\n", workspace.Name(), workspace.ID)
+			_, err = fmt.Fprintf(a.out, "Now using workspace %s (%s) for this login.\n", workspace.Name(), workspace.ID)
 			return NormalizeError(err)
 		},
 	}
@@ -193,7 +225,7 @@ func (a *app) newWorkspaceGetCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
 		Use:   "get",
-		Short: "Get details of your login session's current workspace",
+		Short: "Get details of the selected workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
@@ -203,11 +235,18 @@ func (a *app) newWorkspaceGetCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
+			account, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			details, err := runtime.control.GetWorkspace(cmd.Context(), state.SessionToken, state.WorkspaceID)
+			if err := auth.RequireWorkspace(account); err != nil {
+				return NormalizeError(err)
+			}
+			state, err := runtime.auth.LoadAccess(cmd.Context())
+			if err != nil {
+				return NormalizeError(err)
+			}
+			details, err := runtime.control.GetWorkspace(cmd.Context(), state.AccessToken, account.SelectedWorkspaceID)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -239,6 +278,119 @@ func (a *app) newWorkspaceGetCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
 	return command
+}
+
+func (a *app) newWorkspaceCreateCommand() *cobra.Command {
+	var name string
+	var provider string
+	var region string
+	var format string
+	command := &cobra.Command{
+		Use:   "create",
+		Short: "Create a workspace",
+		Long: "Create a workspace owned by your account.\n" +
+			"Without --provider and --region the CLI uses the deployment's default placement.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateTextFormat(format); err != nil {
+				return err
+			}
+			runtime, err := a.runtime(cmd)
+			if err != nil {
+				return NormalizeError(err)
+			}
+			provider = strings.TrimSpace(provider)
+			region = strings.TrimSpace(region)
+			if provider == "" || region == "" {
+				placement, err := runtime.defaultPlacement(cmd.Context())
+				if err != nil {
+					return NormalizeError(err)
+				}
+				if provider == "" {
+					provider = placement.Provider
+				}
+				if region == "" {
+					region = placement.Region
+				}
+			}
+			state, err := runtime.auth.LoadAccess(cmd.Context())
+			if err != nil {
+				return NormalizeError(err)
+			}
+			created, err := runtime.control.CreateWorkspace(cmd.Context(), state.AccessToken, controlplane.CreateWorkspaceRequest{
+				DisplayName: strings.TrimSpace(name),
+				Provider:    provider,
+				Region:      region,
+			})
+			if err != nil {
+				return NormalizeError(err)
+			}
+			if created.WorkspaceID == "" {
+				return NormalizeError(fmt.Errorf("ScopeDB did not return the created workspace"))
+			}
+			selected := state.WorkspaceID == ""
+			if selected {
+				if err := runtime.auth.SelectWorkspace(cmd.Context(), created.WorkspaceID); err != nil {
+					return NormalizeError(err)
+				}
+			}
+			if format == structuredFormatJSON {
+				return writeJSON(a.out, workspaceCreateResult{ID: created.WorkspaceID, Provider: provider, Region: region})
+			}
+			if selected {
+				_, err = fmt.Fprintf(a.out, "Created workspace %s.\nUsing workspace %s.\n", created.WorkspaceID, created.WorkspaceID)
+				return NormalizeError(err)
+			}
+			_, err = fmt.Fprintf(a.out, "Created workspace %s.\nRun 'scope workspace use %s' to select it.\n", created.WorkspaceID, created.WorkspaceID)
+			return NormalizeError(err)
+		},
+	}
+	command.Flags().StringVar(&name, "name", "", "display name for the workspace")
+	command.Flags().StringVar(&provider, "provider", "", "cloud provider; defaults to the deployment default")
+	command.Flags().StringVar(&region, "region", "", "cloud region; defaults to the deployment default")
+	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
+	return command
+}
+
+type workspaceCreateResult struct {
+	ID       string `json:"id"`
+	Provider string `json:"provider"`
+	Region   string `json:"region"`
+}
+
+func (r *runtimeContext) defaultPlacement(ctx context.Context) (controlplane.Placement, error) {
+	config, err := r.control.GetSignupConfig(ctx)
+	if err != nil {
+		return controlplane.Placement{}, err
+	}
+	if placement := config.DefaultPlacement; placement != nil && placement.Provider != "" && placement.Region != "" {
+		return *placement, nil
+	}
+	switch len(config.Placements) {
+	case 0:
+		return controlplane.Placement{}, clierror.New(clierror.ExitGeneral, "this deployment has no available placement; pass --provider and --region")
+	case 1:
+		return config.Placements[0], nil
+	default:
+		return controlplane.Placement{}, usageError("--provider and --region are required; available placements: " + describePlacements(config.Placements))
+	}
+}
+
+func describePlacements(placements []controlplane.Placement) string {
+	values := make([]string, 0, len(placements))
+	for _, placement := range placements {
+		values = append(values, placement.Provider+"/"+placement.Region)
+	}
+	return strings.Join(values, ", ")
+}
+
+func workspaceByID(workspaces []controlplane.Workspace, id string) (controlplane.Workspace, bool) {
+	for _, workspace := range workspaces {
+		if workspace.ID == id {
+			return workspace, true
+		}
+	}
+	return controlplane.Workspace{}, false
 }
 
 func resolveWorkspace(workspaces []controlplane.Workspace, value string) (controlplane.Workspace, error) {

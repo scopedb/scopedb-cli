@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	scopedb "github.com/scopedb/goscopedb"
@@ -49,8 +50,11 @@ type Dependencies struct {
 	HTTPClient      *http.Client
 	CredentialStore credentialFactory
 	IsInputTerminal func() bool
+	IsErrorTerminal func() bool
+	MakeRaw         func() (restore func(), err error)
 	OpenURL         func(string) error
 	Now             func() time.Time
+	Sleep           func(time.Duration)
 	Getenv          func(string) string
 }
 
@@ -63,8 +67,11 @@ type app struct {
 	query             *dataplane.QueryService
 	credentialFactory credentialFactory
 	isInputTerminal   func() bool
+	isErrorTerminal   func() bool
+	makeRaw           func() (restore func(), err error)
 	openURL           func(string) error
 	now               func() time.Time
+	sleep             func(time.Duration)
 	getenv            func(string) string
 	controlURLFlag    string
 	consoleURLFlag    string
@@ -76,6 +83,43 @@ type runtimeContext struct {
 	control     *controlplane.Client
 	credentials credential.Store
 	auth        *auth.Manager
+
+	oauthMu sync.Mutex
+	oauth   *controlplane.OAuth
+}
+
+func (r *runtimeContext) oauthClient(ctx context.Context) (*controlplane.OAuth, error) {
+	r.oauthMu.Lock()
+	defer r.oauthMu.Unlock()
+	if r.oauth != nil {
+		return r.oauth, nil
+	}
+	client, err := r.control.DiscoverOAuth(ctx)
+	if err != nil {
+		return nil, err
+	}
+	r.oauth = client
+	return client, nil
+}
+
+type runtimeOAuth struct {
+	runtime *runtimeContext
+}
+
+func (o *runtimeOAuth) RefreshToken(ctx context.Context, refreshToken string) (controlplane.TokenSet, error) {
+	client, err := o.runtime.oauthClient(ctx)
+	if err != nil {
+		return controlplane.TokenSet{}, err
+	}
+	return client.RefreshToken(ctx, refreshToken)
+}
+
+func (o *runtimeOAuth) RevokeToken(ctx context.Context, token string) error {
+	client, err := o.runtime.oauthClient(ctx)
+	if err != nil {
+		return err
+	}
+	return client.RevokeToken(ctx, token)
 }
 
 func newApp(deps Dependencies) *app {
@@ -92,20 +136,22 @@ func newApp(deps Dependencies) *app {
 		deps.CredentialStore = credential.New
 	}
 	if deps.IsInputTerminal == nil {
-		deps.IsInputTerminal = func() bool {
-			file, ok := deps.In.(*os.File)
-			if !ok {
-				return false
-			}
-			info, err := file.Stat()
-			return err == nil && info.Mode()&os.ModeCharDevice != 0
-		}
+		deps.IsInputTerminal = func() bool { return isCharDevice(deps.In) }
+	}
+	if deps.IsErrorTerminal == nil {
+		deps.IsErrorTerminal = func() bool { return isCharDevice(deps.ErrOut) }
+	}
+	if deps.MakeRaw == nil {
+		deps.MakeRaw = func() (func(), error) { return makeInputRaw(deps.In) }
 	}
 	if deps.OpenURL == nil {
 		deps.OpenURL = openURL
 	}
 	if deps.Now == nil {
 		deps.Now = time.Now
+	}
+	if deps.Sleep == nil {
+		deps.Sleep = time.Sleep
 	}
 	if deps.Getenv == nil {
 		deps.Getenv = os.Getenv
@@ -119,8 +165,11 @@ func newApp(deps Dependencies) *app {
 		query:             &dataplane.QueryService{HTTPClient: deps.HTTPClient},
 		credentialFactory: deps.CredentialStore,
 		isInputTerminal:   deps.IsInputTerminal,
+		isErrorTerminal:   deps.IsErrorTerminal,
+		makeRaw:           deps.MakeRaw,
 		openURL:           deps.OpenURL,
 		now:               deps.Now,
+		sleep:             deps.Sleep,
 		getenv:            deps.Getenv,
 	}
 }
@@ -155,20 +204,23 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 	if err != nil {
 		return nil, err
 	}
-	manager := &auth.Manager{
-		ControlURL:  cfg.ControlURL,
-		Control:     control,
-		Credentials: credentials,
-		Now:         a.now,
-		Getenv:      a.getenv,
-	}
-	return &runtimeContext{
+	runtime := &runtimeContext{
 		paths:       paths,
 		config:      cfg,
 		control:     control,
 		credentials: credentials,
-		auth:        manager,
-	}, nil
+	}
+	runtime.auth = &auth.Manager{
+		ControlURL:  cfg.ControlURL,
+		Control:     control,
+		OAuth:       &runtimeOAuth{runtime: runtime},
+		Credentials: credentials,
+		LockFile:    paths.LockFile,
+		Now:         a.now,
+		Sleep:       a.sleep,
+		Getenv:      a.getenv,
+	}
+	return runtime, nil
 }
 
 func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
@@ -179,57 +231,26 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	return a.newRuntime(paths, cfg)
 }
 
-func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
-	if prompt != "" {
-		if _, err := fmt.Fprint(a.errOut, prompt); err != nil {
-			return "", err
-		}
+func isCharDevice(stream any) bool {
+	file, ok := stream.(*os.File)
+	if !ok {
+		return false
 	}
-	type input struct {
-		val string
-		err error
-	}
-	done := make(chan input, 1)
-	go func() {
-		val, err := a.input.ReadString('\n')
-		done <- input{val, err}
-	}()
-	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
-	case result := <-done:
-		if result.err != nil && !errors.Is(result.err, io.EOF) {
-			return "", result.err
-		}
-		return strings.TrimSpace(result.val), nil
-	}
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-// readVerificationCode hides input on a terminal and still accepts piped stdin.
-func (a *app) readVerificationCode(ctx context.Context) (string, error) {
-	if !a.isInputTerminal() {
-		return a.readLine(ctx, "")
+func makeInputRaw(input io.Reader) (func(), error) {
+	file, ok := input.(*os.File)
+	if !ok {
+		return nil, errors.New("input is not a terminal")
 	}
-	file, ok := a.in.(*os.File)
-	if !ok || !term.IsTerminal(int(file.Fd())) {
-		return a.readLine(ctx, "Verification code: ")
-	}
-	restore, err := hideTerminalInput(int(file.Fd()))
+	fd := int(file.Fd())
+	state, err := term.MakeRaw(fd)
 	if err != nil {
-		return "", fmt.Errorf("hide verification code: %w", err)
+		return nil, err
 	}
-	value, readErr := a.readLine(ctx, "Verification code: ")
-	restoreErr := restore()
-	if _, err := fmt.Fprintln(a.errOut); err != nil {
-		return "", err
-	}
-	if readErr != nil {
-		return "", readErr
-	}
-	if restoreErr != nil {
-		return "", fmt.Errorf("restore terminal echo: %w", restoreErr)
-	}
-	return value, nil
+	return func() { _ = term.Restore(fd, state) }, nil
 }
 
 func openURL(target string) error {
@@ -275,11 +296,34 @@ func NormalizeError(err error) error {
 	if errors.Is(err, auth.ErrNotLoggedIn) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "not logged in", err), "run 'scope auth login'")
 	}
+	if errors.Is(err, auth.ErrLoginExpired) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "run 'scope auth login'")
+	}
 	if errors.Is(err, auth.ErrInvalidMachineEnv) {
 		return clierror.Wrap(clierror.ExitUsage, err.Error(), err)
 	}
 	if setupErr := workspaceSetupError(err); setupErr != nil {
 		return setupErr
+	}
+	var oauthErr *controlplane.OAuthError
+	if errors.As(err, &oauthErr) {
+		code := clierror.ExitGeneral
+		switch {
+		case oauthErr.Code == "invalid_grant" || oauthErr.Code == "invalid_client" || oauthErr.Code == "access_denied":
+			code = clierror.ExitAuth
+		case oauthErr.Code == "invalid_request" || oauthErr.Code == "invalid_scope" || oauthErr.Code == "unsupported_grant_type":
+			code = clierror.ExitUsage
+		case oauthErr.Retryable:
+			code = clierror.ExitTemporary
+		}
+		result := clierror.Wrap(code, oauthErr.Error(), err)
+		result.RequestID = oauthErr.RequestID
+		if code == clierror.ExitAuth {
+			result.Hint = "run 'scope auth login'"
+		} else if oauthErr.RetryAfter > 0 {
+			result.Hint = "retry after " + oauthErr.RetryAfter.Round(time.Second).String()
+		}
+		return result
 	}
 	var controlErr *controlplane.Error
 	if errors.As(err, &controlErr) {

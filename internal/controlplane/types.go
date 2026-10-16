@@ -16,30 +16,23 @@ package controlplane
 
 import "time"
 
-type LoginBeginResponse struct {
-	LoginChallenge string `json:"login_challenge"`
-}
-
-type LoginResponse struct {
-	Token       string `json:"token"`
-	WorkspaceID string `json:"workspace_id"`
-}
-
-type Session struct {
-	User               User        `json:"user"`
-	Workspaces         []Workspace `json:"workspaces"`
-	CurrentWorkspaceID string      `json:"current_workspace_id"`
-}
-
 type User struct {
-	Email     string `json:"email"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"created_at"`
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	Status       string `json:"status"`
+	Introduction string `json:"introduction"`
+	CreatedAt    string `json:"created_at"`
 }
 
+// Workspace summarises an owned workspace. Workspaces scheduled for deletion stay in the list and
+// keep their routes unavailable until they are restored.
 type Workspace struct {
-	ID          string  `json:"id"`
-	DisplayName *string `json:"display_name"`
+	ID                     string     `json:"id"`
+	DisplayName            *string    `json:"display_name"`
+	Provider               string     `json:"provider"`
+	Region                 string     `json:"region"`
+	ProvisioningStatus     string     `json:"provisioning_status"`
+	ScheduledForDeletionAt *time.Time `json:"scheduled_for_deletion_at"`
 }
 
 func (w Workspace) Name() string {
@@ -47,6 +40,14 @@ func (w Workspace) Name() string {
 		return *w.DisplayName
 	}
 	return w.ID
+}
+
+func (w Workspace) ScheduledForDeletion() bool {
+	return w.ScheduledForDeletionAt != nil
+}
+
+type WorkspacesResponse struct {
+	Workspaces []Workspace `json:"workspaces"`
 }
 
 type WorkspaceDetails struct {
@@ -71,27 +72,24 @@ type Provisioning struct {
 	UpdatedAt *time.Time `json:"updated_at"`
 }
 
+type CreateWorkspaceRequest struct {
+	DisplayName string `json:"display_name"`
+	Provider    string `json:"provider"`
+	Region      string `json:"region"`
+}
+
+type CreateWorkspaceResponse struct {
+	WorkspaceID string `json:"workspace_id"`
+}
+
+type SignupConfig struct {
+	DefaultPlacement *Placement  `json:"default_placement"`
+	Placements       []Placement `json:"placements"`
+}
+
 type TokenExchangeResponse struct {
 	AccessToken string    `json:"access_token"`
 	TokenType   string    `json:"token_type"`
 	ExpiresIn   int       `json:"expires_in"`
 	ExpiresAt   time.Time `json:"expires_at"`
-}
-
-type CreateAPIKeyRequest struct {
-	Name      string     `json:"name"`
-	Tags      []string   `json:"tags"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-}
-
-type APIKey struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	Tags      []string   `json:"tags"`
-	Status    string     `json:"status"`
-	CreatedBy string     `json:"created_by"`
-	CreatedAt time.Time  `json:"created_at"`
-	RevokedAt *time.Time `json:"revoked_at,omitempty"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	Key       string     `json:"key,omitempty"`
 }

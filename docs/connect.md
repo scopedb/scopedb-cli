@@ -13,20 +13,19 @@ scope query 'SELECT 1 AS ready'
 
 If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id-or-name>`.
 
-`scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`. In login mode it verifies your session; in environment mode it displays the configured endpoint without validating the API key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
+`scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`. In login mode it verifies your login against ScopeDB and reports when the login expires; in environment mode it displays the configured endpoint without validating the API key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
 
 `scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
 
 ## Get application credentials
 
-Show the selected workspace's endpoint and create a key for your application:
+Show the selected workspace's endpoint:
 
 ```sh
 scope workspace get
-scope api-key create my-app --expires-in 720h
 ```
 
-The key is shown only once on stdout. Store it in your application's secret manager. The command requires a CLI login; an existing API key cannot manage keys through the CLI. Use separate keys for development, staging, and production.
+Create an application key in the Console's [API keys](https://console.scopedb.io/keys) page. The key is shown only once; store it in your application's secret manager. A CLI login is a delegated credential that cannot manage persistent keys, so create and revoke them in the Console. Use separate keys for development, staging, and production.
 
 Copy the workspace's data-plane endpoint, without appending `/v1/statements`. Set both values in your application environment or local shell:
 
@@ -38,13 +37,13 @@ scope doctor --timeout 15s
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-`scope auth status` shows `api_key` mode when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login session and warns when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
+`scope auth status` shows `api_key` mode when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login and warns when environment credentials override data commands. Workspace details also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
 
 ```sh
 unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
 ```
 
-To end your login session, run `scope auth logout` after unsetting both variables. The command refuses to log out while machine credentials are configured; it does not revoke application API keys.
+To end your login, run `scope auth logout` after unsetting both variables. The command revokes the login in ScopeDB and then removes the local credentials; if ScopeDB cannot be reached, it reports that the login stays valid until it expires or is revoked in the Console. The command refuses to log out while machine credentials are configured, and it never affects application API keys.
 
 ## Connect an SDK
 
