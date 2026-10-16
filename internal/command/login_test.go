@@ -344,12 +344,14 @@ func TestLoginMenuSelectsTheDeviceFlow(t *testing.T) {
 	require.Equal(t, "ort_refresh", state.RefreshToken)
 }
 
-func TestLoginMenuKeepsJSONOnStdout(t *testing.T) {
+func TestLoginMenuStaysQuietForJSON(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	result := runLoginMenu(t, fake, "\r", "--format", "json")
 	require.NoError(t, result.err)
 	require.JSONEq(t, `{"email":"dev@example.com"}`, result.out)
-	require.Contains(t, result.diagnostics, "How do you want to sign in?")
+	require.NotContains(t, result.diagnostics, "How do you want to sign in?")
+	require.NotEmpty(t, fake.AuthorizationQuery)
+	require.Zero(t, fake.DevicePolls)
 }
 
 func TestLoginMenuCancelsWithoutStoring(t *testing.T) {

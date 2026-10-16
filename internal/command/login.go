@@ -86,7 +86,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 
-			tokens, err := a.authorizeLogin(cmd.Context(), client)
+			tokens, err := a.authorizeLogin(cmd.Context(), client, format)
 			if err != nil {
 				if errors.Is(err, errMenuCancelled) {
 					return clierror.New(clierror.ExitAuth, loginCancelled)
@@ -123,17 +123,17 @@ func (a *app) newLoginCommand() *cobra.Command {
 
 const loginCancelled = "login cancelled; no credentials were saved"
 
-// isInteractive reports whether the session can host a menu, which is a property of the terminals
-// rather than of the output format: the menu renders on stderr and stdout stays machine-readable.
+// isInteractive reports whether both ends of the session are terminals, so a question can be asked
+// and its answer seen.
 func (a *app) isInteractive() bool {
 	return a.isInputTerminal != nil && a.isInputTerminal() && a.isErrorTerminal != nil && a.isErrorTerminal()
 }
 
-// authorizeLogin picks the login flow. An interactive session is asked, so the output format cannot
-// suppress the question; anything else prefers the loopback flow and falls back to the device flow
-// when no browser can be opened.
-func (a *app) authorizeLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
-	if a.isInteractive() {
+// authorizeLogin picks the login flow. An interactive session is asked; machine-readable output never
+// waits for an answer, and prefers the loopback flow with a fallback to the device flow when no
+// browser can be opened.
+func (a *app) authorizeLogin(ctx context.Context, client *controlplane.OAuth, format string) (controlplane.TokenSet, error) {
+	if a.canPrompt(format) {
 		choice, err := a.chooseMenu("How do you want to sign in?", []menuOption{
 			{label: "Sign in with your browser", note: "recommended"},
 			{label: "Sign in with a device code"},
@@ -301,8 +301,8 @@ func (a *app) promptLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 	}
 }
 
-// canPrompt reports whether the workspace question belongs in this session, which needs a text
-// result on a terminal at both ends: the prompt renders on stderr and its answer must be reachable.
+// canPrompt reports whether this session may ask a question. A question needs a text result on a
+// terminal at both ends: it renders on stderr, and machine-readable output must never wait for input.
 func (a *app) canPrompt(format string) bool {
 	return format != structuredFormatJSON && a.isInteractive()
 }
