@@ -35,11 +35,16 @@ type memoryStore struct {
 	present   bool
 	saves     int
 	invalidHi bool
+	loadErr   error
+	saveErr   error
 }
 
 func (s *memoryStore) Load(string) (credential.State, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.loadErr != nil {
+		return credential.State{}, s.loadErr
+	}
 	if s.invalidHi {
 		return credential.State{}, fmt.Errorf("%w: unsupported version 1; log in again", credential.ErrInvalidState)
 	}
@@ -52,6 +57,9 @@ func (s *memoryStore) Load(string) (credential.State, error) {
 func (s *memoryStore) Save(_ string, state credential.State) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.saveErr != nil {
+		return s.saveErr
+	}
 	s.state = state
 	s.present = true
 	s.saves++
@@ -495,4 +503,85 @@ func TestSaveLoginStoresBothTokens(t *testing.T) {
 	require.Equal(t, "oat_new", store.saved().AccessToken)
 	require.Equal(t, "ort_new", store.saved().RefreshToken)
 	require.Equal(t, now.Add(time.Hour), store.saved().AccessTokenExpiresAt)
+	require.Empty(t, store.saved().WorkspaceID)
+}
+
+func TestSaveLoginKeepsStoredSelectionAndClearsDataToken(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	state := loginState(now, now.Add(time.Hour))
+	state.DataToken = "data-token"
+	state.DataTokenWorkspaceID = "ws-1"
+	state.DataTokenExpiresAt = now.Add(time.Hour)
+	store := &memoryStore{present: true, state: state}
+	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+
+	require.NoError(t, manager.SaveLogin(accessTokens("oat_new", "ort_new")))
+	require.Equal(t, "ws-1", store.saved().WorkspaceID)
+	require.Equal(t, "oat_new", store.saved().AccessToken)
+	require.Empty(t, store.saved().DataToken)
+	require.Empty(t, store.saved().DataTokenWorkspaceID)
+	require.True(t, store.saved().DataTokenExpiresAt.IsZero())
+}
+
+func TestSaveLoginReplacesUnreadableStoredState(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{invalidHi: true}
+	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+
+	require.NoError(t, manager.SaveLogin(accessTokens("oat_new", "ort_new")))
+	require.Equal(t, "oat_new", store.saved().AccessToken)
+	require.Empty(t, store.saved().WorkspaceID)
+}
+
+func TestSaveLoginReportsCredentialLoadFailure(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{loadErr: errors.New("credential store unavailable")}
+	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+
+	require.ErrorContains(t, manager.SaveLogin(accessTokens("oat_new", "ort_new")), "credential store unavailable")
+	require.False(t, store.stored())
+}
+
+func TestClearWorkspaceDropsSelectionAndDataToken(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	state := loginState(now, now.Add(time.Hour))
+	state.DataToken = "data-token"
+	state.DataTokenWorkspaceID = "ws-1"
+	state.DataTokenExpiresAt = now.Add(time.Hour)
+	store := &memoryStore{present: true, state: state}
+	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+
+	require.NoError(t, manager.ClearWorkspace(t.Context()))
+	require.Empty(t, store.saved().WorkspaceID)
+	require.Empty(t, store.saved().DataToken)
+	require.Empty(t, store.saved().DataTokenWorkspaceID)
+	require.True(t, store.saved().DataTokenExpiresAt.IsZero())
+	require.Equal(t, "oat_old", store.saved().AccessToken)
+	require.Equal(t, 1, store.saves)
+}
+
+func TestClearWorkspaceWithoutSelectionKeepsCredentials(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	state := loginState(now, now.Add(time.Hour))
+	state.WorkspaceID = ""
+	store := &memoryStore{present: true, state: state}
+	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+
+	require.NoError(t, manager.ClearWorkspace(t.Context()))
+	require.Zero(t, store.saves)
+}
+
+func TestClearWorkspaceWithoutLogin(t *testing.T) {
+	manager := Manager{ControlURL: "https://control.example.com", Credentials: &memoryStore{}}
+	require.ErrorIs(t, manager.ClearWorkspace(t.Context()), ErrNotLoggedIn)
+}
+
+func TestClearWorkspaceReportsSaveFailure(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour)), saveErr: errors.New("disk full")}
+	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+
+	err := manager.ClearWorkspace(t.Context())
+	require.ErrorContains(t, err, "workspace selection could not be cleared")
+	require.ErrorContains(t, err, "disk full")
 }

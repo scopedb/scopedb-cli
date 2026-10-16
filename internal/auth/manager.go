@@ -151,11 +151,21 @@ func (m *Manager) load() (credential.State, error) {
 }
 
 // SaveLogin persists the token pair a completed login issued and clears cached data credentials.
+// The stored workspace selection survives, because signing in again does not change which workspace
+// this profile uses.
 func (m *Manager) SaveLogin(tokens controlplane.TokenSet) error {
+	previous, err := m.Credentials.Load(m.ControlURL)
+	switch {
+	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState):
+		previous = credential.State{}
+	case err != nil:
+		return err
+	}
 	state, err := m.tokenState(credential.State{}, tokens)
 	if err != nil {
 		return err
 	}
+	state.WorkspaceID = previous.WorkspaceID
 	return m.Credentials.Save(m.ControlURL, state)
 }
 
@@ -197,6 +207,26 @@ func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error
 	state.DataTokenExpiresAt = time.Time{}
 	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
 		return fmt.Errorf("workspace changed, but the selection could not be saved: %w", err)
+	}
+	return nil
+}
+
+// ClearWorkspace drops a selection the signed-in account no longer owns, such as one left by another
+// account or by a workspace that was deleted.
+func (m *Manager) ClearWorkspace(ctx context.Context) error {
+	state, err := m.LoadAccess(ctx)
+	if err != nil {
+		return err
+	}
+	if state.WorkspaceID == "" {
+		return nil
+	}
+	state.WorkspaceID = ""
+	state.DataToken = ""
+	state.DataTokenWorkspaceID = ""
+	state.DataTokenExpiresAt = time.Time{}
+	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
+		return fmt.Errorf("workspace selection could not be cleared: %w", err)
 	}
 	return nil
 }
