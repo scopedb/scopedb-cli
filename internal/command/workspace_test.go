@@ -57,7 +57,38 @@ func TestWorkspaceCreateAcceptsExplicitPlacement(t *testing.T) {
 	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws", "--region", "ap-northeast-1")
 	require.NoError(t, err)
 	require.Contains(t, out, "Created workspace ws-new.")
-	require.Contains(t, out, "scope workspace use ws-new")
+	require.Contains(t, out, "Using workspace ws-new.")
+	require.NotContains(t, out, "scope workspace use")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-new", state.WorkspaceID)
+}
+
+func TestWorkspaceCreateSelectsWhenNothingIsSelectedAsJSON(t *testing.T) {
+	fake, store := setupCLITest(t)
+	saveStoredLogin(t, store, fake.URL, "")
+
+	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws", "--region", "us-east-1", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"ws-new","provider":"aws","region":"us-east-1"}`, out)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-new", state.WorkspaceID)
+}
+
+func TestWorkspaceCreateKeepsAnExistingSelection(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws", "--region", "ap-northeast-1")
+	require.NoError(t, err)
+	require.Contains(t, out, "Created workspace ws-new.")
+	require.Contains(t, out, "Run 'scope workspace use ws-new' to select it.")
+	require.NotContains(t, out, "Using workspace")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-1", state.WorkspaceID)
 }
 
 func TestWorkspaceGetShowsSelectedWorkspace(t *testing.T) {

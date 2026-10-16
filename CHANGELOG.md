@@ -6,7 +6,7 @@ All significant changes to this project will be documented in this file.
 
 ### Breaking changes
 
-* `scope auth login` approves a login in the ScopeDB Console instead of requesting an email verification code. `--email`, `--code`, and the interactive code prompt are gone, and the login no longer stores a browser session. Its `--format json` result carries only `email`, which is omitted when the account could not be read.
+* `scope auth login` approves a login in the ScopeDB Console instead of requesting an email verification code. `--email`, `--code`, and the interactive code prompt are gone, and the login no longer stores a browser session. Its `--format json` result carries `email`, which is omitted when the account could not be read, and describes the workspace selection with `workspace` or `workspaces`.
 * `scope api-key` is removed. The CLI authenticates as a delegated client that cannot create, list, or revoke persistent API keys; manage them in the Console instead.
 * `scope workspace use` stores the workspace locally for the current login instead of rotating a credential, so it no longer changes the workspace of another machine or a Console session. `scope auth status` still reports the selected workspace.
 * Authentication commands are grouped under `scope auth`: replace `scope login`, `scope logout`, and `scope status` with `scope auth login`, `scope auth logout`, and `scope auth status`. Replace `scope workspace show` with `scope workspace get`. The old command paths are not aliases.
@@ -16,10 +16,10 @@ All significant changes to this project will be documented in this file.
 
 ### New features
 
-* `scope auth login` opens a browser and completes the login through a loopback redirect, and `scope auth login --device` prints a prefilled verification link and code to approve from another device for SSH sessions and containers, opening a browser only with `--open` and showing a waiting message with the request's remaining lifetime until the login is approved, denied, or expires. The CLI no longer fails over between the two flows.
+* `scope auth login` opens a browser and completes the login through a loopback redirect, and `scope auth login --device` prints a prefilled verification link and code to approve from another device for SSH sessions and containers, opening a browser only with `--open` and showing a waiting message with the request's remaining lifetime until the login is approved, denied, or expires. The CLI no longer fails over between the two flows. The login selects the workspace for the session: `--workspace <id-or-name>` names one, the profile's existing selection is kept when the account still owns it, an account with a single workspace selects it, and an account with several workspaces gets the candidate list and a prompt to choose instead of an arbitrary pick.
 * The CLI login is renewed automatically before its access token expires, using a rotating refresh token that is shared safely between concurrent `scope` processes.
 * `scope auth logout` revokes the login in ScopeDB before removing local credentials, so a signed-out CLI cannot keep using its grant.
-* `scope workspace create` creates a workspace, defaulting to the deployment's default placement. `scope workspace list` shows whether each workspace is ready, still provisioning, or scheduled for deletion, and the CLI refuses to select a workspace that is scheduled for deletion.
+* `scope workspace create` creates a workspace, defaulting to the deployment's default placement, and selects it when the login has no workspace selected yet. `scope workspace list` shows whether each workspace is ready, still provisioning, or scheduled for deletion, and the CLI refuses to select a workspace that is scheduled for deletion.
 * `scope auth login`, `auth logout`, `workspace use`, `console`, and `version` support `--format json` for machine-readable action results. Logout reports whether it cleared an existing login with `changed`.
 * `scope workspace list` accepts `--limit` to cap displayed results without changing the default of showing all items.
 

@@ -52,7 +52,7 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-`scope auth login` opens your browser, asks you to approve the request in the ScopeDB Console, and stores the login in the operating system keyring. On a machine without a browser, such as an SSH session, use `scope auth login --device` and approve the printed link or code from another device; add `--open` to open the prefilled link in a browser on the machine running the CLI. The CLI never switches between the two flows on its own.
+`scope auth login` opens your browser, asks you to approve the request in the ScopeDB Console, and stores the login in the operating system keyring. On a machine without a browser, such as an SSH session, use `scope auth login --device` and approve the printed link or code from another device; add `--open` to open the prefilled link in a browser on the machine running the CLI. The CLI never switches between the two flows on its own. Pass `--workspace <id-or-name>` to choose the workspace for the login. Without it, the login keeps the workspace already selected for the profile or selects the only workspace the account owns; an account with several workspaces gets the list and a prompt to choose, so the CLI never picks one at random.
 
 A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status or create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
@@ -63,7 +63,7 @@ scope workspace create --name analytics
 scope auth status
 ```
 
-The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
+The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. `scope workspace create` selects the workspace it created when the login has no selection yet, and leaves an existing selection alone. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
 
 `scope console [page]` provides shortcuts to Console pages: `home` (default), `query`, `data`, `keys`, and `connect`. For example, `scope console query` prints the query page URL; add `--open` to also open it in your browser.
 

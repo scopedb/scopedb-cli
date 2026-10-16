@@ -330,8 +330,20 @@ func (a *app) newWorkspaceCreateCommand() *cobra.Command {
 			if created.WorkspaceID == "" {
 				return NormalizeError(fmt.Errorf("ScopeDB did not return the created workspace"))
 			}
+			// A profile without a selection gets the workspace it just created, so the first data
+			// command works; an existing selection stays where the user put it.
+			selected := state.WorkspaceID == ""
+			if selected {
+				if err := runtime.auth.SelectWorkspace(cmd.Context(), created.WorkspaceID); err != nil {
+					return NormalizeError(err)
+				}
+			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, workspaceCreateResult{ID: created.WorkspaceID, Provider: provider, Region: region})
+			}
+			if selected {
+				_, err = fmt.Fprintf(a.out, "Created workspace %s.\nUsing workspace %s.\n", created.WorkspaceID, created.WorkspaceID)
+				return NormalizeError(err)
 			}
 			_, err = fmt.Fprintf(a.out, "Created workspace %s.\nRun 'scope workspace use %s' to select it.\n", created.WorkspaceID, created.WorkspaceID)
 			return NormalizeError(err)
