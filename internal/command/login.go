@@ -46,7 +46,6 @@ const (
 
 func (a *app) newLoginCommand() *cobra.Command {
 	var device bool
-	var openBrowser bool
 	var insecureStorage bool
 	var format string
 	var workspace string
@@ -55,8 +54,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 		Short: "Log in through the browser",
 		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
 			"The default flow opens a browser and receives the authorization on a loopback address.\n" +
-			"Use --device on a machine without a browser, such as an SSH session, to approve the login from another device;\n" +
-			"add --open to also open the verification page in the browser on this machine.",
+			"Use --device on a machine without a browser, such as an SSH session, to approve the login from another device.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateTextFormat(format); err != nil {
@@ -100,7 +98,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 
 			var tokens controlplane.TokenSet
 			if device {
-				tokens, err = a.deviceLogin(cmd.Context(), client, openBrowser)
+				tokens, err = a.deviceLogin(cmd.Context(), client)
 			} else {
 				tokens, err = a.loopbackLogin(cmd.Context(), client)
 			}
@@ -130,7 +128,6 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&device, "device", false, "log in with a user code on another device instead of a loopback browser redirect")
-	command.Flags().BoolVar(&openBrowser, "open", false, "open the verification page in the browser with --device")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace for the login")
@@ -345,9 +342,9 @@ func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (co
 	return client.ExchangeAuthorizationCode(ctx, callback.Code, listener.RedirectURI(), pkce.Verifier)
 }
 
-// deviceLogin runs RFC 8628 Device Authorization. It is the only flow that works without a browser
-// on the machine running the CLI, so it never opens one unless the user asks for it.
-func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth, openBrowser bool) (controlplane.TokenSet, error) {
+// deviceLogin runs RFC 8628 Device Authorization. It is the only flow that works without a browser on
+// the machine running the CLI, so it never opens one: the printed link is clicked or copied instead.
+func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
 	device, err := client.StartDeviceAuthorization(ctx)
 	if err != nil {
 		return controlplane.TokenSet{}, err
@@ -358,16 +355,6 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth, openB
 	if err := a.writeDeviceInstructions(device); err != nil {
 		return controlplane.TokenSet{}, err
 	}
-	if openBrowser {
-		target := device.VerificationURI
-		if device.VerificationURIComplete != "" {
-			target = device.VerificationURIComplete
-		}
-		if err := a.openBrowser(target); err != nil {
-			return controlplane.TokenSet{}, err
-		}
-	}
-
 	stopWaiting := a.startAuthorizationWait(time.Duration(device.ExpiresIn) * time.Second)
 	defer stopWaiting()
 
