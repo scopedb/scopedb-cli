@@ -88,8 +88,6 @@ type runtimeContext struct {
 	oauth   *controlplane.OAuth
 }
 
-// oauthClient discovers the authorization server once per process, on the first request that needs
-// a token endpoint.
 func (r *runtimeContext) oauthClient(ctx context.Context) (*controlplane.OAuth, error) {
 	r.oauthMu.Lock()
 	defer r.oauthMu.Unlock()
@@ -104,7 +102,6 @@ func (r *runtimeContext) oauthClient(ctx context.Context) (*controlplane.OAuth, 
 	return client, nil
 }
 
-// runtimeOAuth adapts the lazily discovered authorization server to the auth manager.
 type runtimeOAuth struct {
 	runtime *runtimeContext
 }
@@ -234,8 +231,6 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	return a.newRuntime(paths, cfg)
 }
 
-// isCharDevice reports whether an injected stream is a terminal rather than a file, pipe, or test
-// buffer.
 func isCharDevice(stream any) bool {
 	file, ok := stream.(*os.File)
 	if !ok {
@@ -245,7 +240,6 @@ func isCharDevice(stream any) bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-// makeInputRaw switches the terminal to raw mode so a menu can read one keystroke at a time.
 func makeInputRaw(input io.Reader) (func(), error) {
 	file, ok := input.(*os.File)
 	if !ok {

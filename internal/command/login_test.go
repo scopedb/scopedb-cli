@@ -852,7 +852,6 @@ func TestLoginOnlyWorkspaceAsJSON(t *testing.T) {
 	require.NotContains(t, diagnostics, "no workspace is selected")
 }
 
-// countingStore records how many times credentials are written.
 type countingStore struct {
 	credential.Store
 	saves int
@@ -867,8 +866,6 @@ func TestLoginRollsBackFailedPersistence(t *testing.T) {
 	fake, store := setupCLITest(t)
 	paths, err := config.ResolvePaths()
 	require.NoError(t, err)
-	// The first credential write succeeds and then blocks the configuration write, so the login
-	// must be rolled back and its grant revoked.
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
 		Out: &out, ErrOut: &diagnostics,
@@ -889,7 +886,6 @@ func TestLoginRollsBackFailedPersistence(t *testing.T) {
 	_ = paths
 }
 
-// interruptSaveStore fails every save after the first one succeeds.
 type interruptSaveStore struct {
 	credential.Store
 	afterSave func() error
@@ -926,7 +922,6 @@ func TestLoginRecoversFromOlderStoredState(t *testing.T) {
 	fake, store := setupCLITest(t)
 	paths, err := config.ResolvePaths()
 	require.NoError(t, err)
-	// Version 1 stored a browser session token, which an OAuth login can never use again.
 	legacy := `{"version":1,"profiles":{"` + profileKeyFor(fake.URL) + `":{"version":1,"control_url":"` + fake.URL + `","session_token":"legacy-secret"}}}`
 	require.NoError(t, os.MkdirAll(paths.Directory, 0o700))
 	require.NoError(t, os.WriteFile(paths.CredentialsFile, []byte(legacy), 0o600))

@@ -113,7 +113,6 @@ func workspaceListItems(workspaces []controlplane.Workspace, selectedID string) 
 	return views
 }
 
-// writeWorkspaceListTable renders the shared workspace table, marking the selected workspace.
 func writeWorkspaceListTable(out io.Writer, workspaces []controlplane.Workspace, selectedID string) {
 	views := workspaceListItems(workspaces, selectedID)
 	t := newTable(out, "CURRENT", "NAME", "ID", "STATUS")
@@ -127,7 +126,6 @@ func writeWorkspaceListTable(out io.Writer, workspaces []controlplane.Workspace,
 	t.Render()
 }
 
-// workspaceStatus names the lifecycle state a selection has to respect.
 func workspaceStatus(workspace controlplane.Workspace) string {
 	if workspace.ScheduledForDeletion() {
 		return "scheduled for deletion"
@@ -330,8 +328,6 @@ func (a *app) newWorkspaceCreateCommand() *cobra.Command {
 			if created.WorkspaceID == "" {
 				return NormalizeError(fmt.Errorf("ScopeDB did not return the created workspace"))
 			}
-			// A profile without a selection gets the workspace it just created, so the first data
-			// command works; an existing selection stays where the user put it.
 			selected := state.WorkspaceID == ""
 			if selected {
 				if err := runtime.auth.SelectWorkspace(cmd.Context(), created.WorkspaceID); err != nil {
@@ -362,7 +358,6 @@ type workspaceCreateResult struct {
 	Region   string `json:"region"`
 }
 
-// defaultPlacement resolves where a new workspace goes when the caller named no placement.
 func (r *runtimeContext) defaultPlacement(ctx context.Context) (controlplane.Placement, error) {
 	config, err := r.control.GetSignupConfig(ctx)
 	if err != nil {

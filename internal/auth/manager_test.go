@@ -113,7 +113,6 @@ func (f *fakeControl) ExchangeToken(context.Context, string, string) (controlpla
 	return f.exchange, nil
 }
 
-// fakeOAuth answers refresh calls with a scripted sequence.
 type fakeOAuth struct {
 	mu        sync.Mutex
 	results   []tokenOutcome
@@ -283,7 +282,6 @@ func TestLoadAccessAdoptsAnotherProcessRotation(t *testing.T) {
 	manager := newManager(store, &fakeControl{}, oauth, now)
 	manager.LockFile = filepath.Join(t.TempDir(), "credentials.lock")
 
-	// Another process refreshed the login before this one took the lock.
 	rotated := store.saved()
 	rotated.AccessToken = "oat_rotated"
 	rotated.AccessTokenExpiresAt = now.Add(time.Hour)

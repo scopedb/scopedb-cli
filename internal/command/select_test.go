@@ -26,8 +26,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// rawTerminal stands in for the terminal mode of an interactive session and records the restores,
-// so a test can prove every menu path gave the terminal back.
 type rawTerminal struct {
 	restores int
 }
@@ -109,22 +107,16 @@ func TestChooseMenuRendersTheHighlightInPlace(t *testing.T) {
 	require.Equal(t, 1, choice)
 	rendered := diagnostics.String()
 
-	// The first frame draws every line from the question down and returns the cursor to the question.
 	require.Contains(t, rendered, "\r\x1b[K? Pick\r\n❯ 1. One\r\n  2. Two\r\n\x1b[K")
 	require.Contains(t, rendered, "\x1b[3A")
-	// The redraw starts from the question line the previous frame left the cursor on, so it must not
-	// move up again; moving up would draw the block above the visible one and leave a duplicate.
 	redraw := rendered[strings.Index(rendered, "\x1b[3A")+len("\x1b[3A"):]
 	require.True(t, strings.HasPrefix(redraw, "\r\x1b[K? Pick"))
 	require.Contains(t, redraw, "? Pick\r\n  1. One\r\n❯ 2. Two\r\n")
-	// The selection clears the block from the question line down, then reports the choice.
 	require.Contains(t, rendered, "\r\x1b[J✔ Two\r\n")
 	require.NotContains(t, rendered, "\x1b[2A")
 	require.Equal(t, strings.Count(rendered, "\r\n"), strings.Count(rendered, "\n"))
 }
 
-// A lone Escape is one byte with nothing after it. Waiting for a second byte would hang the menu
-// until the user pressed another key.
 func TestChooseMenuCancelsOnALoneEscape(t *testing.T) {
 	reader, writer := io.Pipe()
 	raw := &rawTerminal{}
@@ -278,8 +270,6 @@ func TestChooseMenuNumbersWhenInputIsNotATerminal(t *testing.T) {
 	require.Contains(t, diagnostics.String(), "Selection [1-2, q to cancel]: ")
 }
 
-// failingReader returns an error for the first byte, standing in for a terminal that disappeared
-// while the menu was open.
 type failingReader struct{}
 
 func (r *failingReader) Read([]byte) (int, error) { return 0, errors.New("read failed") }

@@ -49,7 +49,6 @@ const (
 	refreshRetryDelay  = time.Second
 )
 
-// ControlPlane is the account API reachable with an OAuth access token.
 type ControlPlane interface {
 	GetUser(context.Context, string) (controlplane.User, error)
 	ListWorkspaces(context.Context, string) ([]controlplane.Workspace, error)
@@ -57,13 +56,11 @@ type ControlPlane interface {
 	ExchangeToken(context.Context, string, string) (controlplane.TokenExchangeResponse, error)
 }
 
-// OAuthClient is the token-endpoint subset the CLI uses after login.
 type OAuthClient interface {
 	RefreshToken(context.Context, string) (controlplane.TokenSet, error)
 	RevokeToken(context.Context, string) error
 }
 
-// Manager resolves machine credentials, the OAuth login, and short-lived data-plane credentials.
 type Manager struct {
 	ControlURL  string
 	Control     ControlPlane
@@ -83,7 +80,6 @@ type Access struct {
 	Mode        string
 }
 
-// Account is the signed-in user with the workspaces it owns and the locally selected one.
 type Account struct {
 	User                controlplane.User
 	Workspaces          []controlplane.Workspace
@@ -112,7 +108,6 @@ func (m *Manager) getenv(name string) string {
 	return os.Getenv(name)
 }
 
-// MachineAccess returns explicitly configured non-interactive credentials.
 // A partial environment is rejected instead of falling through to a human login.
 func (m *Manager) MachineAccess() (Access, bool, error) {
 	endpoint := strings.TrimSpace(m.getenv("SCOPEDB_ENDPOINT"))
@@ -126,8 +121,6 @@ func (m *Manager) MachineAccess() (Access, bool, error) {
 	return Access{Endpoint: endpoint, APIKey: apiKey, Mode: "api_key"}, true, nil
 }
 
-// LoadAccess returns stored credentials whose access token is valid now, refreshing the login when
-// the token is missing, expired, or about to expire.
 func (m *Manager) LoadAccess(ctx context.Context) (credential.State, error) {
 	state, err := m.load()
 	if err != nil {
@@ -150,9 +143,7 @@ func (m *Manager) load() (credential.State, error) {
 	return state, nil
 }
 
-// SaveLogin persists the token pair a completed login issued and clears cached data credentials.
-// The stored workspace selection survives, because signing in again does not change which workspace
-// this profile uses.
+// The selection survives a login, because signing in again does not change which workspace the profile uses.
 func (m *Manager) SaveLogin(tokens controlplane.TokenSet) error {
 	previous, err := m.Credentials.Load(m.ControlURL)
 	switch {
@@ -169,7 +160,6 @@ func (m *Manager) SaveLogin(tokens controlplane.TokenSet) error {
 	return m.Credentials.Save(m.ControlURL, state)
 }
 
-// Account loads the signed-in user, the owned workspaces, and the locally selected workspace.
 func (m *Manager) Account(ctx context.Context) (Account, error) {
 	account, _, err := m.account(ctx)
 	return account, err
@@ -191,8 +181,7 @@ func (m *Manager) account(ctx context.Context) (Account, credential.State, error
 	return Account{User: user, Workspaces: workspaces, SelectedWorkspaceID: state.WorkspaceID}, state, nil
 }
 
-// SelectWorkspace stores the workspace this profile uses. An OAuth credential is never rotated to
-// change workspace, so the selection is local state.
+// An OAuth credential is never rotated to change workspace, so the selection is local state.
 func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error {
 	state, err := m.LoadAccess(ctx)
 	if err != nil {
@@ -211,8 +200,6 @@ func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error
 	return nil
 }
 
-// ClearWorkspace drops a selection the signed-in account no longer owns, such as one left by another
-// account or by a workspace that was deleted.
 func (m *Manager) ClearWorkspace(ctx context.Context) error {
 	state, err := m.LoadAccess(ctx)
 	if err != nil {
@@ -231,8 +218,7 @@ func (m *Manager) ClearWorkspace(ctx context.Context) error {
 	return nil
 }
 
-// LogoutCleanupError reports a completed local logout whose remote revocation failed. The login
-// stays usable until it expires or the user revokes it in the Console.
+// The login stays usable until it expires or the user revokes it in the Console.
 type LogoutCleanupError struct{ Err error }
 
 func (e *LogoutCleanupError) Error() string {
@@ -241,8 +227,8 @@ func (e *LogoutCleanupError) Error() string {
 
 func (e *LogoutCleanupError) Unwrap() error { return e.Err }
 
-// Logout revokes the stored login and removes local credentials. Local credentials are removed even
-// when revocation fails, and the failure is reported so the user knows the login may still exist.
+// Local credentials are removed even when revocation fails, and the failure is reported so the user
+// knows the login may still exist.
 func (m *Manager) Logout(ctx context.Context) error {
 	state, err := m.Credentials.Load(m.ControlURL)
 	if errors.Is(err, credential.ErrInvalidState) {
@@ -276,8 +262,6 @@ func (m *Manager) deleteIgnoringMissing() error {
 	return nil
 }
 
-// ResolveDataAccess returns machine credentials when configured, otherwise it exchanges the OAuth
-// login for a short-lived data-plane credential.
 func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	if access, active, err := m.MachineAccess(); active || err != nil {
 		return access, err
@@ -331,7 +315,6 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	}, nil
 }
 
-// RequireWorkspace reports what prevents an account from accessing a workspace.
 func RequireWorkspace(account Account) error {
 	if account.User.Status == "pending" {
 		return ErrApprovalRequired
@@ -364,7 +347,6 @@ func (m *Manager) refresh(ctx context.Context, state credential.State) (credenti
 	case loadErr == nil:
 		state = current
 	case errors.Is(loadErr, credential.ErrNotFound), errors.Is(loadErr, credential.ErrInvalidState):
-		// Another process logged out or replaced the login.
 		return credential.State{}, ErrNotLoggedIn
 	default:
 		return credential.State{}, loadErr
@@ -387,8 +369,7 @@ func (m *Manager) refresh(ctx context.Context, state credential.State) (credenti
 			return credential.State{}, ctx.Err()
 		}
 		if isInvalidGrant(refreshErr) {
-			// The reuse-detection and idle-expiry rules end the whole grant, so the stored
-			// credentials can never work again.
+			// The reuse-detection and idle-expiry rules end the whole grant, so the stored credentials can never work again.
 			_ = m.Credentials.Delete(m.ControlURL)
 			return credential.State{}, fmt.Errorf("%w: %s", ErrLoginExpired, refreshErr)
 		}
@@ -423,8 +404,7 @@ func isInvalidGrant(err error) bool {
 	return errors.As(err, &protocol) && protocol.Code == "invalid_grant"
 }
 
-// retryableRefresh reports whether presenting the same refresh token again is safe. A transport
-// failure or an HTTP 5xx may mean the response was lost; a 429 must not be retried.
+// A transport failure or an HTTP 5xx may mean the response was lost; a 429 must not be retried.
 func retryableRefresh(err error) bool {
 	var protocol *controlplane.OAuthError
 	if !errors.As(err, &protocol) {

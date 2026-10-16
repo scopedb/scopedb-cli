@@ -32,7 +32,6 @@ const (
 	metadataPath = "/.well-known/oauth-authorization-server"
 )
 
-// AuthorizationServerMetadata is the RFC 8414 document the CLI discovers before it logs in.
 type AuthorizationServerMetadata struct {
 	Issuer                                     string   `json:"issuer"`
 	AuthorizationEndpoint                      string   `json:"authorization_endpoint"`
@@ -68,8 +67,6 @@ type DeviceAuthorization struct {
 	Interval                int64  `json:"interval"`
 }
 
-// OAuthError is a protocol error from an OAuth endpoint. Code carries the RFC 6749 error value so
-// callers can branch on polling outcomes such as authorization_pending.
 type OAuthError struct {
 	Code        string
 	Description string
@@ -144,7 +141,6 @@ func (c *Client) DiscoverOAuth(ctx context.Context) (*OAuth, error) {
 
 func (o *OAuth) Issuer() string { return o.metadata.Issuer }
 
-// AuthorizationURL builds the loopback authorization request.
 func (o *OAuth) AuthorizationURL(state, challenge, redirectURI string) string {
 	query := url.Values{
 		"response_type":         {"code"},
@@ -158,7 +154,6 @@ func (o *OAuth) AuthorizationURL(state, challenge, redirectURI string) string {
 	return o.metadata.AuthorizationEndpoint + "?" + query.Encode()
 }
 
-// StartDeviceAuthorization begins an RFC 8628 device authorization.
 func (o *OAuth) StartDeviceAuthorization(ctx context.Context) (DeviceAuthorization, error) {
 	if o.metadata.DeviceAuthorizationEndpoint == "" {
 		return DeviceAuthorization{}, &OAuthError{
@@ -172,7 +167,6 @@ func (o *OAuth) StartDeviceAuthorization(ctx context.Context) (DeviceAuthorizati
 	return response, err
 }
 
-// ExchangeAuthorizationCode redeems the code the loopback listener received.
 func (o *OAuth) ExchangeAuthorizationCode(ctx context.Context, code, redirectURI, verifier string) (TokenSet, error) {
 	return o.token(ctx, url.Values{
 		"grant_type":    {"authorization_code"},
@@ -193,7 +187,6 @@ func (o *OAuth) PollDeviceAuthorization(ctx context.Context, deviceCode string) 
 	})
 }
 
-// RefreshToken rotates the refresh token and returns the new pair.
 func (o *OAuth) RefreshToken(ctx context.Context, refreshToken string) (TokenSet, error) {
 	return o.token(ctx, url.Values{
 		"grant_type":    {"refresh_token"},

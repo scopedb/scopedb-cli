@@ -31,7 +31,6 @@ type PKCE struct {
 	Challenge string
 }
 
-// NewPKCE generates a 256-bit verifier from the unreserved character set.
 func NewPKCE() (PKCE, error) {
 	verifier, err := randomHex(32)
 	if err != nil {
@@ -44,7 +43,6 @@ func NewPKCE() (PKCE, error) {
 	}, nil
 }
 
-// NewState returns a fresh CSRF state value.
 func NewState() (string, error) {
 	return randomHex(32)
 }

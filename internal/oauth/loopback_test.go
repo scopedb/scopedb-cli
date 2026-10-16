@@ -89,7 +89,6 @@ func TestLoopbackAcceptsOneCallback(t *testing.T) {
 		Issuer: "https://control.example.com",
 	}, callback)
 
-	// A later callback never replaces the first one.
 	response, err = http.Get(parsed.String())
 	require.NoError(t, err)
 	_ = response.Body.Close()

@@ -24,7 +24,6 @@ import (
 	"time"
 )
 
-// Callback is the single redirect the loopback listener accepts.
 type Callback struct {
 	Code             string
 	State            string
@@ -45,7 +44,6 @@ type Loopback struct {
 
 const callbackPath = "/callback"
 
-// NewLoopback binds an ephemeral loopback port.
 func NewLoopback() (*Loopback, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -75,7 +73,6 @@ func (l *Loopback) RedirectURI() string {
 	return "http://" + l.listener.Addr().String() + callbackPath
 }
 
-// Wait returns the first callback, or an error when the context ends first.
 func (l *Loopback) Wait(ctx context.Context) (Callback, error) {
 	select {
 	case <-ctx.Done():
@@ -90,7 +87,6 @@ func (l *Loopback) Wait(ctx context.Context) (Callback, error) {
 	}
 }
 
-// Close stops the listener. It is safe to call more than once.
 func (l *Loopback) Close() error {
 	var err error
 	l.once.Do(func() {

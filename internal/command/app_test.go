@@ -24,8 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The message used to repeat the remediation the hint already carries, so every rendered form said
-// it twice.
 func TestExpiredLoginReportsTheRemediationOnce(t *testing.T) {
 	fake, store := setupCLITest(t)
 	state := saveStoredLogin(t, store, fake.URL, "ws-1")

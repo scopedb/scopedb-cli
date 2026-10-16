@@ -95,8 +95,6 @@ func (a *app) newStatusCommand() *cobra.Command {
 	return command
 }
 
-// loginExpiry formats the refresh-token expiry. A server that does not report one leaves the time
-// zero, and the status stays silent about a lifetime nobody knows.
 func loginExpiry(expiresAt time.Time) string {
 	if expiresAt.IsZero() {
 		return ""

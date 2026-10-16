@@ -22,8 +22,6 @@ import (
 	"strings"
 )
 
-// errMenuCancelled reports that the user dismissed a menu. It is never a usage error and leaves no
-// state behind, so each caller decides what to print.
 var errMenuCancelled = errors.New("menu cancelled")
 
 type menuOption struct {
@@ -49,8 +47,6 @@ const (
 	menuHint = "↑/↓ to navigate · enter to select · q to cancel"
 )
 
-// chooseMenu asks a single-choice question with an arrow-key menu, redrawing the block in place so
-// the cursor never scrolls. Terminals that cannot be put in raw mode get a numbered prompt instead.
 func (a *app) chooseMenu(question string, options []menuOption) (int, error) {
 	if len(options) == 0 {
 		return 0, errors.New("menu needs at least one option")
@@ -66,7 +62,6 @@ func (a *app) chooseMenu(question string, options []menuOption) (int, error) {
 
 func (a *app) chooseMenuRaw(question string, options []menuOption, restore func()) (int, error) {
 	selected := 0
-	// A read error leaves the terminal in the state that caused it, so every exit path restores.
 	defer restore()
 
 	if err := a.renderMenuFrame(question, options, selected); err != nil {
@@ -107,8 +102,6 @@ func (a *app) chooseMenuRaw(question string, options []menuOption, restore func(
 	}
 }
 
-// readMenuKey reads one keystroke. A lone ESC is an abort, which is why the escape sequence is
-// consumed one byte at a time instead of through a line-oriented reader.
 func (a *app) readMenuKey() (string, error) {
 	key, err := a.input.ReadByte()
 	if err != nil {
@@ -181,14 +174,11 @@ func (a *app) renderMenuFrame(question string, options []menuOption, selected in
 	return err
 }
 
-// eraseMenu clears the block from the question line down so the result can replace it.
 func (a *app) eraseMenu(options int) error {
 	_, err := io.WriteString(a.errOut, clearBlock)
 	return err
 }
 
-// chooseMenuNumbered is the fallback for a terminal that cannot be read keystroke by keystroke, such
-// as a redirected stdin. It asks the same question and reads one line per answer.
 func (a *app) chooseMenuNumbered(question string, options []menuOption) (int, error) {
 	var prompt strings.Builder
 	prompt.WriteString(question)

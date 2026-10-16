@@ -35,8 +35,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeControlPlane serves the OAuth and account contract the CLI uses. Every field is optional; the
-// zero value answers the happy path so a test only configures what it exercises.
 type fakeControlPlane struct {
 	t      *testing.T
 	Server *httptest.Server
@@ -68,7 +66,6 @@ type fakeControlPlane struct {
 	HealthStatus          int
 	RevokedStatus         int
 
-	// Requests record what the CLI sent, so tests can assert the protocol instead of the transport.
 	AuthorizationQuery url.Values
 	TokenForms         []url.Values
 	RevokedTokens      []string
@@ -292,8 +289,6 @@ func (f *fakeControlPlane) writeJSON(w http.ResponseWriter, status int, body any
 	assert.NoError(f.t, json.NewEncoder(w).Encode(body))
 }
 
-// authorizationURL simulates the browser half of the loopback login: it records the request the CLI
-// opened and redirects the browser straight back to the loopback listener.
 func (f *fakeControlPlane) authorizationURL(t *testing.T) func(string) error {
 	t.Helper()
 	return func(target string) error {
@@ -315,7 +310,6 @@ func (f *fakeControlPlane) authorizationURL(t *testing.T) func(string) error {
 	}
 }
 
-// workspaceFixture builds a ready workspace summary with the given identity.
 func workspaceFixture(id, name string) controlplane.Workspace {
 	return controlplane.Workspace{
 		ID:                 id,
@@ -326,7 +320,6 @@ func workspaceFixture(id, name string) controlplane.Workspace {
 	}
 }
 
-// scheduledForDeletionFixture marks a workspace as one the account is deleting.
 func scheduledForDeletionFixture(id, name string) controlplane.Workspace {
 	workspace := workspaceFixture(id, name)
 	deadline := time.Now().Add(time.Hour)
@@ -334,7 +327,6 @@ func scheduledForDeletionFixture(id, name string) controlplane.Workspace {
 	return workspace
 }
 
-// profileKeyFor mirrors the credential store's per-origin key so a test can seed the file directly.
 func profileKeyFor(controlURL string) string {
 	digest := sha256.Sum256([]byte(controlURL))
 	return hex.EncodeToString(digest[:])
@@ -345,8 +337,6 @@ func challengeFor(verifier string) string {
 	return base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
-// setupCLITest points the CLI at a fake control plane and returns the credential store so tests can
-// seed or inspect a login.
 func setupCLITest(t *testing.T) (*fakeControlPlane, *credential.PlaintextStore) {
 	t.Helper()
 	fake := newFakeControlPlane(t)
@@ -372,8 +362,6 @@ func saveStoredLogin(t *testing.T, store *credential.PlaintextStore, controlURL,
 	return state
 }
 
-// runFakeCommand runs a command against a fake control plane, with the browser half of the loopback
-// login driven by the test.
 func runFakeCommand(t *testing.T, fake *fakeControlPlane, args ...string) (string, string, error) {
 	t.Helper()
 	var out, diagnostics bytes.Buffer
@@ -411,8 +399,6 @@ func runCommand(t *testing.T, args ...string) (string, string, error) {
 	return out.String(), diagnostics.String(), err
 }
 
-// loginScenario configures one login run. The zero value runs a non-interactive command with no
-// browser opener, which is the environment most tests need.
 type loginScenario struct {
 	input           string
 	inputTerminal   bool
@@ -468,7 +454,6 @@ func runLoginScenario(t *testing.T, fake *fakeControlPlane, scenario loginScenar
 	return out.String(), diagnostics.String(), err
 }
 
-// runLoginMenu drives a login whose menus are answered by the scripted keystrokes.
 func runLoginMenu(t *testing.T, fake *fakeControlPlane, input string, args ...string) loginMenuResult {
 	t.Helper()
 	raw := &rawTerminal{}
@@ -496,7 +481,6 @@ func sshEnvironment(name string) string {
 	return ""
 }
 
-// runSSHLogin runs a login that cannot show a menu, so the environment selects the flow.
 func runSSHLogin(t *testing.T, fake *fakeControlPlane, flags ...string) (string, string, error) {
 	t.Helper()
 	args := append([]string{"auth", "login", "--insecure-storage"}, flags...)

@@ -123,15 +123,10 @@ func (a *app) newLoginCommand() *cobra.Command {
 
 const loginCancelled = "login cancelled; no credentials were saved"
 
-// isInteractive reports whether both ends of the session are terminals, so a question can be asked
-// and its answer seen.
 func (a *app) isInteractive() bool {
 	return a.isInputTerminal != nil && a.isInputTerminal() && a.isErrorTerminal != nil && a.isErrorTerminal()
 }
 
-// authorizeLogin picks the login flow. An interactive session is asked; machine-readable output never
-// waits for an answer, and prefers the loopback flow with a fallback to the device flow when no
-// browser can be opened.
 func (a *app) authorizeLogin(ctx context.Context, client *controlplane.OAuth, format string) (controlplane.TokenSet, error) {
 	if a.canPrompt(format) {
 		choice, err := a.chooseMenu("How do you want to sign in?", []menuOption{
@@ -173,8 +168,6 @@ type loginResult struct {
 	Workspaces []workspaceListItem `json:"workspaces,omitempty"`
 }
 
-// loginSelection is what the login decided about the workspace, kept apart from rendering so the
-// JSON result and the text result can never disagree.
 type loginSelection struct {
 	email      string
 	workspace  *controlplane.Workspace
@@ -235,8 +228,6 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 	case len(account.Workspaces) == 1:
 		workspace := account.Workspaces[0]
 		if workspace.ScheduledForDeletion() {
-			// A workspace on its way out is not a selection worth making; the candidates list marks
-			// it and the hint explains how to get a usable one.
 			selection.candidates = account.Workspaces
 			break
 		}
@@ -245,8 +236,6 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 		}
 		selection.workspace = &workspace
 	case len(account.Workspaces) > 1:
-		// Only the interactive branch can ask; a skipped answer then leaves stdout empty of the
-		// candidate table, which the user already saw in the picker on stderr.
 		if a.canPrompt(format) {
 			picked, err := a.promptLoginWorkspace(lookupCtx, runtime, account)
 			if err != nil {
@@ -268,8 +257,6 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 	return selection, nil
 }
 
-// promptLoginWorkspace asks which of several owned workspaces the login should use. A nil result
-// means the user skipped, or the answer could not be read, so the caller keeps today's fallback.
 func (a *app) promptLoginWorkspace(ctx context.Context, runtime *runtimeContext, account auth.Account) (*controlplane.Workspace, error) {
 	workspaces := account.Workspaces
 	options := make([]menuOption, 0, len(workspaces)+1)
@@ -307,8 +294,6 @@ func (a *app) promptLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 	}
 }
 
-// canPrompt reports whether this session may ask a question. A question needs a text result on a
-// terminal at both ends: it renders on stderr, and machine-readable output must never wait for input.
 func (a *app) canPrompt(format string) bool {
 	return format != structuredFormatJSON && a.isInteractive()
 }
@@ -328,11 +313,8 @@ func (a *app) renderLoginSelection(selection loginSelection) error {
 	return NormalizeError(err)
 }
 
-// errCannotOpenBrowser reports that the loopback flow never reached its waiting state, so the
-// listener was closed and no login state was left behind.
 var errCannotOpenBrowser = errors.New("cannot open a browser")
 
-// loopbackLogin runs Authorization Code with PKCE against a loopback redirect.
 func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
 	pkce, err := oauth.NewPKCE()
 	if err != nil {
@@ -378,8 +360,6 @@ func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (co
 	return client.ExchangeAuthorizationCode(ctx, callback.Code, listener.RedirectURI(), pkce.Verifier)
 }
 
-// deviceLogin runs RFC 8628 Device Authorization. It is the only flow that works without a browser on
-// the machine running the CLI, so it never opens one: the printed link is clicked or copied instead.
 func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
 	device, err := client.StartDeviceAuthorization(ctx)
 	if err != nil {
@@ -450,9 +430,6 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 	}
 }
 
-// writeDeviceInstructions shows how to approve the request. The prefilled link is the shortest path
-// when the server offers one, and the plain URL with the user code stays available for approving
-// from another device.
 func (a *app) writeDeviceInstructions(device controlplane.DeviceAuthorization) error {
 	if device.VerificationURIComplete == "" {
 		_, err := fmt.Fprintf(a.errOut, "To approve this login, open %s and enter the code:\n\n    %s\n\n", device.VerificationURI, device.UserCode)
@@ -481,9 +458,6 @@ func (a *app) waitForPoll(ctx context.Context, interval time.Duration) error {
 	}
 }
 
-// startAuthorizationWait reports the wait for approval on stderr and returns the function that stops
-// the indicator. An interactive terminal gets an animated spinner; any other stderr gets one plain
-// line, so redirected output and `--format json` stdout stay free of terminal control sequences.
 func (a *app) startAuthorizationWait(lifetime time.Duration) func() {
 	message := fmt.Sprintf("Waiting for authorization... (expires in %s; Ctrl+C to cancel)", describeLifetime(lifetime))
 	if !a.isErrorTerminal() {
@@ -520,8 +494,6 @@ func (a *app) startAuthorizationWait(lifetime time.Duration) func() {
 	}
 }
 
-// describeLifetime renders the server-provided authorization lifetime for the waiting line, dropping
-// zero components so the common ten-minute device flow reads as "10m".
 func describeLifetime(lifetime time.Duration) string {
 	total := int64(lifetime / time.Second)
 	if total <= 0 {
@@ -560,8 +532,6 @@ func describeAuthorizationError(callback oauth.Callback) string {
 	}
 }
 
-// browserlessReason names the environment that makes a loopback redirect unusable, if any. It only
-// steers the non-interactive flow; an interactive session is asked instead.
 func (a *app) browserlessReason() string {
 	if a.getenv("SSH_CONNECTION") != "" || a.getenv("SSH_TTY") != "" || a.getenv("SSH_CLIENT") != "" {
 		return "this is an SSH session"
@@ -615,8 +585,7 @@ func restoreCredentials(store credential.Store, controlURL string, previous cred
 	return nil
 }
 
-// revokeIssuedLogin undoes a login the CLI could not store, so a failed login never leaves a live
-// grant behind.
+// revokeIssuedLogin undoes a login the CLI could not store, so a failed login never leaves a live grant behind.
 func (r *runtimeContext) revokeIssuedLogin(tokens controlplane.TokenSet) {
 	token := tokens.RefreshToken
 	if token == "" {

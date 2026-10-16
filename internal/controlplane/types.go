@@ -16,8 +16,6 @@ package controlplane
 
 import "time"
 
-// User is the account behind a credential. The CLI reads it from /api/user instead of the
-// browser-session resource, which an OAuth access token cannot use.
 type User struct {
 	ID           string `json:"id"`
 	Email        string `json:"email"`
@@ -44,8 +42,6 @@ func (w Workspace) Name() string {
 	return w.ID
 }
 
-// ScheduledForDeletion reports whether the workspace is on its way out, which makes every
-// workspace-scoped route answer 404 until it is restored.
 func (w Workspace) ScheduledForDeletion() bool {
 	return w.ScheduledForDeletionAt != nil
 }
@@ -76,19 +72,16 @@ type Provisioning struct {
 	UpdatedAt *time.Time `json:"updated_at"`
 }
 
-// CreateWorkspaceRequest is the Console and CLI request for a new workspace.
 type CreateWorkspaceRequest struct {
 	DisplayName string `json:"display_name"`
 	Provider    string `json:"provider"`
 	Region      string `json:"region"`
 }
 
-// CreateWorkspaceResponse carries the workspace that was created.
 type CreateWorkspaceResponse struct {
 	WorkspaceID string `json:"workspace_id"`
 }
 
-// SignupConfig lists the placements a new workspace can be created in.
 type SignupConfig struct {
 	DefaultPlacement *Placement  `json:"default_placement"`
 	Placements       []Placement `json:"placements"`

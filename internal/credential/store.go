@@ -24,8 +24,8 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/config"
 )
 
-// currentStateVersion is the shape of the stored credential document. Version 1 held a browser
-// session token, which OAuth logins replaced, so an older document is invalid rather than migrated.
+// Version 1 held a browser session token that an OAuth login can never use, so an older document is
+// invalid rather than migrated.
 const currentStateVersion = 2
 
 var ErrNotFound = errors.New("credentials not found")
@@ -34,8 +34,6 @@ var ErrNotFound = errors.New("credentials not found")
 // not cover storage access failures or unreadable multi-profile documents.
 var ErrInvalidState = errors.New("stored credential state is invalid")
 
-// State contains secrets, the workspace the user selected, and the cached data-plane credential.
-// It must never be written to the regular TOML configuration file.
 type State struct {
 	Version               int       `json:"version"`
 	ControlURL            string    `json:"control_url"`
