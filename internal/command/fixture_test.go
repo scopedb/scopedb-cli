@@ -403,21 +403,94 @@ func runCommand(t *testing.T, args ...string) (string, string, error) {
 	return out.String(), diagnostics.String(), err
 }
 
-// runLoginPicker drives the workspace picker with scripted answers and explicit terminal hooks.
-func runLoginPicker(t *testing.T, fake *fakeControlPlane, input string, inputTerminal, errorTerminal bool, args ...string) (string, string, error) {
+// loginScenario configures one login run. The zero value runs a non-interactive command with no
+// browser opener, which is the environment most tests need.
+type loginScenario struct {
+	input           string
+	inputTerminal   bool
+	errorTerminal   bool
+	getenv          func(string) string
+	credentialStore func(string, config.Paths) (credential.Store, error)
+	openURL         func(string) error
+	makeRawError    error
+	raw             *rawTerminal
+	args            []string
+}
+
+func runLoginScenario(t *testing.T, fake *fakeControlPlane, scenario loginScenario) (string, string, error) {
 	t.Helper()
+	if scenario.raw == nil {
+		scenario.raw = &rawTerminal{}
+	}
+	getenv := scenario.getenv
+	if getenv == nil {
+		getenv = func(string) string { return "" }
+	}
+	openURL := scenario.openURL
+	if openURL == nil {
+		openURL = fake.authorizationURL(t)
+	}
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
-		In:              strings.NewReader(input),
+		In:              strings.NewReader(scenario.input),
 		Out:             &out,
 		ErrOut:          &diagnostics,
-		Getenv:          func(string) string { return "" },
+		Getenv:          getenv,
 		Sleep:           func(time.Duration) {},
-		OpenURL:         fake.authorizationURL(t),
-		IsInputTerminal: func() bool { return inputTerminal },
-		IsErrorTerminal: func() bool { return errorTerminal },
+		OpenURL:         openURL,
+		CredentialStore: scenario.credentialStore,
+		IsInputTerminal: func() bool { return scenario.inputTerminal },
+		IsErrorTerminal: func() bool { return scenario.errorTerminal },
+		MakeRaw: func() (func(), error) {
+			if scenario.makeRawError != nil {
+				return nil, scenario.makeRawError
+			}
+			return func() { scenario.raw.restores++ }, nil
+		},
 	})
-	root.SetArgs(append([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"}, args...))
+	args := scenario.args
+	if len(args) == 0 || args[0] != "auth" {
+		args = append([]string{"auth", "login", "--insecure-storage"}, args...)
+	}
+	root.SetArgs(append([]string{"--control-url", fake.URL}, args...))
 	err := root.ExecuteContext(t.Context())
+	for _, secret := range []string{"oat_access", "ort_refresh", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
+		require.NotContains(t, out.String()+diagnostics.String(), secret)
+	}
 	return out.String(), diagnostics.String(), err
+}
+
+// runLoginMenu drives a login whose menus are answered by the scripted keystrokes.
+func runLoginMenu(t *testing.T, fake *fakeControlPlane, input string, args ...string) loginMenuResult {
+	t.Helper()
+	raw := &rawTerminal{}
+	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+		input:         input,
+		inputTerminal: true,
+		errorTerminal: true,
+		raw:           raw,
+		args:          args,
+	})
+	return loginMenuResult{out: out, diagnostics: diagnostics, err: err, raw: raw}
+}
+
+type loginMenuResult struct {
+	out         string
+	diagnostics string
+	err         error
+	raw         *rawTerminal
+}
+
+func sshEnvironment(name string) string {
+	if name == "SSH_CONNECTION" {
+		return "10.0.0.2 52100 10.0.0.1 22"
+	}
+	return ""
+}
+
+// runSSHLogin runs a login that cannot show a menu, so the environment selects the flow.
+func runSSHLogin(t *testing.T, fake *fakeControlPlane, flags ...string) (string, string, error) {
+	t.Helper()
+	args := append([]string{"auth", "login", "--insecure-storage"}, flags...)
+	return runLoginScenario(t, fake, loginScenario{getenv: sshEnvironment, args: args})
 }

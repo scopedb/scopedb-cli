@@ -18,9 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +43,6 @@ const (
 )
 
 func (a *app) newLoginCommand() *cobra.Command {
-	var device bool
 	var insecureStorage bool
 	var format string
 	var workspace string
@@ -54,7 +51,8 @@ func (a *app) newLoginCommand() *cobra.Command {
 		Short: "Log in through the browser",
 		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
 			"The default flow opens a browser and receives the authorization on a loopback address.\n" +
-			"Use --device on a machine without a browser, such as an SSH session, to approve the login from another device.",
+			"On a machine without a browser, such as an SSH session or a container, the CLI falls back to a device code\n" +
+			"that is approved from another device.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateTextFormat(format); err != nil {
@@ -66,14 +64,6 @@ func (a *app) newLoginCommand() *cobra.Command {
 			}
 			if insecureStorage {
 				cfg.CredentialStore = config.CredentialStorePlaintext
-			}
-			if !device {
-				if reason := a.browserlessReason(); reason != "" {
-					return clierror.WithHint(
-						clierror.New(clierror.ExitUsage, "cannot open a browser: "+reason),
-						"rerun with 'scope auth login --device' and approve the login from another device",
-					)
-				}
 			}
 			if cfg.CredentialStore == config.CredentialStorePlaintext {
 				if _, err := fmt.Fprintln(a.errOut, "Warning: credentials will be stored unencrypted in a permission-restricted file."); err != nil {
@@ -96,13 +86,11 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 
-			var tokens controlplane.TokenSet
-			if device {
-				tokens, err = a.deviceLogin(cmd.Context(), client)
-			} else {
-				tokens, err = a.loopbackLogin(cmd.Context(), client)
-			}
+			tokens, err := a.authorizeLogin(cmd.Context(), client)
 			if err != nil {
+				if errors.Is(err, errMenuCancelled) {
+					return clierror.New(clierror.ExitAuth, loginCancelled)
+				}
 				return NormalizeError(err)
 			}
 			if err := runtime.persistLogin(tokens); err != nil {
@@ -127,11 +115,56 @@ func (a *app) newLoginCommand() *cobra.Command {
 			return a.renderLoginSelection(selection)
 		},
 	}
-	command.Flags().BoolVar(&device, "device", false, "log in with a user code on another device instead of a loopback browser redirect")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace for the login")
 	return command
+}
+
+const loginCancelled = "login cancelled; no credentials were saved"
+
+// isInteractive reports whether the session can host a menu, which is a property of the terminals
+// rather than of the output format: the menu renders on stderr and stdout stays machine-readable.
+func (a *app) isInteractive() bool {
+	return a.isInputTerminal != nil && a.isInputTerminal() && a.isErrorTerminal != nil && a.isErrorTerminal()
+}
+
+// authorizeLogin picks the login flow. An interactive session is asked, so the output format cannot
+// suppress the question; anything else prefers the loopback flow and falls back to the device flow
+// when no browser can be opened.
+func (a *app) authorizeLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
+	if a.isInteractive() {
+		choice, err := a.chooseMenu("How do you want to sign in?", []menuOption{
+			{label: "Sign in with your browser", note: "recommended"},
+			{label: "Sign in with a device code"},
+		})
+		if err != nil {
+			return controlplane.TokenSet{}, err
+		}
+		if choice == 1 {
+			return a.deviceLogin(ctx, client)
+		}
+		if tokens, err := a.loopbackLogin(ctx, client); !errors.Is(err, errCannotOpenBrowser) {
+			return tokens, err
+		} else if _, writeErr := fmt.Fprintf(a.errOut, "could not open a browser (%s); using the device code flow.\n", err); writeErr != nil {
+			return controlplane.TokenSet{}, writeErr
+		}
+		return a.deviceLogin(ctx, client)
+	}
+	if reason := a.browserlessReason(); reason != "" {
+		if _, err := fmt.Fprintf(a.errOut, "%s; using the device code flow.\n", reason); err != nil {
+			return controlplane.TokenSet{}, err
+		}
+		return a.deviceLogin(ctx, client)
+	}
+	tokens, err := a.loopbackLogin(ctx, client)
+	if err == nil || !errors.Is(err, errCannotOpenBrowser) {
+		return tokens, err
+	}
+	if _, writeErr := fmt.Fprintf(a.errOut, "could not open a browser (%s); using the device code flow.\n", err); writeErr != nil {
+		return controlplane.TokenSet{}, writeErr
+	}
+	return a.deviceLogin(ctx, client)
 }
 
 type loginResult struct {
@@ -230,33 +263,34 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 }
 
 // promptLoginWorkspace asks which of several owned workspaces the login should use. A nil result
-// means the user skipped or the answer could not be read, so the caller keeps today's fallback.
+// means the user skipped, or the answer could not be read, so the caller keeps today's fallback.
 func (a *app) promptLoginWorkspace(ctx context.Context, runtime *runtimeContext, account auth.Account) (*controlplane.Workspace, error) {
 	workspaces := account.Workspaces
-	count := len(workspaces)
+	options := make([]menuOption, 0, len(workspaces)+1)
+	for _, workspace := range workspaces {
+		options = append(options, menuOption{
+			label: fmt.Sprintf("%s (%s, %s)", workspace.Name(), workspace.ID, workspaceStatus(workspace)),
+		})
+	}
+	options = append(options, menuOption{
+		label: "Skip for now",
+		note:  "select later with 'scope workspace use <id-or-name>'",
+	})
 	for {
-		if _, err := fmt.Fprintf(a.errOut, "Select a workspace for this login:\n%sSelection [1-%d, Enter to skip]: ", describeLoginWorkspaces(workspaces), count); err != nil {
-			return nil, nil
-		}
-		answer, err := a.input.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, nil
-		}
-		answer = strings.TrimSpace(answer)
-		if answer == "" {
-			return nil, nil
-		}
-		index, err := strconv.Atoi(answer)
-		if err != nil || index < 1 || index > count {
-			if _, err := fmt.Fprintf(a.errOut, "Enter a number between 1 and %d.\n", count); err != nil {
+		choice, err := a.chooseMenu("Which workspace do you want to use?", options)
+		if err != nil {
+			if errors.Is(err, errMenuCancelled) {
 				return nil, nil
 			}
-			continue
+			return nil, err
 		}
-		workspace := workspaces[index-1]
+		if choice == len(workspaces) {
+			return nil, nil
+		}
+		workspace := workspaces[choice]
 		if workspace.ScheduledForDeletion() {
 			if _, err := fmt.Fprintf(a.errOut, "Workspace %s is scheduled for deletion; restore it in the Console or choose another.\n", workspace.Name()); err != nil {
-				return nil, nil
+				return nil, err
 			}
 			continue
 		}
@@ -267,18 +301,10 @@ func (a *app) promptLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 	}
 }
 
-// canPrompt reports whether the session can host a question, which needs a text result on a terminal
-// at both ends: stdout stays free of the picker and its answer must be reachable.
+// canPrompt reports whether the workspace question belongs in this session, which needs a text
+// result on a terminal at both ends: the prompt renders on stderr and its answer must be reachable.
 func (a *app) canPrompt(format string) bool {
-	return format != structuredFormatJSON && a.isInputTerminal() && a.isErrorTerminal()
-}
-
-func describeLoginWorkspaces(workspaces []controlplane.Workspace) string {
-	var lines strings.Builder
-	for index, workspace := range workspaces {
-		fmt.Fprintf(&lines, "  %d) %s (%s, %s)\n", index+1, workspace.Name(), workspace.ID, workspaceStatus(workspace))
-	}
-	return lines.String()
+	return format != structuredFormatJSON && a.isInteractive()
 }
 
 func (a *app) renderLoginSelection(selection loginSelection) error {
@@ -295,6 +321,10 @@ func (a *app) renderLoginSelection(selection loginSelection) error {
 	_, err := fmt.Fprintf(a.out, "%s workspace %s (%s).\n", verb, selection.workspace.Name(), selection.workspace.ID)
 	return NormalizeError(err)
 }
+
+// errCannotOpenBrowser reports that the loopback flow never reached its waiting state, so the
+// listener was closed and no login state was left behind.
+var errCannotOpenBrowser = errors.New("cannot open a browser")
 
 // loopbackLogin runs Authorization Code with PKCE against a loopback redirect.
 func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
@@ -313,10 +343,10 @@ func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (co
 	defer func() { _ = listener.Close() }()
 
 	target := client.AuthorizationURL(state, pkce.Challenge, listener.RedirectURI())
-	if _, err := fmt.Fprintf(a.errOut, "Open this URL to approve the login:\n%s\n", target); err != nil {
-		return controlplane.TokenSet{}, err
+	if err := a.openURL(target); err != nil {
+		return controlplane.TokenSet{}, fmt.Errorf("%w: %s", errCannotOpenBrowser, err)
 	}
-	if err := a.openBrowser(target); err != nil {
+	if _, err := fmt.Fprintf(a.errOut, "Open this URL to approve the login:\n%s\n", target); err != nil {
 		return controlplane.TokenSet{}, err
 	}
 
@@ -387,10 +417,10 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 			return controlplane.TokenSet{}, clierror.New(clierror.ExitAuth, "the login request was denied in the console")
 		case "expired_token":
 			return controlplane.TokenSet{}, clierror.WithHint(
-				clierror.New(clierror.ExitAuth, "the login request expired"), "run 'scope auth login --device' to start a new one")
+				clierror.New(clierror.ExitAuth, "the login request expired"), "run 'scope auth login' to start a new one")
 		case "invalid_grant":
 			return controlplane.TokenSet{}, clierror.WithHint(
-				clierror.New(clierror.ExitAuth, "the login request can no longer be redeemed"), "run 'scope auth login --device' to start a new one")
+				clierror.New(clierror.ExitAuth, "the login request can no longer be redeemed"), "run 'scope auth login' to start a new one")
 		default:
 			if protocol.Status != 0 {
 				return controlplane.TokenSet{}, err
@@ -403,7 +433,7 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 		}
 		if !a.now().Before(deadline) {
 			return controlplane.TokenSet{}, clierror.WithHint(
-				clierror.New(clierror.ExitAuth, "the login request expired"), "run 'scope auth login --device' to start a new one")
+				clierror.New(clierror.ExitAuth, "the login request expired"), "run 'scope auth login' to start a new one")
 		}
 		if ctx.Err() != nil {
 			return controlplane.TokenSet{}, ctx.Err()
@@ -427,17 +457,6 @@ func (a *app) writeDeviceInstructions(device controlplane.DeviceAuthorization) e
 	}
 	_, err := fmt.Fprintf(a.errOut, "Alternatively, open %s and enter the code:\n\n    %s\n\n", device.VerificationURI, device.UserCode)
 	return err
-}
-
-// openBrowser opens the approval page and warns when that is not possible; the printed URL is the
-// fallback either way.
-func (a *app) openBrowser(target string) error {
-	if err := a.openURL(target); err != nil {
-		if _, writeErr := fmt.Fprintf(a.errOut, "Could not open a browser: %s\n", err); writeErr != nil {
-			return writeErr
-		}
-	}
-	return nil
 }
 
 // waitForPoll waits out one polling interval. The timer is interrupted by the context, so Ctrl+C
@@ -535,8 +554,8 @@ func describeAuthorizationError(callback oauth.Callback) string {
 	}
 }
 
-// browserlessReason names the environment that makes a loopback redirect unusable, if any. The
-// device flow is never selected automatically; the user must ask for it.
+// browserlessReason names the environment that makes a loopback redirect unusable, if any. It only
+// steers the non-interactive flow; an interactive session is asked instead.
 func (a *app) browserlessReason() string {
 	if a.getenv("SSH_CONNECTION") != "" || a.getenv("SSH_TTY") != "" || a.getenv("SSH_CLIENT") != "" {
 		return "this is an SSH session"

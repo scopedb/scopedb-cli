@@ -16,6 +16,7 @@ package command
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -141,7 +142,7 @@ func TestLoopbackLoginReportsDeniedAuthorization(t *testing.T) {
 func TestDeviceLoginPollsUntilApproved(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.DeviceOutcomes = []string{"authorization_pending", "slow_down", ""}
-	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage", "--format", "json")
+	out, diagnostics, err := runSSHLogin(t, fake, "--format", "json")
 	require.NoError(t, err)
 	require.JSONEq(t, `{"email":"dev@example.com"}`, out)
 	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
@@ -163,7 +164,7 @@ func TestDeviceLoginFailureOutcomes(t *testing.T) {
 		t.Run(tc.outcome, func(t *testing.T) {
 			fake, store := setupCLITest(t)
 			fake.DeviceOutcomes = []string{tc.outcome}
-			out, _, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage")
+			out, _, err := runSSHLogin(t, fake)
 			require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
 			require.Contains(t, err.Error(), tc.wantError)
 			require.Empty(t, out)
@@ -176,13 +177,13 @@ func TestDeviceLoginFailureOutcomes(t *testing.T) {
 func TestDeviceLoginRejectsIncompleteResponse(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	fake.UserCode = ""
-	_, _, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage")
+	_, _, err := runSSHLogin(t, fake)
 	require.ErrorContains(t, err, "incomplete device authorization")
 }
 
 func TestDeviceLoginPrintsThePrefilledLinkAndKeepsTheCode(t *testing.T) {
 	fake, _ := setupCLITest(t)
-	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage", "--format", "json")
+	out, diagnostics, err := runSSHLogin(t, fake, "--format", "json")
 	require.NoError(t, err)
 	require.JSONEq(t, `{"email":"dev@example.com"}`, out)
 	require.Contains(t, diagnostics, "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP")
@@ -192,38 +193,33 @@ func TestDeviceLoginPrintsThePrefilledLinkAndKeepsTheCode(t *testing.T) {
 
 func TestDeviceLoginNeverOpensABrowser(t *testing.T) {
 	fake, _ := setupCLITest(t)
-	var out, diagnostics bytes.Buffer
 	var opened []string
-	root := NewRoot(Dependencies{
-		Out: &out, ErrOut: &diagnostics,
-		Getenv:  func(string) string { return "" },
-		Sleep:   func(time.Duration) {},
-		OpenURL: func(target string) error { opened = append(opened, target); return nil },
+	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+		getenv:  sshEnvironment,
+		openURL: func(target string) error { opened = append(opened, target); return nil },
+		args:    []string{"auth", "login", "--insecure-storage"},
 	})
-	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--device", "--insecure-storage"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
+	require.NoError(t, err)
 	require.Empty(t, opened)
-	require.Contains(t, diagnostics.String(), "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP")
+	require.Equal(t, "Logged in as dev@example.com.\n", out)
+	require.Contains(t, diagnostics, "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP")
 }
 
 func TestDeviceLoginFallsBackToThePlainVerificationURL(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	empty := ""
 	fake.DeviceCompleteURI = &empty
-	var out, diagnostics bytes.Buffer
 	var opened []string
-	root := NewRoot(Dependencies{
-		Out: &out, ErrOut: &diagnostics,
-		Getenv:  func(string) string { return "" },
-		Sleep:   func(time.Duration) {},
-		OpenURL: func(target string) error { opened = append(opened, target); return nil },
+	_, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+		getenv:  sshEnvironment,
+		openURL: func(target string) error { opened = append(opened, target); return nil },
+		args:    []string{"auth", "login", "--insecure-storage"},
 	})
-	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--device", "--insecure-storage"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
+	require.NoError(t, err)
 	require.Empty(t, opened)
-	require.Contains(t, diagnostics.String(), "open https://console.example.com/oauth/device and enter the code")
-	require.NotContains(t, diagnostics.String(), "#user_code=")
-	require.Contains(t, diagnostics.String(), "BCDF-GHJK-LMNP")
+	require.Contains(t, diagnostics, "open https://console.example.com/oauth/device and enter the code")
+	require.NotContains(t, diagnostics, "#user_code=")
+	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
 }
 
 func TestDeviceLoginReportsTheServerLifetime(t *testing.T) {
@@ -239,7 +235,7 @@ func TestDeviceLoginReportsTheServerLifetime(t *testing.T) {
 		t.Run(fmt.Sprintf("%ds", tc.seconds), func(t *testing.T) {
 			fake, _ := setupCLITest(t)
 			fake.DeviceExpiresIn = tc.seconds
-			_, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage")
+			_, diagnostics, err := runSSHLogin(t, fake)
 			require.NoError(t, err)
 			require.Contains(t, diagnostics, "Waiting for authorization... ("+tc.want+"; Ctrl+C to cancel)")
 		})
@@ -248,7 +244,7 @@ func TestDeviceLoginReportsTheServerLifetime(t *testing.T) {
 
 func TestDeviceLoginWaitsWithoutControlSequences(t *testing.T) {
 	fake, _ := setupCLITest(t)
-	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--device", "--insecure-storage", "--format", "json")
+	out, diagnostics, err := runSSHLogin(t, fake, "--format", "json")
 	require.NoError(t, err)
 	require.JSONEq(t, `{"email":"dev@example.com"}`, out)
 	require.Contains(t, diagnostics, "Waiting for authorization... (expires in 10m; Ctrl+C to cancel)")
@@ -260,13 +256,15 @@ func TestDeviceLoginSpinsTheWaitOnATerminal(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
-		Out: &out, ErrOut: &diagnostics,
-		Getenv:          func(string) string { return "" },
+		In:              strings.NewReader(""),
+		Out:             &out,
+		ErrOut:          &diagnostics,
+		Getenv:          sshEnvironment,
 		Sleep:           func(time.Duration) {},
 		OpenURL:         func(string) error { return nil },
 		IsErrorTerminal: func() bool { return true },
 	})
-	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--device", "--insecure-storage"})
+	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
 	require.Contains(t, diagnostics.String(), "\r")
 	require.Contains(t, diagnostics.String(), "Waiting for authorization")
@@ -274,23 +272,131 @@ func TestDeviceLoginSpinsTheWaitOnATerminal(t *testing.T) {
 	require.NotContains(t, out.String(), "\x1b")
 }
 
-func TestLoginRequiresDeviceInSSHSession(t *testing.T) {
+func TestLoginUsesTheDeviceFlowInSSHSession(t *testing.T) {
 	fake, store := setupCLITest(t)
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		Out: &out, ErrOut: &diagnostics,
-		Sleep: func(time.Duration) {},
-		Getenv: func(name string) string {
-			if name == "SSH_CONNECTION" {
-				return "10.0.0.2 52100 10.0.0.1 22"
-			}
-			return ""
-		},
+	out, diagnostics, err := runSSHLogin(t, fake)
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, diagnostics, "this is an SSH session; using the device code flow.")
+	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+}
+
+func TestLoginKeepsTheLoopbackFlowWithANonInteractiveBrowser(t *testing.T) {
+	fake, store := setupCLITest(t)
+	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{})
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, diagnostics, "Open this URL to approve the login")
+	require.NotContains(t, diagnostics, "device code")
+	require.Zero(t, fake.DevicePolls)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+}
+
+func TestLoginFallsBackToTheDeviceFlowWhenTheBrowserCannotOpen(t *testing.T) {
+	fake, store := setupCLITest(t)
+	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+		openURL: func(string) error { return errors.New("no browser available") },
 	})
-	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"})
-	err := root.ExecuteContext(t.Context())
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "--device")
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, diagnostics, "could not open a browser (cannot open a browser: no browser available); using the device code flow.")
+	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
+	require.NotContains(t, diagnostics, "Open this URL to approve the login")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+}
+
+func TestLoginMenuSelectsTheBrowserFlow(t *testing.T) {
+	fake, store := setupCLITest(t)
+	result := runLoginMenu(t, fake, "\r")
+	require.NoError(t, result.err)
+	require.Equal(t, "Logged in as dev@example.com.\n", result.out)
+	require.Contains(t, result.diagnostics, "? How do you want to sign in?")
+	require.Contains(t, result.diagnostics, "Sign in with your browser (recommended)")
+	require.Contains(t, result.diagnostics, "Sign in with a device code")
+	require.Contains(t, result.diagnostics, "✔ Sign in with your browser")
+	require.Contains(t, result.diagnostics, "Open this URL to approve the login")
+	require.Zero(t, fake.DevicePolls)
+	require.Equal(t, 1, result.raw.restores)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+}
+
+func TestLoginMenuSelectsTheDeviceFlow(t *testing.T) {
+	fake, store := setupCLITest(t)
+	result := runLoginMenu(t, fake, "j\r")
+	require.NoError(t, result.err)
+	require.Equal(t, "Logged in as dev@example.com.\n", result.out)
+	require.Contains(t, result.diagnostics, "✔ Sign in with a device code")
+	require.Contains(t, result.diagnostics, "BCDF-GHJK-LMNP")
+	require.NotContains(t, result.diagnostics, "Open this URL to approve the login")
+	require.Equal(t, 1, fake.DevicePolls)
+	require.Equal(t, 1, result.raw.restores)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+}
+
+func TestLoginMenuKeepsJSONOnStdout(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	result := runLoginMenu(t, fake, "\r", "--format", "json")
+	require.NoError(t, result.err)
+	require.JSONEq(t, `{"email":"dev@example.com"}`, result.out)
+	require.Contains(t, result.diagnostics, "How do you want to sign in?")
+}
+
+func TestLoginMenuCancelsWithoutStoring(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		input string
+	}{
+		{"quit", "q"},
+		{"interrupt", "\x03"},
+		{"escape", "\x1b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			result := runLoginMenu(t, fake, tc.input)
+			require.Equal(t, clierror.ExitAuth, clierror.ExitCode(result.err))
+			require.Contains(t, result.err.Error(), "login cancelled")
+			require.Empty(t, result.out)
+			require.Equal(t, 1, result.raw.restores)
+			require.Zero(t, fake.DevicePolls)
+			_, loadErr := store.Load(fake.URL)
+			require.ErrorIs(t, loadErr, credential.ErrNotFound)
+		})
+	}
+}
+
+func TestLoginMenuFallsBackWhenTheBrowserCannotOpen(t *testing.T) {
+	fake, store := setupCLITest(t)
+	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+		input:         "\r",
+		inputTerminal: true,
+		errorTerminal: true,
+		openURL:       func(string) error { return errors.New("no browser available") },
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, diagnostics, "could not open a browser (cannot open a browser: no browser available); using the device code flow.")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+}
+
+func TestLoginRejectsTheRemovedDeviceFlag(t *testing.T) {
+	fake, store := setupCLITest(t)
+	out, _, err := runFakeCommand(t, fake, "auth", "login", "--device")
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(NormalizeError(err)))
+	require.Contains(t, err.Error(), "unknown flag: --device")
+	require.Empty(t, out)
 	_, loadErr := store.Load(fake.URL)
 	require.ErrorIs(t, loadErr, credential.ErrNotFound)
 }
@@ -542,104 +648,105 @@ func TestLoginReportsSeveralWorkspaceCandidates(t *testing.T) {
 	require.Empty(t, state.WorkspaceID)
 }
 
-func TestLoginPickerSelectsACandidate(t *testing.T) {
+func TestLoginWorkspaceMenuSelectsACandidate(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
 
-	out, diagnostics, err := runLoginPicker(t, fake, "2\n", true, true)
-	require.NoError(t, err)
-	require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", out)
-	require.Contains(t, diagnostics, "Select a workspace for this login:")
-	require.Contains(t, diagnostics, "  1) Alpha (ws-1, ready)")
-	require.Contains(t, diagnostics, "  2) Beta (ws-2, ready)")
-	require.Contains(t, diagnostics, "Selection [1-2, Enter to skip]: ")
-	require.NotContains(t, out, "Select a workspace")
+	result := runLoginMenu(t, fake, "\rj\r")
+	require.NoError(t, result.err)
+	require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", result.out)
+	require.Contains(t, result.diagnostics, "Which workspace do you want to use?")
+	require.Contains(t, result.diagnostics, "Alpha (ws-1, ready)")
+	require.Contains(t, result.diagnostics, "Beta (ws-2, ready)")
+	require.Contains(t, result.diagnostics, "Skip for now (select later with 'scope workspace use <id-or-name>')")
+	require.Contains(t, result.diagnostics, "✔ Beta (ws-2, ready)")
+	require.NotContains(t, result.out, "Which workspace")
+	require.Equal(t, 2, result.raw.restores)
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, "ws-2", state.WorkspaceID)
 }
 
-func TestLoginPickerRejectsAnInvalidEntry(t *testing.T) {
+func TestLoginWorkspaceMenuSelectsADigitShortcut(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
 
-	out, diagnostics, err := runLoginPicker(t, fake, "3\n1\n", true, true)
-	require.NoError(t, err)
-	require.Contains(t, diagnostics, "Enter a number between 1 and 2.")
-	require.Equal(t, 2, strings.Count(diagnostics, "Select a workspace for this login:"))
-	require.Contains(t, out, "Using workspace Alpha (ws-1).")
+	result := runLoginMenu(t, fake, "\r2\r")
+	require.NoError(t, result.err)
+	require.Contains(t, result.diagnostics, "✔ Beta (ws-2, ready)")
+	require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", result.out)
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
-	require.Equal(t, "ws-1", state.WorkspaceID)
+	require.Equal(t, "ws-2", state.WorkspaceID)
 }
 
-func TestLoginPickerSkipsOnAnEmptyLine(t *testing.T) {
+func TestLoginWorkspaceMenuSkipsTheLastOption(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
 
-	out, diagnostics, err := runLoginPicker(t, fake, "\n", true, true)
-	require.NoError(t, err)
-	require.Equal(t, "Logged in as dev@example.com.\n", out)
-	require.Contains(t, diagnostics, "Selection [1-2, Enter to skip]: ")
-	require.Contains(t, diagnostics, "no workspace is selected")
-	require.Contains(t, diagnostics, "scope workspace use <id-or-name>")
-	require.NotContains(t, out, "CURRENT")
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Empty(t, state.WorkspaceID)
-}
-
-func TestLoginPickerSkipsAtEOF(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-
-	out, diagnostics, err := runLoginPicker(t, fake, "", true, true)
-	require.NoError(t, err)
-	require.Equal(t, "Logged in as dev@example.com.\n", out)
-	require.Contains(t, diagnostics, "Selection [1-2, Enter to skip]: ")
-	require.Contains(t, diagnostics, "no workspace is selected")
-	require.NotContains(t, out, "CURRENT")
+	result := runLoginMenu(t, fake, "\rjj\r")
+	require.NoError(t, result.err)
+	require.Equal(t, "Logged in as dev@example.com.\n", result.out)
+	require.Contains(t, result.diagnostics, "✔ Skip for now")
+	require.Contains(t, result.diagnostics, "no workspace is selected")
+	require.Contains(t, result.diagnostics, "scope workspace use <id-or-name>")
+	require.NotContains(t, result.out, "CURRENT")
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Empty(t, state.WorkspaceID)
 }
 
-func TestLoginPickerRefusesADeletedWorkspaceAndAsksAgain(t *testing.T) {
+func TestLoginWorkspaceMenuSkipsWhenCancelled(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	result := runLoginMenu(t, fake, "\rq")
+	require.NoError(t, result.err)
+	require.Equal(t, "Logged in as dev@example.com.\n", result.out)
+	require.Contains(t, result.diagnostics, "no workspace is selected")
+	require.Contains(t, result.diagnostics, "scope workspace use <id-or-name>")
+	require.NotContains(t, result.out, "CURRENT")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginWorkspaceMenuRefusesADeletedWorkspaceAndAsksAgain(t *testing.T) {
 	fake, store := setupCLITest(t)
 	deleted := workspaceFixture("ws-1", "Alpha")
 	deletedAt := time.Now().Add(time.Hour)
 	deleted.ScheduledForDeletionAt = &deletedAt
 	fake.Workspaces = []controlplane.Workspace{deleted, workspaceFixture("ws-2", "Beta")}
 
-	out, diagnostics, err := runLoginPicker(t, fake, "1\n2\n", true, true)
-	require.NoError(t, err)
-	require.Contains(t, diagnostics, "  1) Alpha (ws-1, scheduled for deletion)")
-	require.Contains(t, diagnostics, "Workspace Alpha is scheduled for deletion; restore it in the Console or choose another.")
-	require.Equal(t, 2, strings.Count(diagnostics, "Select a workspace for this login:"))
-	require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", out)
+	result := runLoginMenu(t, fake, "\r\rj\r")
+	require.NoError(t, result.err)
+	require.Contains(t, result.diagnostics, "Alpha (ws-1, scheduled for deletion)")
+	require.Contains(t, result.diagnostics, "Workspace Alpha is scheduled for deletion; restore it in the Console or choose another.")
+	require.Equal(t, 3, strings.Count(result.diagnostics, "Which workspace do you want to use?"))
+	require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", result.out)
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, "ws-2", state.WorkspaceID)
 }
 
-func TestLoginPickerStaysQuietForJSON(t *testing.T) {
+func TestLoginWorkspaceMenuStaysQuietForJSON(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
 
-	out, diagnostics, err := runLoginPicker(t, fake, "2\n", true, true, "--format", "json")
-	require.NoError(t, err)
-	require.NotContains(t, out, "Select a workspace")
-	require.NotContains(t, diagnostics, "Select a workspace")
+	result := runLoginMenu(t, fake, "\r", "--format", "json")
+	require.NoError(t, result.err)
+	require.NotContains(t, result.out, "Which workspace")
+	require.NotContains(t, result.diagnostics, "Which workspace")
 	require.JSONEq(t, `{
 		"email": "dev@example.com",
 		"workspaces": [
 			{"id": "ws-1", "display_name": "Alpha", "status": "ready", "current": false},
 			{"id": "ws-2", "display_name": "Beta", "status": "ready", "current": false}
 		]
-	}`, out)
+	}`, result.out)
 }
 
-func TestLoginPickerRequiresBothTerminals(t *testing.T) {
+func TestLoginWorkspaceMenuRequiresBothTerminals(t *testing.T) {
 	for _, terminals := range []struct {
 		name          string
 		inputTerminal bool
@@ -652,9 +759,13 @@ func TestLoginPickerRequiresBothTerminals(t *testing.T) {
 			fake, store := setupCLITest(t)
 			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
 
-			out, diagnostics, err := runLoginPicker(t, fake, "2\n", terminals.inputTerminal, terminals.errorTerminal)
+			out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+				input:         "\r",
+				inputTerminal: terminals.inputTerminal,
+				errorTerminal: terminals.errorTerminal,
+			})
 			require.NoError(t, err)
-			require.NotContains(t, out+diagnostics, "Select a workspace")
+			require.NotContains(t, out+diagnostics, "Which workspace")
 			require.Contains(t, out, "Logged in as dev@example.com.")
 			require.Contains(t, out, "CURRENT")
 			require.Contains(t, out, "Alpha")
