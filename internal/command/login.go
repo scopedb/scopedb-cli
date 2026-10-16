@@ -204,7 +204,7 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 		a.warnAccountUnchecked()
 		return loginSelection{}, nil
 	}
-	if _, owned := workspaceByID(account.Workspaces, account.SelectedWorkspaceID); account.SelectedWorkspaceID != "" && !owned {
+	if workspace, owned := workspaceByID(account.Workspaces, account.SelectedWorkspaceID); account.SelectedWorkspaceID != "" && (!owned || workspace.ScheduledForDeletion()) {
 		if err := runtime.auth.ClearWorkspace(lookupCtx); err != nil {
 			return loginSelection{}, err
 		}
@@ -234,6 +234,12 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 		selection.kept = true
 	case len(account.Workspaces) == 1:
 		workspace := account.Workspaces[0]
+		if workspace.ScheduledForDeletion() {
+			// A workspace on its way out is not a selection worth making; the candidates list marks
+			// it and the hint explains how to get a usable one.
+			selection.candidates = account.Workspaces
+			break
+		}
 		if err := runtime.auth.SelectWorkspace(lookupCtx, workspace.ID); err != nil {
 			return loginSelection{}, err
 		}

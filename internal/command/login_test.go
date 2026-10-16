@@ -607,6 +607,36 @@ func TestLoginKeepsTheStoredSelectionWithoutWritingCredentials(t *testing.T) {
 	require.Equal(t, 1, counting.saves)
 }
 
+func TestLoginClearsASelectionScheduledForDeletion(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{
+		scheduledForDeletionFixture("ws-1", "Alpha"),
+		workspaceFixture("ws-2", "Beta"),
+	}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"email":"dev@example.com","workspaces":[{"id":"ws-1","display_name":"Alpha","status":"scheduled for deletion","current":false},{"id":"ws-2","display_name":"Beta","status":"ready","current":false}]}`, out)
+	require.Contains(t, diagnostics, "no workspace is selected")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginDoesNotSelectASingleWorkspaceScheduledForDeletion(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{scheduledForDeletionFixture("ws-1", "Alpha")}
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"email":"dev@example.com","workspaces":[{"id":"ws-1","display_name":"Alpha","status":"scheduled for deletion","current":false}]}`, out)
+	require.Contains(t, diagnostics, "no workspace is selected")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
 func TestLoginClearsAStaleSelection(t *testing.T) {
 	fake, store := setupCLITest(t)
 	saveStoredLogin(t, store, fake.URL, "ws-1")

@@ -326,6 +326,14 @@ func workspaceFixture(id, name string) controlplane.Workspace {
 	}
 }
 
+// scheduledForDeletionFixture marks a workspace as one the account is deleting.
+func scheduledForDeletionFixture(id, name string) controlplane.Workspace {
+	workspace := workspaceFixture(id, name)
+	deadline := time.Now().Add(time.Hour)
+	workspace.ScheduledForDeletionAt = &deadline
+	return workspace
+}
+
 // profileKeyFor mirrors the credential store's per-origin key so a test can seed the file directly.
 func profileKeyFor(controlURL string) string {
 	digest := sha256.Sum256([]byte(controlURL))
