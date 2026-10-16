@@ -18,8 +18,10 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -119,6 +121,45 @@ func TestChooseMenuRendersTheHighlightInPlace(t *testing.T) {
 	require.Contains(t, rendered, "\r\x1b[J✔ Two\r\n")
 	require.NotContains(t, rendered, "\x1b[2A")
 	require.Equal(t, strings.Count(rendered, "\r\n"), strings.Count(rendered, "\n"))
+}
+
+// A lone Escape is one byte with nothing after it. Waiting for a second byte would hang the menu
+// until the user pressed another key.
+func TestChooseMenuCancelsOnALoneEscape(t *testing.T) {
+	reader, writer := io.Pipe()
+	raw := &rawTerminal{}
+	instance := newApp(Dependencies{
+		In:              reader,
+		Out:             &bytes.Buffer{},
+		ErrOut:          &bytes.Buffer{},
+		IsInputTerminal: func() bool { return true },
+		IsErrorTerminal: func() bool { return true },
+		MakeRaw:         func() (func(), error) { return func() { raw.restores++ }, nil },
+	})
+	go func() { _, _ = writer.Write([]byte("\x1b")) }()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := instance.chooseMenu("Pick", []menuOption{{label: "One"}, {label: "Two"}})
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, errMenuCancelled)
+		require.Equal(t, 1, raw.restores)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the menu waited for a second byte after a lone Escape")
+	}
+}
+
+func TestChooseMenuAcceptsApplicationCursorKeys(t *testing.T) {
+	for input, want := range map[string]int{"\x1bOB\r": 1, "\x1bOA\x1bOB\r": 0, "\x1bOA\r": 1} {
+		raw := &rawTerminal{}
+		instance, _ := newMenuApp(input, raw, nil, true)
+		choice, err := instance.chooseMenu("Pick", []menuOption{{label: "One"}, {label: "Two"}})
+		require.NoError(t, err, input)
+		require.Equal(t, want, choice, input)
+	}
 }
 
 func TestChooseMenuCancels(t *testing.T) {

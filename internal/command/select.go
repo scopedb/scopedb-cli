@@ -120,22 +120,28 @@ func (a *app) readMenuKey() (string, error) {
 	case 0x03, 'q':
 		return "cancel", nil
 	case '\x1b':
+		// A lone Escape arrives as one byte and nothing follows it, so an empty buffer means cancel
+		// instead of a read that waits for a key the user never pressed. A key sequence arrives in
+		// one write and stays buffered, so the arrow keys are still recognized.
+		if a.input.Buffered() == 0 {
+			return "cancel", nil
+		}
 		next, err := a.input.ReadByte()
 		if err != nil {
 			return "cancel", nil
 		}
-		if next != '[' {
-			return "", nil
-		}
-		final, err := a.input.ReadByte()
-		if err != nil {
-			return "", nil
-		}
-		switch final {
-		case 'A':
-			return "up", nil
-		case 'B':
-			return "down", nil
+		switch next {
+		case '[', 'O': // "[" is the normal cursor sequence; "O" is application cursor keys mode
+			final, err := a.input.ReadByte()
+			if err != nil {
+				return "", nil
+			}
+			switch final {
+			case 'A':
+				return "up", nil
+			case 'B':
+				return "down", nil
+			}
 		}
 		return "", nil
 	case 'k':
