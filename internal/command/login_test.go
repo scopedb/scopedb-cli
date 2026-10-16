@@ -382,14 +382,228 @@ func TestLoginReportsWorkspaceSetup(t *testing.T) {
 	require.Contains(t, diagnostics, "scope console --open")
 }
 
-func TestLoginReportsTheWorkspacesTheAccountOwns(t *testing.T) {
-	fake, _ := setupCLITest(t)
+func TestLoginSelectsTheOnlyOwnedWorkspace(t *testing.T) {
+	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
 	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, out, "Using workspace Alpha (ws-1).")
 	require.NotContains(t, diagnostics, "no workspaces")
+	require.NotContains(t, diagnostics, "no workspace is selected")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-1", state.WorkspaceID)
+}
+
+func TestLoginSelectsTheRequestedWorkspaceByName(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--workspace", "beta")
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, out, "Using workspace Beta (ws-2).")
+	require.NotContains(t, diagnostics, "no workspace is selected")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-2", state.WorkspaceID)
+}
+
+func TestLoginSelectsTheRequestedWorkspaceByID(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, _, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--workspace", "ws-1")
+	require.NoError(t, err)
+	require.Contains(t, out, "Using workspace Alpha (ws-1).")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-1", state.WorkspaceID)
+}
+
+func TestLoginRequestedWorkspaceJSON(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--format", "json", "--workspace", "ws-2")
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"email": "dev@example.com",
+		"workspace": {"id": "ws-2", "display_name": "Beta", "status": "ready", "current": true}
+	}`, out)
+	require.NotContains(t, diagnostics, "no workspace is selected")
+}
+
+func TestLoginRejectsUnknownWorkspace(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+
+	out, _, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--workspace", "Gamma")
+	require.Equal(t, clierror.ExitNotFound, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), `workspace "Gamma" was not found`)
+	require.Empty(t, out)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginRejectsWorkspaceScheduledForDeletion(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	workspace := workspaceFixture("ws-1", "Alpha")
+	deletedAt := time.Now().Add(time.Hour)
+	workspace.ScheduledForDeletionAt = &deletedAt
+	fake.Workspaces = []controlplane.Workspace{workspace}
+
+	out, _, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--workspace", "Alpha")
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "scheduled for deletion")
+	require.Empty(t, out)
+}
+
+func TestLoginKeepsTheStoredSelection(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
+	require.NoError(t, err)
+	require.Contains(t, out, "Keeping workspace Alpha (ws-1).")
+	require.NotContains(t, diagnostics, "no workspace is selected")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-1", state.WorkspaceID)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+}
+
+func TestLoginKeepsTheStoredSelectionAsJSON(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"email": "dev@example.com",
+		"workspace": {"id": "ws-1", "display_name": "Alpha", "status": "ready", "current": true}
+	}`, out)
+}
+
+func TestLoginKeepsTheStoredSelectionWithoutWritingCredentials(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+	counting := &countingStore{Store: store}
+
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		Out: &out, ErrOut: &diagnostics,
+		Getenv:          func(string) string { return "" },
+		Sleep:           func(time.Duration) {},
+		OpenURL:         fake.authorizationURL(t),
+		CredentialStore: func(_ string, _ config.Paths) (credential.Store, error) { return counting, nil },
+	})
+	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"})
+	require.NoError(t, root.ExecuteContext(t.Context()))
+	require.Contains(t, out.String(), "Keeping workspace Alpha (ws-1).")
+	require.Equal(t, 1, counting.saves)
+}
+
+func TestLoginClearsAStaleSelection(t *testing.T) {
+	fake, store := setupCLITest(t)
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, diagnostics, "no workspaces")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginSelectsTheOnlyWorkspaceOfTheNewAccount(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
+	require.NoError(t, err)
+	require.Contains(t, out, "Using workspace Beta (ws-2).")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-2", state.WorkspaceID)
+}
+
+func TestLoginReportsSeveralWorkspaceCandidates(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, out, "CURRENT")
+	require.Contains(t, out, "Alpha")
+	require.Contains(t, out, "ws-2")
 	require.Contains(t, diagnostics, "no workspace is selected")
+	require.Contains(t, diagnostics, "scope workspace use <id-or-name>")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginWithoutWorkspacesReportsSetup(t *testing.T) {
+	fake, store := setupCLITest(t)
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage")
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.NotContains(t, out, "CURRENT")
+	require.Contains(t, diagnostics, "no workspaces")
+	require.Contains(t, diagnostics, "scope console --open")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginWorkspaceCandidatesAsJSON(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"email": "dev@example.com",
+		"workspaces": [
+			{"id": "ws-1", "display_name": "Alpha", "status": "ready", "current": false},
+			{"id": "ws-2", "display_name": "Beta", "status": "ready", "current": false}
+		]
+	}`, out)
+	require.Contains(t, diagnostics, "no workspace is selected")
+}
+
+func TestLoginOnlyWorkspaceAsJSON(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{
+		"email": "dev@example.com",
+		"workspace": {"id": "ws-1", "display_name": "Alpha", "status": "ready", "current": true}
+	}`, out)
+	require.NotContains(t, diagnostics, "no workspace is selected")
+}
+
+// countingStore records how many times credentials are written.
+type countingStore struct {
+	credential.Store
+	saves int
+}
+
+func (s *countingStore) Save(controlURL string, state credential.State) error {
+	s.saves++
+	return s.Store.Save(controlURL, state)
 }
 
 func TestLoginRollsBackFailedPersistence(t *testing.T) {

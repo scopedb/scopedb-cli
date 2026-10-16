@@ -17,6 +17,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -68,15 +69,7 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			workspaces := limitedResults(account.Workspaces, limit)
-			views := make([]workspaceListItem, 0, len(workspaces))
-			for _, workspace := range workspaces {
-				views = append(views, workspaceListItem{
-					ID:          workspace.ID,
-					DisplayName: workspace.DisplayName,
-					Status:      workspaceStatus(workspace),
-					Current:     workspace.ID == account.SelectedWorkspaceID,
-				})
-			}
+			views := workspaceListItems(workspaces, account.SelectedWorkspaceID)
 			// Choosing a workspace is what this command enables, so a missing
 			// selection needs no notice; only an empty account cannot be listed.
 			if len(account.Workspaces) == 0 {
@@ -87,15 +80,7 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, views)
 			}
-			t := newTable(a.out, "CURRENT", "NAME", "ID", "STATUS")
-			for index, workspace := range workspaces {
-				current := ""
-				if views[index].Current {
-					current = "*"
-				}
-				t.AppendRow(table.Row{current, workspace.Name(), workspace.ID, views[index].Status})
-			}
-			t.Render()
+			writeWorkspaceListTable(a.out, workspaces, account.SelectedWorkspaceID)
 			return nil
 		},
 	}
@@ -109,6 +94,37 @@ type workspaceListItem struct {
 	DisplayName *string `json:"display_name"`
 	Status      string  `json:"status"`
 	Current     bool    `json:"current"`
+}
+
+func workspaceListItemFor(workspace controlplane.Workspace, current bool) workspaceListItem {
+	return workspaceListItem{
+		ID:          workspace.ID,
+		DisplayName: workspace.DisplayName,
+		Status:      workspaceStatus(workspace),
+		Current:     current,
+	}
+}
+
+func workspaceListItems(workspaces []controlplane.Workspace, selectedID string) []workspaceListItem {
+	views := make([]workspaceListItem, 0, len(workspaces))
+	for _, workspace := range workspaces {
+		views = append(views, workspaceListItemFor(workspace, workspace.ID == selectedID))
+	}
+	return views
+}
+
+// writeWorkspaceListTable renders the shared workspace table, marking the selected workspace.
+func writeWorkspaceListTable(out io.Writer, workspaces []controlplane.Workspace, selectedID string) {
+	views := workspaceListItems(workspaces, selectedID)
+	t := newTable(out, "CURRENT", "NAME", "ID", "STATUS")
+	for index, workspace := range workspaces {
+		current := ""
+		if views[index].Current {
+			current = "*"
+		}
+		t.AppendRow(table.Row{current, workspace.Name(), workspace.ID, views[index].Status})
+	}
+	t.Render()
 }
 
 // workspaceStatus names the lifecycle state a selection has to respect.
@@ -359,6 +375,15 @@ func describePlacements(placements []controlplane.Placement) string {
 		values = append(values, placement.Provider+"/"+placement.Region)
 	}
 	return strings.Join(values, ", ")
+}
+
+func workspaceByID(workspaces []controlplane.Workspace, id string) (controlplane.Workspace, bool) {
+	for _, workspace := range workspaces {
+		if workspace.ID == id {
+			return workspace, true
+		}
+	}
+	return controlplane.Workspace{}, false
 }
 
 func resolveWorkspace(workspaces []controlplane.Workspace, value string) (controlplane.Workspace, error) {

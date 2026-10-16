@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -46,6 +47,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 	var openBrowser bool
 	var insecureStorage bool
 	var format string
+	var workspace string
 	command := &cobra.Command{
 		Use:   "login",
 		Short: "Log in through the browser",
@@ -107,27 +109,127 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return err
 			}
 
-			email := a.loginAccountEmail(cmd.Context(), runtime, tokens.AccessToken)
-			if format == structuredFormatJSON {
-				return writeJSON(a.out, loginResult{Email: email})
+			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, workspace)
+			if err != nil {
+				return NormalizeError(err)
 			}
-			if email != "" {
-				_, err = fmt.Fprintf(a.out, "Logged in as %s.\n", email)
+			if format == structuredFormatJSON {
+				return writeJSON(a.out, selection.result())
+			}
+			if selection.email != "" {
+				_, err = fmt.Fprintf(a.out, "Logged in as %s.\n", selection.email)
 			} else {
 				_, err = fmt.Fprintln(a.out, "Logged in.")
 			}
-			return NormalizeError(err)
+			if err != nil {
+				return NormalizeError(err)
+			}
+			return a.renderLoginSelection(selection)
 		},
 	}
 	command.Flags().BoolVar(&device, "device", false, "log in with a user code on another device instead of a loopback browser redirect")
 	command.Flags().BoolVar(&openBrowser, "open", false, "open the verification page in the browser with --device")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
+	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace for the login")
 	return command
 }
 
 type loginResult struct {
-	Email string `json:"email,omitempty"`
+	Email      string              `json:"email,omitempty"`
+	Workspace  *workspaceListItem  `json:"workspace,omitempty"`
+	Workspaces []workspaceListItem `json:"workspaces,omitempty"`
+}
+
+// loginSelection is what the login decided about the workspace, kept apart from rendering so the
+// JSON result and the text result can never disagree.
+type loginSelection struct {
+	email      string
+	workspace  *controlplane.Workspace
+	kept       bool
+	candidates []controlplane.Workspace
+}
+
+func (s loginSelection) result() loginResult {
+	result := loginResult{Email: s.email}
+	if s.workspace != nil {
+		view := workspaceListItemFor(*s.workspace, true)
+		result.Workspace = &view
+	}
+	if len(s.candidates) > 0 {
+		result.Workspaces = workspaceListItems(s.candidates, "")
+	}
+	return result
+}
+
+// selectLoginWorkspace decides which workspace the new login uses. The account lookup stays best
+// effort, because a login that is already stored must not fail when only the account check did.
+func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext, requested string) (loginSelection, error) {
+	lookupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	account, err := runtime.auth.Account(lookupCtx)
+	if err != nil {
+		a.warnAccountUnchecked()
+		return loginSelection{}, nil
+	}
+	if _, owned := workspaceByID(account.Workspaces, account.SelectedWorkspaceID); account.SelectedWorkspaceID != "" && !owned {
+		if err := runtime.auth.ClearWorkspace(lookupCtx); err != nil {
+			return loginSelection{}, err
+		}
+		account.SelectedWorkspaceID = ""
+	}
+
+	selection := loginSelection{email: account.User.Email}
+	switch {
+	case strings.TrimSpace(requested) != "":
+		workspace, err := resolveWorkspace(account.Workspaces, requested)
+		if err != nil {
+			return loginSelection{}, err
+		}
+		if workspace.ScheduledForDeletion() {
+			return loginSelection{}, clierror.WithHint(
+				clierror.New(clierror.ExitUsage, fmt.Sprintf("workspace %s (%s) is scheduled for deletion", workspace.Name(), workspace.ID)),
+				"restore it in the Console before selecting it",
+			)
+		}
+		if err := runtime.auth.SelectWorkspace(lookupCtx, workspace.ID); err != nil {
+			return loginSelection{}, err
+		}
+		selection.workspace = &workspace
+	case account.SelectedWorkspaceID != "":
+		workspace, _ := workspaceByID(account.Workspaces, account.SelectedWorkspaceID)
+		selection.workspace = &workspace
+		selection.kept = true
+	case len(account.Workspaces) == 1:
+		workspace := account.Workspaces[0]
+		if err := runtime.auth.SelectWorkspace(lookupCtx, workspace.ID); err != nil {
+			return loginSelection{}, err
+		}
+		selection.workspace = &workspace
+	case len(account.Workspaces) > 1:
+		selection.candidates = account.Workspaces
+	}
+	if selection.workspace == nil {
+		if err := a.writeWorkspaceSetup(account); err != nil {
+			return loginSelection{}, err
+		}
+	}
+	return selection, nil
+}
+
+func (a *app) renderLoginSelection(selection loginSelection) error {
+	if selection.workspace == nil {
+		if len(selection.candidates) > 0 {
+			writeWorkspaceListTable(a.out, selection.candidates, "")
+		}
+		return nil
+	}
+	verb := "Using"
+	if selection.kept {
+		verb = "Keeping"
+	}
+	_, err := fmt.Fprintf(a.out, "%s workspace %s (%s).\n", verb, selection.workspace.Name(), selection.workspace.ID)
+	return NormalizeError(err)
 }
 
 // loopbackLogin runs Authorization Code with PKCE against a loopback redirect.
@@ -361,29 +463,8 @@ func describeLifetime(lifetime time.Duration) string {
 	}
 }
 
-// loginAccountEmail reports the account the new login belongs to, and tells the user what still
-// prevents the CLI from using a workspace. A failed lookup must not undo a login that is already
-// stored, so its warning is best effort.
-func (a *app) loginAccountEmail(ctx context.Context, runtime *runtimeContext, token string) string {
-	lookupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	user, err := runtime.control.GetUser(lookupCtx, token)
-	if err != nil {
-		return a.warnAccountUnchecked()
-	}
-	workspaces, err := runtime.control.ListWorkspaces(lookupCtx, token)
-	if err != nil {
-		return a.warnAccountUnchecked()
-	}
-	if err := a.writeWorkspaceSetup(auth.Account{User: user, Workspaces: workspaces}); err != nil {
-		return ""
-	}
-	return user.Email
-}
-
-func (a *app) warnAccountUnchecked() string {
+func (a *app) warnAccountUnchecked() {
 	_, _ = fmt.Fprintln(a.errOut, "Could not check account status. Run 'scope auth status' to retry.")
-	return ""
 }
 
 func describeAuthorizationError(callback oauth.Callback) string {
