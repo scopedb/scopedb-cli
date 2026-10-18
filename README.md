@@ -9,7 +9,7 @@
 
 ### Prebuilt binaries
 
-Download the release archive for your platform from [GitHub Releases](https://github.com/scopedb/scopedb-cli/releases):
+Download the most recently published release, including release candidates, from [GitHub Releases](https://github.com/scopedb/scopedb-cli/releases). GitHub's `/releases/latest` shortcut excludes prereleases. Choose your platform's archive under **Assets**; `<version>` is the release tag without its leading `v`:
 
 | Platform               | Archive pattern                                  |
 | ---------------------- | ------------------------------------------------ |
@@ -40,7 +40,11 @@ With Go 1.27 or newer:
 go install github.com/scopedb/scopedb-cli/cmd/scope@latest
 ```
 
+Go's `@latest` selects the highest release version, or the highest prerelease when no release version exists. It currently selects the latest public preview and does not follow `main`. Once a release version exists, use GitHub Releases to opt into a newer prerelease. Run the same command again to update, and ensure Go's binary directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) is on your `PATH`.
+
 ## Get started
+
+This README and [connection guide](docs/connect.md) describe the development branch. For the latest published binary, follow the [published CLI guide](https://www.scopedb.io/docs/developer/scopedb-cli): current releases use `scope login`, `scope status`, `scope logout`, `scope workspace show`, and `scope open`. The renamed `auth`, `workspace get`, and `console` commands below are unreleased and require a development build. Use `scope --help` to check your installed commands.
 
 Sign in to ScopeDB Cloud and run a query:
 

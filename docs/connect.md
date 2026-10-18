@@ -1,5 +1,7 @@
 # Connect the CLI and your application
 
+This guide describes the development branch. If you installed a release archive or used `go install ...@latest`, follow the [published CLI guide](https://www.scopedb.io/docs/developer/scopedb-cli) for the commands available in the latest release. Run `scope --help` to check your installed commands.
+
 Use `scope auth login` for terminal exploration. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring; SDKs do not read it.
 
 ## Verify your login
