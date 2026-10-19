@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -43,20 +42,19 @@ const (
 
 func (a *app) newLoginCommand() *cobra.Command {
 	var insecureStorage bool
-	var format string
-	var workspace string
-	var device bool
 	command := &cobra.Command{
 		Use:   "login",
-		Short: "Log in through the browser",
+		Short: "Log in through the ScopeDB Console",
 		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
-			"The default flow opens a browser and receives the authorization on a loopback address.\n" +
-			"Use --device on a machine without a browser, such as an SSH session or a container, to approve a code\n" +
-			"from another device; the device flow prints a link and a code and never opens a browser.",
+			"The login asks how to sign in: approve in the browser, or approve a device code from another device.\n" +
+			"Device login prints a link and a code and never opens a browser.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := validateTextFormat(format); err != nil {
-				return err
+			if !a.isInteractive() {
+				return clierror.WithHint(
+					clierror.New(clierror.ExitUsage, "scope auth login requires an interactive terminal"),
+					"run it from a terminal, or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY for non-interactive access",
+				)
 			}
 			paths, cfg, err := a.loadConfig(cmd)
 			if err != nil {
@@ -86,7 +84,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 
-			tokens, err := a.authorizeLogin(cmd.Context(), client, format, device)
+			tokens, err := a.authorizeLogin(cmd.Context(), client)
 			if err != nil {
 				return NormalizeError(loginMenuError(err, false))
 			}
@@ -94,12 +92,9 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return err
 			}
 
-			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, workspace, format)
+			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime)
 			if err != nil {
 				return NormalizeError(loginMenuError(err, true))
-			}
-			if format == structuredFormatJSON {
-				return writeJSON(a.out, selection.result())
 			}
 			if selection.email != "" {
 				_, err = fmt.Fprintf(a.out, "Logged in as %s.\n", selection.email)
@@ -113,9 +108,6 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
-	command.Flags().BoolVar(&device, "device", false, "approve a device code instead of opening a browser")
-	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
-	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace for the login")
 	return command
 }
 
@@ -144,69 +136,52 @@ func loginMenuError(err error, credentialsSaved bool) error {
 	}
 }
 
-func (a *app) authorizeLogin(ctx context.Context, client *controlplane.OAuth, format string, device bool) (controlplane.TokenSet, error) {
-	if device {
-		return a.deviceLogin(ctx, client)
+func (a *app) authorizeLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
+	deviceFirst := a.browserlessReason() != ""
+	options := []menuOption{
+		{label: "Sign in with your browser", note: "recommended"},
+		{label: "Sign in with a device code"},
 	}
-	if reason := a.browserlessReason(); reason != "" {
-		return controlplane.TokenSet{}, clierror.WithHint(
-			clierror.New(clierror.ExitUsage, reason+"; browser login cannot reach this machine"),
-			"run 'scope auth login --device'",
-		)
+	if deviceFirst {
+		options = []menuOption{
+			{label: "Sign in with a device code", note: "recommended"},
+			{label: "Sign in with your browser"},
+		}
 	}
-	if a.canPrompt(format) {
-		choice, err := a.chooseMenu("How do you want to sign in?", []menuOption{
-			{label: "Sign in with your browser", note: "recommended"},
-			{label: "Sign in with a device code"},
-		})
-		if err != nil {
-			return controlplane.TokenSet{}, err
-		}
-		if choice == 0 {
-			return a.loopbackLogin(ctx, client)
-		}
+	choice, err := a.chooseMenu("How do you want to sign in?", options)
+	if err != nil {
+		return controlplane.TokenSet{}, err
+	}
+	if deviceFirst == (choice == 0) {
 		return a.deviceLogin(ctx, client)
 	}
 	return a.loopbackLogin(ctx, client)
 }
 
-type loginResult struct {
-	Email      string              `json:"email,omitempty"`
-	Workspace  *workspaceListItem  `json:"workspace,omitempty"`
-	Workspaces []workspaceListItem `json:"workspaces,omitempty"`
-}
-
 type loginSelection struct {
-	email      string
-	workspace  *controlplane.Workspace
-	kept       bool
-	candidates []controlplane.Workspace
-}
-
-func (s loginSelection) result() loginResult {
-	result := loginResult{Email: s.email}
-	if s.workspace != nil {
-		view := workspaceListItemFor(*s.workspace, true)
-		result.Workspace = &view
-	}
-	if len(s.candidates) > 0 {
-		result.Workspaces = workspaceListItems(s.candidates, "")
-	}
-	return result
+	email     string
+	workspace *controlplane.Workspace
+	kept      bool
 }
 
 // selectLoginWorkspace decides which workspace the new login uses. The account lookup stays best
 // effort, because a login that is already stored must not fail when only the account check did.
-func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext, requested, format string) (loginSelection, error) {
-	lookupCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	account, err := runtime.auth.Account(lookupCtx)
+func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext) (loginSelection, error) {
+	accountCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	account, err := runtime.auth.Account(accountCtx)
+	cancel()
 	if err != nil {
+		if ctx.Err() != nil {
+			return loginSelection{}, ctx.Err()
+		}
+		if errors.Is(err, context.Canceled) {
+			return loginSelection{}, err
+		}
 		a.warnAccountUnchecked()
 		return loginSelection{}, nil
 	}
 	if workspace, owned := workspaceByID(account.Workspaces, account.SelectedWorkspaceID); account.SelectedWorkspaceID != "" && (!owned || workspace.ScheduledForDeletion()) {
-		if err := runtime.auth.ClearWorkspace(lookupCtx); err != nil {
+		if err := runtime.auth.ClearWorkspace(ctx); err != nil {
 			return loginSelection{}, err
 		}
 		account.SelectedWorkspaceID = ""
@@ -214,21 +189,6 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 
 	selection := loginSelection{email: account.User.Email}
 	switch {
-	case strings.TrimSpace(requested) != "":
-		workspace, err := resolveWorkspace(account.Workspaces, requested)
-		if err != nil {
-			return loginSelection{}, err
-		}
-		if workspace.ScheduledForDeletion() {
-			return loginSelection{}, clierror.WithHint(
-				clierror.New(clierror.ExitUsage, fmt.Sprintf("workspace %s (%s) is scheduled for deletion", workspace.Name(), workspace.ID)),
-				"restore it in the Console before selecting it",
-			)
-		}
-		if err := runtime.auth.SelectWorkspace(lookupCtx, workspace.ID); err != nil {
-			return loginSelection{}, err
-		}
-		selection.workspace = &workspace
 	case account.SelectedWorkspaceID != "":
 		workspace, _ := workspaceByID(account.Workspaces, account.SelectedWorkspaceID)
 		selection.workspace = &workspace
@@ -236,25 +196,20 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 	case len(account.Workspaces) == 1:
 		workspace := account.Workspaces[0]
 		if workspace.ScheduledForDeletion() {
-			selection.candidates = account.Workspaces
 			break
 		}
-		if err := runtime.auth.SelectWorkspace(lookupCtx, workspace.ID); err != nil {
+		if err := runtime.auth.SelectWorkspace(ctx, workspace.ID); err != nil {
 			return loginSelection{}, err
 		}
 		selection.workspace = &workspace
 	case len(account.Workspaces) > 1:
-		if a.canPrompt(format) {
-			picked, err := a.promptLoginWorkspace(lookupCtx, runtime, account)
-			if err != nil {
-				return loginSelection{}, err
-			}
-			if picked != nil {
-				selection.workspace = picked
-				return selection, nil
-			}
-		} else {
-			selection.candidates = account.Workspaces
+		picked, err := a.promptLoginWorkspace(ctx, runtime, account)
+		if err != nil {
+			return loginSelection{}, err
+		}
+		if picked != nil {
+			selection.workspace = picked
+			return selection, nil
 		}
 	}
 	if selection.workspace == nil {
@@ -307,15 +262,8 @@ func (a *app) promptLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 	}
 }
 
-func (a *app) canPrompt(format string) bool {
-	return format != structuredFormatJSON && a.isInteractive()
-}
-
 func (a *app) renderLoginSelection(selection loginSelection) error {
 	if selection.workspace == nil {
-		if len(selection.candidates) > 0 {
-			writeWorkspaceListTable(a.out, selection.candidates, "")
-		}
 		return nil
 	}
 	verb := "Using"

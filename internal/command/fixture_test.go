@@ -454,6 +454,24 @@ func runLoginScenario(t *testing.T, fake *fakeControlPlane, scenario loginScenar
 	return out.String(), diagnostics.String(), err
 }
 
+func runInteractiveCommand(t *testing.T, args ...string) (string, string, error) {
+	t.Helper()
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		In:              strings.NewReader("\r"),
+		Out:             &out,
+		ErrOut:          &diagnostics,
+		Getenv:          func(string) string { return "" },
+		Sleep:           func(time.Duration) {},
+		IsInputTerminal: func() bool { return true },
+		IsErrorTerminal: func() bool { return true },
+		MakeRaw:         func() (func(), error) { return func() {}, nil },
+	})
+	root.SetArgs(args)
+	err := root.ExecuteContext(t.Context())
+	return out.String(), diagnostics.String(), err
+}
+
 func runLoginMenu(t *testing.T, fake *fakeControlPlane, input string, args ...string) loginMenuResult {
 	t.Helper()
 	raw := &rawTerminal{}
@@ -483,6 +501,23 @@ func sshEnvironment(name string) string {
 
 func runSSHLogin(t *testing.T, fake *fakeControlPlane, flags ...string) (string, string, error) {
 	t.Helper()
-	args := append([]string{"auth", "login", "--insecure-storage", "--device"}, flags...)
-	return runLoginScenario(t, fake, loginScenario{getenv: sshEnvironment, args: args})
+	args := append([]string{"auth", "login", "--insecure-storage"}, flags...)
+	return runLoginScenario(t, fake, loginScenario{
+		input:         "\r",
+		inputTerminal: true,
+		errorTerminal: true,
+		getenv:        sshEnvironment,
+		args:          args,
+	})
+}
+
+func runInteractiveLogin(t *testing.T, fake *fakeControlPlane, input string, flags ...string) (string, string, error) {
+	t.Helper()
+	args := append([]string{"auth", "login", "--insecure-storage"}, flags...)
+	return runLoginScenario(t, fake, loginScenario{
+		input:         input,
+		inputTerminal: true,
+		errorTerminal: true,
+		args:          args,
+	})
 }

@@ -30,6 +30,8 @@ func workspaceSetupError(err error) *clierror.Error {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "run 'scope workspace create' to create your first workspace, then 'scope workspace list' and 'scope workspace use <id-or-name>'")
 	case errors.Is(err, auth.ErrNoWorkspaceSelected):
 		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "run 'scope workspace list' and 'scope workspace use <id-or-name>'")
+	case errors.Is(err, auth.ErrWorkspaceUnavailable):
+		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "run 'scope workspace list' and 'scope workspace use <id-or-name>', or restore it in the Console")
 	default:
 		return nil
 	}

@@ -33,6 +33,7 @@ var (
 	ErrApprovalRequired      = errors.New("account is awaiting approval")
 	ErrNoWorkspaces          = errors.New("account has no workspaces")
 	ErrNoWorkspaceSelected   = errors.New("no workspace is selected")
+	ErrWorkspaceUnavailable  = errors.New("selected workspace is no longer available")
 	ErrLoginExpired          = errors.New("login is no longer valid")
 	ErrCredentialsUnreadable = errors.New("existing credentials could not be read")
 )
@@ -407,7 +408,16 @@ func RequireWorkspace(account Account) error {
 		}
 		return ErrNoWorkspaceSelected
 	}
-	return nil
+	for _, workspace := range account.Workspaces {
+		if workspace.ID != account.SelectedWorkspaceID {
+			continue
+		}
+		if workspace.ScheduledForDeletion() {
+			return ErrWorkspaceUnavailable
+		}
+		return nil
+	}
+	return ErrWorkspaceUnavailable
 }
 
 // refresh rotates the stored refresh token under an exclusive file lock, because several CLI

@@ -278,3 +278,21 @@ func (r *failingReader) Read([]byte) (int, error) { return 0, errors.New("read f
 func newFailingReader() *bufio.Reader {
 	return bufio.NewReader(&failingReader{})
 }
+
+func TestChooseMenuConsumesCSIParameters(t *testing.T) {
+	raw := &rawTerminal{}
+	instance, _ := newMenuApp("\x1b[1;5A\r", raw, nil, true)
+	choice, err := instance.chooseMenu("Pick", []menuOption{{label: "One"}, {label: "Two"}, {label: "Three"}})
+	require.NoError(t, err)
+	require.Equal(t, 2, choice)
+}
+
+func TestChooseMenuIgnoresCSINonArrowSequence(t *testing.T) {
+	raw := &rawTerminal{}
+	instance, _ := newMenuApp("\x1b[15~\r", raw, nil, true)
+	choice, err := instance.chooseMenu("Pick", []menuOption{
+		{label: "One"}, {label: "Two"}, {label: "Three"}, {label: "Four"}, {label: "Five"}, {label: "Six"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, choice)
+}

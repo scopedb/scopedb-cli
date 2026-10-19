@@ -356,6 +356,8 @@ func TestRequireWorkspace(t *testing.T) {
 		{"no workspaces", Account{User: controlplane.User{Status: "active"}}, ErrNoWorkspaces},
 		{"no selection", Account{User: controlplane.User{Status: "active"}, Workspaces: []controlplane.Workspace{{ID: "ws-1"}}}, ErrNoWorkspaceSelected},
 		{"selected", Account{User: controlplane.User{Status: "active"}, Workspaces: []controlplane.Workspace{{ID: "ws-1"}}, SelectedWorkspaceID: "ws-1"}, nil},
+		{"selection not owned", Account{User: controlplane.User{Status: "active"}, Workspaces: []controlplane.Workspace{{ID: "ws-2"}}, SelectedWorkspaceID: "ws-1"}, ErrWorkspaceUnavailable},
+		{"selection scheduled", Account{User: controlplane.User{Status: "active"}, Workspaces: []controlplane.Workspace{{ID: "ws-1", ScheduledForDeletionAt: func() *time.Time { now := time.Now().Add(time.Hour); return &now }()}}, SelectedWorkspaceID: "ws-1"}, ErrWorkspaceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.ErrorIs(t, RequireWorkspace(tc.account), tc.want)
@@ -416,7 +418,8 @@ func TestSaveDataTokenPreservesConcurrentSelection(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	control := &fakeControl{
-		user: controlplane.User{Status: "active"},
+		user:       controlplane.User{Status: "active"},
+		workspaces: []controlplane.Workspace{{ID: "ws-1"}},
 		details: controlplane.WorkspaceDetails{
 			Workspace:    controlplane.Workspace{ID: "ws-1"},
 			Connection:   controlplane.Connection{APIBaseURL: "https://data.example.com"},
@@ -456,7 +459,8 @@ func TestResolveDataAccessUsesCachedToken(t *testing.T) {
 	state.DataTokenExpiresAt = now.Add(time.Hour)
 	store := &memoryStore{present: true, state: state}
 	control := &fakeControl{
-		user: controlplane.User{Status: "active"},
+		user:       controlplane.User{Status: "active"},
+		workspaces: []controlplane.Workspace{{ID: "ws-1"}},
 		details: controlplane.WorkspaceDetails{
 			Workspace:    controlplane.Workspace{ID: "ws-1"},
 			Connection:   controlplane.Connection{APIBaseURL: "https://data.example.com"},
@@ -484,7 +488,8 @@ func TestResolveDataAccessExchangesExpiringToken(t *testing.T) {
 	state.DataTokenExpiresAt = now.Add(10 * time.Second)
 	store := &memoryStore{present: true, state: state}
 	control := &fakeControl{
-		user: controlplane.User{Status: "active"},
+		user:       controlplane.User{Status: "active"},
+		workspaces: []controlplane.Workspace{{ID: "ws-1"}},
 		details: controlplane.WorkspaceDetails{
 			Connection:   controlplane.Connection{APIBaseURL: "https://data.example.com"},
 			Provisioning: controlplane.Provisioning{Status: "ready"},

@@ -15,10 +15,13 @@
 package command
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/spf13/cobra"
 )
 
@@ -63,6 +66,15 @@ func (a *app) newStatusCommand() *cobra.Command {
 			account, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
+			}
+			if account.SelectedWorkspaceID != "" && errors.Is(auth.RequireWorkspace(account), auth.ErrWorkspaceUnavailable) {
+				if err := runtime.auth.ClearWorkspace(cmd.Context()); err != nil {
+					return NormalizeError(err)
+				}
+				account.SelectedWorkspaceID = ""
+				if _, err := fmt.Fprintln(a.errOut, "The selected workspace is no longer available; no workspace is selected."); err != nil {
+					return NormalizeError(err)
+				}
 			}
 			state, err := runtime.auth.LoadAccess(cmd.Context())
 			if err != nil {

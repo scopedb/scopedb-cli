@@ -233,7 +233,8 @@ func (o *OAuth) postForm(ctx context.Context, endpoint string, form url.Values, 
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		return &OAuthError{Err: err}
+		// A transport failure is temporary. The refresh logic also relies on Status 0 to back off.
+		return &OAuthError{Retryable: true, Err: err}
 	}
 	defer func() { _ = response.Body.Close() }()
 

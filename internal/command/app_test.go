@@ -15,12 +15,14 @@
 package command
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
+	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,4 +38,9 @@ func TestExpiredLoginReportsTheRemediationOnce(t *testing.T) {
 	require.ErrorIs(t, err, auth.ErrLoginExpired)
 	require.Equal(t, 1, strings.Count(clierror.Compact(err), "run 'scope auth login'"))
 	require.Equal(t, 1, strings.Count(clierror.Render(err), "run 'scope auth login'"))
+}
+
+func TestOAuthTransportFailureIsTemporary(t *testing.T) {
+	err := NormalizeError(&controlplane.OAuthError{Retryable: true, Err: errors.New("connection refused")})
+	require.Equal(t, clierror.ExitTemporary, clierror.ExitCode(err))
 }

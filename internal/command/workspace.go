@@ -289,7 +289,7 @@ func (a *app) newWorkspaceCreateCommand() *cobra.Command {
 		Use:   "create",
 		Short: "Create a workspace",
 		Long: "Create a workspace owned by your account.\n" +
-			"Without --provider and --region the CLI uses the deployment's default placement.",
+			"Set both --provider and --region, or neither to use the deployment's default placement.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTextFormat(format); err != nil {
@@ -301,17 +301,19 @@ func (a *app) newWorkspaceCreateCommand() *cobra.Command {
 			}
 			provider = strings.TrimSpace(provider)
 			region = strings.TrimSpace(region)
-			if provider == "" || region == "" {
+			switch {
+			case provider == "" && region == "":
 				placement, err := runtime.defaultPlacement(cmd.Context())
 				if err != nil {
 					return NormalizeError(err)
 				}
-				if provider == "" {
-					provider = placement.Provider
-				}
-				if region == "" {
-					region = placement.Region
-				}
+				provider, region = placement.Provider, placement.Region
+			case provider == "" || region == "":
+				return usageError("--provider and --region must be set together")
+			}
+			account, err := runtime.auth.Account(cmd.Context())
+			if err != nil {
+				return NormalizeError(err)
 			}
 			state, err := runtime.auth.LoadAccess(cmd.Context())
 			if err != nil {
@@ -329,6 +331,11 @@ func (a *app) newWorkspaceCreateCommand() *cobra.Command {
 				return NormalizeError(fmt.Errorf("ScopeDB did not return the created workspace"))
 			}
 			selected := state.WorkspaceID == ""
+			if !selected {
+				if workspace, ok := workspaceByID(account.Workspaces, state.WorkspaceID); !ok || workspace.ScheduledForDeletion() {
+					selected = true
+				}
+			}
 			if selected {
 				if err := runtime.auth.SelectWorkspace(cmd.Context(), created.WorkspaceID); err != nil {
 					return NormalizeError(err)
@@ -346,8 +353,8 @@ func (a *app) newWorkspaceCreateCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&name, "name", "", "display name for the workspace")
-	command.Flags().StringVar(&provider, "provider", "", "cloud provider; defaults to the deployment default")
-	command.Flags().StringVar(&region, "region", "", "cloud region; defaults to the deployment default")
+	command.Flags().StringVar(&provider, "provider", "", "cloud provider; set with --region or omit both")
+	command.Flags().StringVar(&region, "region", "", "cloud region; set with --provider or omit both")
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	return command
 }

@@ -136,17 +136,14 @@ func (a *app) readMenuKey() (string, error) {
 			return "cancel", nil
 		}
 		switch next {
-		case '[', 'O': // "[" is the normal cursor sequence; "O" is application cursor keys mode
+		case '[':
+			return a.readCSIKey()
+		case 'O': // application cursor keys mode, a three-byte sequence
 			final, err := a.input.ReadByte()
 			if err != nil {
 				return "", nil
 			}
-			switch final {
-			case 'A':
-				return "up", nil
-			case 'B':
-				return "down", nil
-			}
+			return arrowKey(final), nil
 		}
 		return "", nil
 	case 'k':
@@ -161,6 +158,31 @@ func (a *app) readMenuKey() (string, error) {
 // renderMenuFrame draws the question and options, and leaves the cursor on the question line with the
 // trailing cursorUp. Every frame starts from that same position, so a redraw replaces the block
 // instead of drawing a second one above it.
+// readCSIKey consumes a full control sequence, including parameters and intermediates, so a suffix
+// such as ";5A" cannot become a digit hotkey on the next read.
+func (a *app) readCSIKey() (string, error) {
+	for {
+		value, err := a.input.ReadByte()
+		if err != nil {
+			return "", err
+		}
+		if value >= 0x40 && value <= 0x7e {
+			return arrowKey(value), nil
+		}
+	}
+}
+
+func arrowKey(value byte) string {
+	switch value {
+	case 'A':
+		return "up"
+	case 'B':
+		return "down"
+	default:
+		return ""
+	}
+}
+
 func (a *app) renderMenuFrame(question string, options []menuOption, selected int, hint string) error {
 	var frame strings.Builder
 	frame.WriteString(clearLine)

@@ -76,6 +76,28 @@ func TestWorkspaceCreateSelectsWhenNothingIsSelectedAsJSON(t *testing.T) {
 	require.Equal(t, "ws-new", state.WorkspaceID)
 }
 
+func TestWorkspaceCreateSelectsWhenExistingIsUnavailable(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws", "--region", "us-east-1")
+	require.NoError(t, err)
+	require.Contains(t, out, "Using workspace ws-new.")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-new", state.WorkspaceID)
+}
+
+func TestWorkspaceCreateRejectsPartialPlacement(t *testing.T) {
+	fake, store := setupCLITest(t)
+	saveStoredLogin(t, store, fake.URL, "")
+
+	_, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws")
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "--provider and --region must be set together")
+}
+
 func TestWorkspaceCreateKeepsAnExistingSelection(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
@@ -131,6 +153,22 @@ func TestStatusReportsOAuthLogin(t *testing.T) {
 	require.Equal(t, "ws-1", view.WorkspaceID)
 	require.Equal(t, "https://data.example.com", view.Endpoint)
 	require.NotEmpty(t, view.LoginExpiresAt)
+}
+
+func TestStatusClearsUnavailableWorkspace(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, diagnostics, err := runCommand(t, "--control-url", fake.URL, "auth", "status", "--format", "json")
+	require.NoError(t, err)
+	var view statusView
+	require.NoError(t, json.Unmarshal([]byte(out), &view))
+	require.Empty(t, view.WorkspaceID)
+	require.Contains(t, diagnostics, "no longer available")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
 }
 
 func TestStatusGuidesPendingAccount(t *testing.T) {

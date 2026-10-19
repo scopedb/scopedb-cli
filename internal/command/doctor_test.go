@@ -275,3 +275,15 @@ func TestDoctorGuidesNewUsers(t *testing.T) {
 		require.Contains(t, out, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 	}
 }
+
+func TestDoctorWarnsUnavailableWorkspace(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runCommand(t, "--control-url", fake.URL, "doctor", "--format", "json")
+	require.NoError(t, err)
+	require.Contains(t, out, "selected workspace is no longer available")
+	require.Contains(t, out, `"status": "warn"`)
+	require.Zero(t, fake.ExchangeCalls)
+}
