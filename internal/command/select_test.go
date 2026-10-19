@@ -158,16 +158,17 @@ func TestChooseMenuCancels(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		input string
+		want  error
 	}{
-		{"q", "q"},
-		{"Ctrl+C", "\x03"},
-		{"lone escape", "\x1b"},
+		{"q", "q", errMenuCancelled},
+		{"Ctrl+C", "\x03", errMenuInterrupted},
+		{"lone escape", "\x1b", errMenuCancelled},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			raw := &rawTerminal{}
 			instance, _ := newMenuApp(tc.input, raw, nil, true)
 			_, err := instance.chooseMenu("Pick", []menuOption{{label: "One"}, {label: "Two"}})
-			require.ErrorIs(t, err, errMenuCancelled)
+			require.ErrorIs(t, err, tc.want)
 			require.Equal(t, 1, raw.restores)
 		})
 	}

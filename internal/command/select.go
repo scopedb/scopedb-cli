@@ -22,7 +22,10 @@ import (
 	"strings"
 )
 
-var errMenuCancelled = errors.New("menu cancelled")
+var (
+	errMenuCancelled   = errors.New("menu cancelled")
+	errMenuInterrupted = errors.New("menu interrupted")
+)
 
 type menuOption struct {
 	label string
@@ -43,34 +46,41 @@ const (
 	// rawNewline ends a line while the terminal is in raw mode, where the driver no longer turns a
 	// line feed into carriage return plus line feed.
 	rawNewline = "\r\n"
-
-	menuHint = "↑/↓ to navigate · enter to select · q to cancel"
 )
 
+func menuHint(quit string) string {
+	return "↑/↓ to navigate · enter to select · q to " + quit
+}
+
 func (a *app) chooseMenu(question string, options []menuOption) (int, error) {
+	return a.chooseMenuWith(question, options, "cancel")
+}
+
+func (a *app) chooseMenuWith(question string, options []menuOption, quit string) (int, error) {
 	if len(options) == 0 {
 		return 0, errors.New("menu needs at least one option")
 	}
 	if a.isInputTerminal != nil && a.isInputTerminal() {
 		restore, err := a.makeRaw()
 		if err == nil {
-			return a.chooseMenuRaw(question, options, restore)
+			return a.chooseMenuRaw(question, options, restore, quit)
 		}
 	}
-	return a.chooseMenuNumbered(question, options)
+	return a.chooseMenuNumbered(question, options, quit)
 }
 
-func (a *app) chooseMenuRaw(question string, options []menuOption, restore func()) (int, error) {
+func (a *app) chooseMenuRaw(question string, options []menuOption, restore func(), quit string) (int, error) {
 	selected := 0
 	defer restore()
+	hint := menuHint(quit)
 
-	if err := a.renderMenuFrame(question, options, selected); err != nil {
+	if err := a.renderMenuFrame(question, options, selected, hint); err != nil {
 		return 0, err
 	}
 	for {
 		key, err := a.readMenuKey()
 		if err != nil {
-			_ = a.eraseMenu(len(options))
+			_ = a.eraseMenu()
 			return 0, err
 		}
 		switch key {
@@ -79,7 +89,7 @@ func (a *app) chooseMenuRaw(question string, options []menuOption, restore func(
 		case "down":
 			selected = (selected + 1) % len(options)
 		case "enter":
-			if err := a.eraseMenu(len(options)); err != nil {
+			if err := a.eraseMenu(); err != nil {
 				return 0, err
 			}
 			if _, err := fmt.Fprintf(a.errOut, "✔ %s%s", options[selected].label, rawNewline); err != nil {
@@ -87,7 +97,7 @@ func (a *app) chooseMenuRaw(question string, options []menuOption, restore func(
 			}
 			return selected, nil
 		case "cancel":
-			if err := a.eraseMenu(len(options)); err != nil {
+			if err := a.eraseMenu(); err != nil {
 				return 0, err
 			}
 			return 0, errMenuCancelled
@@ -96,7 +106,7 @@ func (a *app) chooseMenuRaw(question string, options []menuOption, restore func(
 				selected = digit
 			}
 		}
-		if err := a.renderMenuFrame(question, options, selected); err != nil {
+		if err := a.renderMenuFrame(question, options, selected, hint); err != nil {
 			return 0, err
 		}
 	}
@@ -110,7 +120,9 @@ func (a *app) readMenuKey() (string, error) {
 	switch key {
 	case '\r', '\n':
 		return "enter", nil
-	case 0x03, 'q':
+	case 0x03:
+		return "", errMenuInterrupted
+	case 'q':
 		return "cancel", nil
 	case '\x1b':
 		// A lone Escape arrives as one byte and nothing follows it, so an empty buffer means cancel
@@ -149,7 +161,7 @@ func (a *app) readMenuKey() (string, error) {
 // renderMenuFrame draws the question and options, and leaves the cursor on the question line with the
 // trailing cursorUp. Every frame starts from that same position, so a redraw replaces the block
 // instead of drawing a second one above it.
-func (a *app) renderMenuFrame(question string, options []menuOption, selected int) error {
+func (a *app) renderMenuFrame(question string, options []menuOption, selected int, hint string) error {
 	var frame strings.Builder
 	frame.WriteString(clearLine)
 	frame.WriteString("? ")
@@ -168,18 +180,18 @@ func (a *app) renderMenuFrame(question string, options []menuOption, selected in
 		frame.WriteString(rawNewline)
 	}
 	frame.WriteString("\x1b[K")
-	frame.WriteString(menuHint)
+	frame.WriteString(hint)
 	fmt.Fprintf(&frame, cursorUp, len(options)+1)
 	_, err := io.WriteString(a.errOut, frame.String())
 	return err
 }
 
-func (a *app) eraseMenu(options int) error {
+func (a *app) eraseMenu() error {
 	_, err := io.WriteString(a.errOut, clearBlock)
 	return err
 }
 
-func (a *app) chooseMenuNumbered(question string, options []menuOption) (int, error) {
+func (a *app) chooseMenuNumbered(question string, options []menuOption, quit string) (int, error) {
 	var prompt strings.Builder
 	prompt.WriteString(question)
 	prompt.WriteString("\n")
@@ -190,7 +202,7 @@ func (a *app) chooseMenuNumbered(question string, options []menuOption) (int, er
 		}
 		prompt.WriteString("\n")
 	}
-	fmt.Fprintf(&prompt, "Selection [1-%d, q to cancel]: ", len(options))
+	fmt.Fprintf(&prompt, "Selection [1-%d, q to %s]: ", len(options), quit)
 	for {
 		if _, err := io.WriteString(a.errOut, prompt.String()); err != nil {
 			return 0, err

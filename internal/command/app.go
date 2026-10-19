@@ -144,17 +144,17 @@ func newApp(deps Dependencies) *app {
 	if deps.MakeRaw == nil {
 		deps.MakeRaw = func() (func(), error) { return makeInputRaw(deps.In) }
 	}
+	if deps.Getenv == nil {
+		deps.Getenv = os.Getenv
+	}
 	if deps.OpenURL == nil {
-		deps.OpenURL = openURL
+		deps.OpenURL = func(target string) error { return openURL(target, deps.Getenv) }
 	}
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
 	if deps.Sleep == nil {
 		deps.Sleep = time.Sleep
-	}
-	if deps.Getenv == nil {
-		deps.Getenv = os.Getenv
 	}
 	return &app{
 		in:                deps.In,
@@ -253,7 +253,7 @@ func makeInputRaw(input io.Reader) (func(), error) {
 	return func() { _ = term.Restore(fd, state) }, nil
 }
 
-func openURL(target string) error {
+func openURL(target string, getenv func(string) string) error {
 	var command *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
@@ -261,11 +261,15 @@ func openURL(target string) error {
 	case "windows":
 		command = exec.Command("rundll32", "url.dll,FileProtocolHandler", target)
 	default:
+		if getenv("DISPLAY") == "" && getenv("WAYLAND_DISPLAY") == "" {
+			return errors.New("no graphical display is available")
+		}
 		command = exec.Command("xdg-open", target)
 	}
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("open browser: %w", err)
 	}
+	go func() { _ = command.Wait() }()
 	return nil
 }
 

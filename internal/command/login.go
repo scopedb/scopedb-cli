@@ -27,7 +27,6 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
-	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/scopedb/scopedb-cli/internal/oauth"
 	"github.com/spf13/cobra"
 )
@@ -46,13 +45,14 @@ func (a *app) newLoginCommand() *cobra.Command {
 	var insecureStorage bool
 	var format string
 	var workspace string
+	var device bool
 	command := &cobra.Command{
 		Use:   "login",
 		Short: "Log in through the browser",
 		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
 			"The default flow opens a browser and receives the authorization on a loopback address.\n" +
-			"On a machine without a browser, such as an SSH session or a container, the CLI falls back to a device code\n" +
-			"that is approved from another device.",
+			"Use --device on a machine without a browser, such as an SSH session or a container, to approve a code\n" +
+			"from another device; the device flow prints a link and a code and never opens a browser.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateTextFormat(format); err != nil {
@@ -79,27 +79,24 @@ func (a *app) newLoginCommand() *cobra.Command {
 				var controlErr *controlplane.Error
 				if errors.As(err, &controlErr) && controlErr.Status == http.StatusNotFound {
 					return clierror.WithHint(
-						clierror.New(clierror.ExitUsage, "this ScopeDB deployment does not offer CLI login yet"),
-						"ask your administrator to enable it, or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY for non-interactive access",
+						clierror.New(clierror.ExitUsage, "CLI login requires ScopeDB v0.23.0 or newer; this deployment is older"),
+						"upgrade the platform, or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY for non-interactive access",
 					)
 				}
 				return NormalizeError(err)
 			}
 
-			tokens, err := a.authorizeLogin(cmd.Context(), client, format)
+			tokens, err := a.authorizeLogin(cmd.Context(), client, format, device)
 			if err != nil {
-				if errors.Is(err, errMenuCancelled) {
-					return clierror.New(clierror.ExitAuth, loginCancelled)
-				}
-				return NormalizeError(err)
+				return NormalizeError(loginMenuError(err, false))
 			}
-			if err := runtime.persistLogin(tokens); err != nil {
+			if err := runtime.persistLogin(cmd.Context(), tokens); err != nil {
 				return err
 			}
 
 			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, workspace, format)
 			if err != nil {
-				return NormalizeError(err)
+				return NormalizeError(loginMenuError(err, true))
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, selection.result())
@@ -116,6 +113,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
+	command.Flags().BoolVar(&device, "device", false, "approve a device code instead of opening a browser")
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace for the login")
 	return command
@@ -127,7 +125,35 @@ func (a *app) isInteractive() bool {
 	return a.isInputTerminal != nil && a.isInputTerminal() && a.isErrorTerminal != nil && a.isErrorTerminal()
 }
 
-func (a *app) authorizeLogin(ctx context.Context, client *controlplane.OAuth, format string) (controlplane.TokenSet, error) {
+// loginMenuError turns the menu sentinels into the documented exit codes. A workspace menu runs after
+// the login is stored, so its interrupt leaves those credentials in place.
+func loginMenuError(err error, credentialsSaved bool) error {
+	switch {
+	case errors.Is(err, errMenuCancelled):
+		if credentialsSaved {
+			return clierror.New(clierror.ExitAuth, "login cancelled; the credentials already saved remain")
+		}
+		return clierror.New(clierror.ExitAuth, loginCancelled)
+	case errors.Is(err, errMenuInterrupted):
+		if credentialsSaved {
+			return clierror.New(clierror.ExitInterrupted, "login interrupted; the credentials already saved remain")
+		}
+		return clierror.New(clierror.ExitInterrupted, "login interrupted; no credentials were saved")
+	default:
+		return err
+	}
+}
+
+func (a *app) authorizeLogin(ctx context.Context, client *controlplane.OAuth, format string, device bool) (controlplane.TokenSet, error) {
+	if device {
+		return a.deviceLogin(ctx, client)
+	}
+	if reason := a.browserlessReason(); reason != "" {
+		return controlplane.TokenSet{}, clierror.WithHint(
+			clierror.New(clierror.ExitUsage, reason+"; browser login cannot reach this machine"),
+			"run 'scope auth login --device'",
+		)
+	}
 	if a.canPrompt(format) {
 		choice, err := a.chooseMenu("How do you want to sign in?", []menuOption{
 			{label: "Sign in with your browser", note: "recommended"},
@@ -136,30 +162,12 @@ func (a *app) authorizeLogin(ctx context.Context, client *controlplane.OAuth, fo
 		if err != nil {
 			return controlplane.TokenSet{}, err
 		}
-		if choice == 1 {
-			return a.deviceLogin(ctx, client)
-		}
-		if tokens, err := a.loopbackLogin(ctx, client); !errors.Is(err, errCannotOpenBrowser) {
-			return tokens, err
-		} else if _, writeErr := fmt.Fprintf(a.errOut, "could not open a browser (%s); using the device code flow.\n", err); writeErr != nil {
-			return controlplane.TokenSet{}, writeErr
+		if choice == 0 {
+			return a.loopbackLogin(ctx, client)
 		}
 		return a.deviceLogin(ctx, client)
 	}
-	if reason := a.browserlessReason(); reason != "" {
-		if _, err := fmt.Fprintf(a.errOut, "%s; using the device code flow.\n", reason); err != nil {
-			return controlplane.TokenSet{}, err
-		}
-		return a.deviceLogin(ctx, client)
-	}
-	tokens, err := a.loopbackLogin(ctx, client)
-	if err == nil || !errors.Is(err, errCannotOpenBrowser) {
-		return tokens, err
-	}
-	if _, writeErr := fmt.Fprintf(a.errOut, "could not open a browser (%s); using the device code flow.\n", err); writeErr != nil {
-		return controlplane.TokenSet{}, writeErr
-	}
-	return a.deviceLogin(ctx, client)
+	return a.loopbackLogin(ctx, client)
 }
 
 type loginResult struct {
@@ -270,10 +278,15 @@ func (a *app) promptLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 		note:  "select later with 'scope workspace use <id-or-name>'",
 	})
 	for {
-		choice, err := a.chooseMenu("Which workspace do you want to use?", options)
+		choice, err := a.chooseMenuWith("Which workspace do you want to use?", options, "skip")
 		if err != nil {
 			if errors.Is(err, errMenuCancelled) {
 				return nil, nil
+			}
+			if errors.Is(err, errMenuInterrupted) {
+				if _, writeErr := fmt.Fprintln(a.errOut, "Login saved; no workspace was selected."); writeErr != nil {
+					return nil, writeErr
+				}
 			}
 			return nil, err
 		}
@@ -313,8 +326,6 @@ func (a *app) renderLoginSelection(selection loginSelection) error {
 	return NormalizeError(err)
 }
 
-var errCannotOpenBrowser = errors.New("cannot open a browser")
-
 func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
 	pkce, err := oauth.NewPKCE()
 	if err != nil {
@@ -331,11 +342,13 @@ func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (co
 	defer func() { _ = listener.Close() }()
 
 	target := client.AuthorizationURL(state, pkce.Challenge, listener.RedirectURI())
-	if err := a.openURL(target); err != nil {
-		return controlplane.TokenSet{}, fmt.Errorf("%w: %s", errCannotOpenBrowser, err)
-	}
 	if _, err := fmt.Fprintf(a.errOut, "Open this URL to approve the login:\n%s\n", target); err != nil {
 		return controlplane.TokenSet{}, err
+	}
+	if err := a.openURL(target); err != nil {
+		if _, writeErr := fmt.Fprintf(a.errOut, "Could not open a browser (%s); open the URL above to continue.\n", err); writeErr != nil {
+			return controlplane.TokenSet{}, writeErr
+		}
 	}
 
 	waitCtx, cancel := context.WithTimeout(ctx, authorizationRequestTTL)
@@ -348,14 +361,17 @@ func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (co
 		}
 		return controlplane.TokenSet{}, err
 	}
-	if callback.Error != "" {
-		return controlplane.TokenSet{}, clierror.New(clierror.ExitAuth, describeAuthorizationError(callback))
-	}
 	if callback.State != state {
 		return controlplane.TokenSet{}, errors.New("the login response did not belong to this request; no credentials were saved")
 	}
 	if callback.Issuer != client.Issuer() {
 		return controlplane.TokenSet{}, fmt.Errorf("the login response came from %q, but this CLI is configured for %q; no credentials were saved", callback.Issuer, client.Issuer())
+	}
+	if callback.Error != "" {
+		return controlplane.TokenSet{}, clierror.New(clierror.ExitAuth, describeAuthorizationError(callback))
+	}
+	if callback.Code == "" {
+		return controlplane.TokenSet{}, errors.New("the login response did not include an authorization code; no credentials were saved")
 	}
 	return client.ExchangeAuthorizationCode(ctx, callback.Code, listener.RedirectURI(), pkce.Verifier)
 }
@@ -519,17 +535,10 @@ func (a *app) warnAccountUnchecked() {
 }
 
 func describeAuthorizationError(callback oauth.Callback) string {
-	switch callback.Error {
-	case "access_denied":
+	if callback.Error == "access_denied" {
 		return "the login request was denied in the console"
-	case "":
-		return "the login request failed"
-	default:
-		if callback.ErrorDescription != "" {
-			return callback.Error + ": " + callback.ErrorDescription
-		}
-		return callback.Error
 	}
+	return "the login request failed; no credentials were saved"
 }
 
 func (a *app) browserlessReason() string {
@@ -545,44 +554,38 @@ func (a *app) browserlessReason() string {
 	return ""
 }
 
-func (r *runtimeContext) persistLogin(tokens controlplane.TokenSet) error {
-	previous, previousErr := r.credentials.Load(r.config.ControlURL)
-	previousFound := previousErr == nil
-	if previousErr != nil && !errors.Is(previousErr, credential.ErrNotFound) && !errors.Is(previousErr, credential.ErrInvalidState) {
+func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.TokenSet) error {
+	savedPrevious, savedFound, writtenAccessToken, saveErr := r.auth.SaveLogin(ctx, tokens)
+	if saveErr != nil {
 		r.revokeIssuedLogin(tokens)
-		return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but existing credentials could not be read", previousErr)
-	}
-
-	var result *clierror.Error
-	if err := r.auth.SaveLogin(tokens); err != nil {
-		result = clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(saveErr, context.Canceled) || errors.Is(saveErr, context.DeadlineExceeded) {
+			return saveErr
+		}
+		if errors.Is(saveErr, auth.ErrCredentialsUnreadable) {
+			return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but existing credentials could not be read", saveErr)
+		}
+		result := clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", saveErr)
 		if r.config.CredentialStore == config.CredentialStoreKeyring {
 			result.Hint = "fix OS keyring access or rerun with 'scope auth login --insecure-storage'"
 		}
-	} else if err := config.Save(r.paths, r.config); err != nil {
-		result = clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "login succeeded, but configuration could not be stored", err), "check config directory access and retry")
-	} else {
+		return result
+	}
+	if err := config.Save(r.paths, r.config); err == nil {
 		return nil
+	} else {
+		result := clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "login succeeded, but configuration could not be stored", err), "check config directory access and retry")
+		rollbackErr := r.auth.RestoreLogin(ctx, savedPrevious, savedFound, writtenAccessToken)
+		r.revokeIssuedLogin(tokens)
+		if rollbackErr != nil {
+			result.Message += " and previous credentials could not be restored"
+			result.Err = errors.Join(result.Err, rollbackErr)
+			result.Hint = "check config and credential store access before retrying"
+		}
+		return result
 	}
-
-	rollbackErr := restoreCredentials(r.credentials, r.config.ControlURL, previous, previousFound)
-	r.revokeIssuedLogin(tokens)
-	if rollbackErr != nil {
-		result.Message += " and previous credentials could not be restored"
-		result.Err = errors.Join(result.Err, rollbackErr)
-		result.Hint = "check config and credential store access before retrying"
-	}
-	return result
-}
-
-func restoreCredentials(store credential.Store, controlURL string, previous credential.State, found bool) error {
-	if found {
-		return store.Save(controlURL, previous)
-	}
-	if err := store.Delete(controlURL); err != nil && !errors.Is(err, credential.ErrNotFound) {
-		return err
-	}
-	return nil
 }
 
 // revokeIssuedLogin undoes a login the CLI could not store, so a failed login never leaves a live grant behind.

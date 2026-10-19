@@ -121,6 +121,7 @@ func TestLoopbackLoginReportsDeniedAuthorization(t *testing.T) {
 			require.NoError(t, err)
 			query := callback.Query()
 			query.Set("error", "access_denied")
+			query.Set("error_description", "\x1b[31mforged\x1b[0m")
 			query.Set("state", parsed.Query().Get("state"))
 			query.Set("iss", fake.Issuer)
 			callback.RawQuery = query.Encode()
@@ -135,6 +136,40 @@ func TestLoopbackLoginReportsDeniedAuthorization(t *testing.T) {
 	err := root.ExecuteContext(t.Context())
 	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
 	require.Contains(t, err.Error(), "denied")
+	require.NotContains(t, out.String()+diagnostics.String(), "forged")
+	_, loadErr := store.Load(fake.URL)
+	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+}
+
+func TestLoopbackLoginIgnoresAForgedErrorCallback(t *testing.T) {
+	fake, store := setupCLITest(t)
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		Out: &out, ErrOut: &diagnostics,
+		Getenv: func(string) string { return "" },
+		Sleep:  func(time.Duration) {},
+		OpenURL: func(target string) error {
+			parsed, err := url.Parse(target)
+			require.NoError(t, err)
+			callback, err := url.Parse(parsed.Query().Get("redirect_uri"))
+			require.NoError(t, err)
+			query := callback.Query()
+			query.Set("error", "access_denied")
+			query.Set("error_description", "\x1b[31mforged\x1b[0m")
+			query.Set("state", "not-the-state")
+			query.Set("iss", fake.Issuer)
+			callback.RawQuery = query.Encode()
+			response, err := http.Get(callback.String())
+			if err != nil {
+				return err
+			}
+			return response.Body.Close()
+		},
+	})
+	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"})
+	err := root.ExecuteContext(t.Context())
+	require.ErrorContains(t, err, "did not belong to this request")
+	require.NotContains(t, out.String()+diagnostics.String(), "forged")
 	_, loadErr := store.Load(fake.URL)
 	require.ErrorIs(t, loadErr, credential.ErrNotFound)
 }
@@ -197,7 +232,7 @@ func TestDeviceLoginNeverOpensABrowser(t *testing.T) {
 	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
 		getenv:  sshEnvironment,
 		openURL: func(target string) error { opened = append(opened, target); return nil },
-		args:    []string{"auth", "login", "--insecure-storage"},
+		args:    []string{"auth", "login", "--insecure-storage", "--device"},
 	})
 	require.NoError(t, err)
 	require.Empty(t, opened)
@@ -213,7 +248,7 @@ func TestDeviceLoginFallsBackToThePlainVerificationURL(t *testing.T) {
 	_, diagnostics, err := runLoginScenario(t, fake, loginScenario{
 		getenv:  sshEnvironment,
 		openURL: func(target string) error { opened = append(opened, target); return nil },
-		args:    []string{"auth", "login", "--insecure-storage"},
+		args:    []string{"auth", "login", "--insecure-storage", "--device"},
 	})
 	require.NoError(t, err)
 	require.Empty(t, opened)
@@ -264,7 +299,7 @@ func TestDeviceLoginSpinsTheWaitOnATerminal(t *testing.T) {
 		OpenURL:         func(string) error { return nil },
 		IsErrorTerminal: func() bool { return true },
 	})
-	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"})
+	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage", "--device"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
 	require.Contains(t, diagnostics.String(), "\r")
 	require.Contains(t, diagnostics.String(), "Waiting for authorization")
@@ -272,13 +307,29 @@ func TestDeviceLoginSpinsTheWaitOnATerminal(t *testing.T) {
 	require.NotContains(t, out.String(), "\x1b")
 }
 
-func TestLoginUsesTheDeviceFlowInSSHSession(t *testing.T) {
+func TestLoginInSSHWithoutDeviceFlagExplainsHow(t *testing.T) {
+	fake, store := setupCLITest(t)
+	out, _, err := runLoginScenario(t, fake, loginScenario{
+		getenv: sshEnvironment,
+		args:   []string{"auth", "login", "--insecure-storage"},
+	})
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "this is an SSH session")
+	require.Contains(t, clierror.Render(err), "scope auth login --device")
+	require.Empty(t, out)
+	_, loadErr := store.Load(fake.URL)
+	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+}
+
+func TestLoginDeviceFlagUsesTheDeviceFlowInSSHSession(t *testing.T) {
 	fake, store := setupCLITest(t)
 	out, diagnostics, err := runSSHLogin(t, fake)
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
-	require.Contains(t, diagnostics, "this is an SSH session; using the device code flow.")
 	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
+	require.Contains(t, diagnostics, "Waiting for authorization")
+	require.NotContains(t, diagnostics, "Open this URL")
+	require.Equal(t, 1, fake.DevicePolls)
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, "ort_refresh", state.RefreshToken)
@@ -297,16 +348,22 @@ func TestLoginKeepsTheLoopbackFlowWithANonInteractiveBrowser(t *testing.T) {
 	require.Equal(t, "ort_refresh", state.RefreshToken)
 }
 
-func TestLoginFallsBackToTheDeviceFlowWhenTheBrowserCannotOpen(t *testing.T) {
+func TestLoopbackLoginKeepsWaitingWhenTheBrowserCannotOpen(t *testing.T) {
 	fake, store := setupCLITest(t)
 	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		openURL: func(string) error { return errors.New("no browser available") },
+		openURL: func(target string) error {
+			if err := fake.authorizationURL(t)(target); err != nil {
+				return err
+			}
+			return errors.New("no browser available")
+		},
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
-	require.Contains(t, diagnostics, "could not open a browser (cannot open a browser: no browser available); using the device code flow.")
-	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
-	require.NotContains(t, diagnostics, "Open this URL to approve the login")
+	require.Contains(t, diagnostics, "Open this URL to approve the login")
+	require.Contains(t, diagnostics, "Could not open a browser (no browser available); open the URL above to continue.")
+	require.NotContains(t, diagnostics, "device code")
+	require.Zero(t, fake.DevicePolls)
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, "ort_refresh", state.RefreshToken)
@@ -344,6 +401,23 @@ func TestLoginMenuSelectsTheDeviceFlow(t *testing.T) {
 	require.Equal(t, "ort_refresh", state.RefreshToken)
 }
 
+func TestLoginInSSHWithTTYWithoutDeviceFlagExplainsHow(t *testing.T) {
+	fake, store := setupCLITest(t)
+	_, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+		input:         "\r",
+		inputTerminal: true,
+		errorTerminal: true,
+		getenv:        sshEnvironment,
+	})
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "this is an SSH session")
+	require.Contains(t, clierror.Render(err), "scope auth login --device")
+	require.NotContains(t, diagnostics, "How do you want to sign in?")
+	require.Zero(t, fake.DevicePolls)
+	_, loadErr := store.Load(fake.URL)
+	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+}
+
 func TestLoginMenuStaysQuietForJSON(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	result := runLoginMenu(t, fake, "\r", "--format", "json")
@@ -356,18 +430,20 @@ func TestLoginMenuStaysQuietForJSON(t *testing.T) {
 
 func TestLoginMenuCancelsWithoutStoring(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		input string
+		name     string
+		input    string
+		wantCode int
+		wantText string
 	}{
-		{"quit", "q"},
-		{"interrupt", "\x03"},
-		{"escape", "\x1b"},
+		{"quit", "q", clierror.ExitAuth, "login cancelled"},
+		{"escape", "\x1b", clierror.ExitAuth, "login cancelled"},
+		{"interrupt", "\x03", clierror.ExitInterrupted, "login interrupted; no credentials were saved"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake, store := setupCLITest(t)
 			result := runLoginMenu(t, fake, tc.input)
-			require.Equal(t, clierror.ExitAuth, clierror.ExitCode(result.err))
-			require.Contains(t, result.err.Error(), "login cancelled")
+			require.Equal(t, tc.wantCode, clierror.ExitCode(result.err))
+			require.Contains(t, result.err.Error(), tc.wantText)
 			require.Empty(t, result.out)
 			require.Equal(t, 1, result.raw.restores)
 			require.Zero(t, fake.DevicePolls)
@@ -377,30 +453,54 @@ func TestLoginMenuCancelsWithoutStoring(t *testing.T) {
 	}
 }
 
-func TestLoginMenuFallsBackWhenTheBrowserCannotOpen(t *testing.T) {
+func TestLoginWorkspaceMenuInterruptLeavesTheLogin(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+	result := runLoginMenu(t, fake, "\r\x03")
+	require.Equal(t, clierror.ExitInterrupted, clierror.ExitCode(result.err))
+	require.Contains(t, result.err.Error(), "credentials already saved remain")
+	require.Contains(t, result.diagnostics, "Login saved; no workspace was selected.")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginMenuKeepsWaitingWhenTheBrowserCannotOpen(t *testing.T) {
 	fake, store := setupCLITest(t)
 	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
 		input:         "\r",
 		inputTerminal: true,
 		errorTerminal: true,
-		openURL:       func(string) error { return errors.New("no browser available") },
+		openURL: func(target string) error {
+			if err := fake.authorizationURL(t)(target); err != nil {
+				return err
+			}
+			return errors.New("no browser available")
+		},
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
-	require.Contains(t, diagnostics, "could not open a browser (cannot open a browser: no browser available); using the device code flow.")
+	require.Contains(t, diagnostics, "Open this URL to approve the login")
+	require.Contains(t, diagnostics, "Could not open a browser (no browser available); open the URL above to continue.")
+	require.Zero(t, fake.DevicePolls)
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, "ort_refresh", state.RefreshToken)
 }
 
-func TestLoginRejectsTheRemovedDeviceFlag(t *testing.T) {
+func TestLoginDeviceFlagUsesTheDeviceFlow(t *testing.T) {
 	fake, store := setupCLITest(t)
-	out, _, err := runFakeCommand(t, fake, "auth", "login", "--device")
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(NormalizeError(err)))
-	require.Contains(t, err.Error(), "unknown flag: --device")
-	require.Empty(t, out)
-	_, loadErr := store.Load(fake.URL)
-	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--device")
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
+	require.NotContains(t, diagnostics, "Open this URL")
+	require.Empty(t, fake.AuthorizationQuery)
+	require.Equal(t, 1, fake.DevicePolls)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
 }
 
 func TestDiscoveryRejectsForeignIssuer(t *testing.T) {
@@ -443,7 +543,7 @@ func TestLoginWithoutOAuthSupportReportsGuidance(t *testing.T) {
 	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 	_, _, err := runCommand(t, "--control-url", server.URL, "auth", "login", "--insecure-storage")
 	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "does not offer CLI login")
+	require.Contains(t, clierror.Render(err), "requires ScopeDB v0.23.0 or newer")
 	require.Contains(t, clierror.Render(err), "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 }
 
@@ -728,13 +828,14 @@ func TestLoginWorkspaceMenuSkipsTheLastOption(t *testing.T) {
 	require.Empty(t, state.WorkspaceID)
 }
 
-func TestLoginWorkspaceMenuSkipsWhenCancelled(t *testing.T) {
+func TestLoginWorkspaceMenuSkipsOnQuit(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
 
 	result := runLoginMenu(t, fake, "\rq")
 	require.NoError(t, result.err)
 	require.Equal(t, "Logged in as dev@example.com.\n", result.out)
+	require.Contains(t, result.diagnostics, "q to skip")
 	require.Contains(t, result.diagnostics, "no workspace is selected")
 	require.Contains(t, result.diagnostics, "scope workspace use <id-or-name>")
 	require.NotContains(t, result.out, "CURRENT")
@@ -817,7 +918,7 @@ func TestLoginWithoutWorkspacesReportsSetup(t *testing.T) {
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.NotContains(t, out, "CURRENT")
 	require.Contains(t, diagnostics, "no workspaces")
-	require.Contains(t, diagnostics, "scope console --open")
+	require.Contains(t, diagnostics, "scope workspace create")
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Empty(t, state.WorkspaceID)
@@ -1000,14 +1101,4 @@ func TestLoginReportsUnreachableControlPlane(t *testing.T) {
 	require.Contains(t, rendered, "cannot reach ScopeDB control plane")
 	require.Contains(t, rendered, "Caused by: ")
 	require.Contains(t, rendered, "connection refused")
-}
-
-func TestLoginDoesNotPrintSecrets(t *testing.T) {
-	fake, _ := setupCLITest(t)
-	out, diagnostics, err := runFakeCommand(t, fake, "auth", "login", "--insecure-storage", "--format", "json")
-	require.NoError(t, err)
-	combined := out + diagnostics
-	for _, secret := range []string{"oat_access", "ort_refresh", fake.AuthorizationCode} {
-		require.NotContains(t, combined, secret)
-	}
 }

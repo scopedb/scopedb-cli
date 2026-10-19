@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
@@ -141,12 +140,4 @@ func TestVersionJSONAlias(t *testing.T) {
 	out, _, err := runCommand(t, "version", "--format", "json")
 	require.NoError(t, err)
 	require.JSONEq(t, legacy, out)
-}
-
-func TestAPIKeyCommandsAreGone(t *testing.T) {
-	out, diagnostics, err := runCommand(t, "api-key", "list")
-	require.ErrorContains(t, err, "unknown command")
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(NormalizeError(err)))
-	require.Empty(t, out)
-	require.NotContains(t, diagnostics, "api-key")
 }

@@ -28,12 +28,13 @@ import (
 )
 
 var (
-	ErrNotLoggedIn         = errors.New("not logged in")
-	ErrInvalidMachineEnv   = errors.New("invalid machine credentials")
-	ErrApprovalRequired    = errors.New("account is awaiting approval")
-	ErrNoWorkspaces        = errors.New("account has no workspaces")
-	ErrNoWorkspaceSelected = errors.New("no workspace is selected")
-	ErrLoginExpired        = errors.New("login is no longer valid")
+	ErrNotLoggedIn           = errors.New("not logged in")
+	ErrInvalidMachineEnv     = errors.New("invalid machine credentials")
+	ErrApprovalRequired      = errors.New("account is awaiting approval")
+	ErrNoWorkspaces          = errors.New("account has no workspaces")
+	ErrNoWorkspaceSelected   = errors.New("no workspace is selected")
+	ErrLoginExpired          = errors.New("login is no longer valid")
+	ErrCredentialsUnreadable = errors.New("existing credentials could not be read")
 )
 
 const (
@@ -144,20 +145,57 @@ func (m *Manager) load() (credential.State, error) {
 }
 
 // The selection survives a login, because signing in again does not change which workspace the profile uses.
-func (m *Manager) SaveLogin(tokens controlplane.TokenSet) error {
+// The lock makes the new login serialize with a refresh running in another process.
+func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (credential.State, bool, string, error) {
+	lock, err := filelock.Acquire(ctx, m.LockFile)
+	if err != nil {
+		return credential.State{}, false, "", err
+	}
+	defer func() { _ = lock.Close() }()
+
 	previous, err := m.Credentials.Load(m.ControlURL)
+	previousFound := err == nil
 	switch {
 	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState):
 		previous = credential.State{}
 	case err != nil:
-		return err
+		return credential.State{}, false, "", fmt.Errorf("%w: %w", ErrCredentialsUnreadable, err)
 	}
 	state, err := m.tokenState(credential.State{}, tokens)
 	if err != nil {
-		return err
+		return credential.State{}, false, "", err
 	}
 	state.WorkspaceID = previous.WorkspaceID
-	return m.Credentials.Save(m.ControlURL, state)
+	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
+		return credential.State{}, false, "", err
+	}
+	return previous, previousFound, state.AccessToken, nil
+}
+
+// RestoreLogin puts back the login SaveLogin replaced, under the same lock, when the surrounding
+// configuration write fails. It only acts while the record still holds the login SaveLogin wrote, so
+// a concurrent logout or newer login is never overwritten or deleted.
+func (m *Manager) RestoreLogin(ctx context.Context, state credential.State, found bool, writtenAccessToken string) error {
+	lock, err := filelock.Acquire(ctx, m.LockFile)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+
+	current, err := m.Credentials.Load(m.ControlURL)
+	switch {
+	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState):
+		return nil
+	case err != nil:
+		return err
+	}
+	if current.AccessToken != writtenAccessToken {
+		return nil
+	}
+	if found {
+		return m.Credentials.Save(m.ControlURL, state)
+	}
+	return m.deleteIgnoringMissing()
 }
 
 func (m *Manager) Account(ctx context.Context) (Account, error) {
@@ -181,9 +219,16 @@ func (m *Manager) account(ctx context.Context) (Account, credential.State, error
 	return Account{User: user, Workspaces: workspaces, SelectedWorkspaceID: state.WorkspaceID}, state, nil
 }
 
-// An OAuth credential is never rotated to change workspace, so the selection is local state.
+// An OAuth credential is never rotated to change workspace, so the selection is local state. The
+// record is re-read under the lock so a concurrent refresh or data-token cache write is preserved.
 func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error {
-	state, err := m.LoadAccess(ctx)
+	lock, err := filelock.Acquire(ctx, m.LockFile)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+
+	state, err := m.load()
 	if err != nil {
 		return err
 	}
@@ -201,7 +246,13 @@ func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error
 }
 
 func (m *Manager) ClearWorkspace(ctx context.Context) error {
-	state, err := m.LoadAccess(ctx)
+	lock, err := filelock.Acquire(ctx, m.LockFile)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+
+	state, err := m.load()
 	if err != nil {
 		return err
 	}
@@ -230,6 +281,12 @@ func (e *LogoutCleanupError) Unwrap() error { return e.Err }
 // Local credentials are removed even when revocation fails, and the failure is reported so the user
 // knows the login may still exist.
 func (m *Manager) Logout(ctx context.Context) error {
+	lock, err := filelock.Acquire(ctx, m.LockFile)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+
 	state, err := m.Credentials.Load(m.ControlURL)
 	if errors.Is(err, credential.ErrInvalidState) {
 		return m.deleteIgnoringMissing()
@@ -301,11 +358,8 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	if !strings.EqualFold(exchanged.TokenType, "Bearer") || exchanged.AccessToken == "" || exchanged.ExpiresAt.IsZero() {
 		return Access{}, fmt.Errorf("token exchange returned an invalid credential")
 	}
-	state.DataToken = exchanged.AccessToken
-	state.DataTokenWorkspaceID = state.WorkspaceID
-	state.DataTokenExpiresAt = exchanged.ExpiresAt.UTC()
-	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
-		return Access{}, fmt.Errorf("save short-lived data credential: %w", err)
+	if err := m.saveDataToken(ctx, state.AccessToken, state.WorkspaceID, exchanged); err != nil {
+		return Access{}, err
 	}
 	return Access{
 		Endpoint:    details.Connection.APIBaseURL,
@@ -313,6 +367,34 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 		WorkspaceID: state.WorkspaceID,
 		Mode:        "oauth",
 	}, nil
+}
+
+// saveDataToken merges the exchange credential into the current record instead of writing back the
+// state loaded before the exchange, which would revert a concurrent rotation or workspace selection.
+func (m *Manager) saveDataToken(ctx context.Context, accessToken, workspaceID string, exchanged controlplane.TokenExchangeResponse) error {
+	lock, err := filelock.Acquire(ctx, m.LockFile)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+
+	state, err := m.load()
+	if errors.Is(err, ErrNotLoggedIn) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if state.AccessToken != accessToken {
+		return nil
+	}
+	state.DataToken = exchanged.AccessToken
+	state.DataTokenWorkspaceID = workspaceID
+	state.DataTokenExpiresAt = exchanged.ExpiresAt.UTC()
+	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
+		return fmt.Errorf("save short-lived data credential: %w", err)
+	}
+	return nil
 }
 
 func RequireWorkspace(account Account) error {

@@ -19,7 +19,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -72,16 +71,13 @@ func TestPlaintextStoreSeparatesOrigins(t *testing.T) {
 func TestPlaintextStoreRejectsOlderState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	const controlURL = "https://control.example.com"
-	store := NewPlaintextStore(path)
-	require.NoError(t, store.Save(controlURL, State{AccessToken: "oat", RefreshToken: "ort"}))
+	document := fmt.Sprintf(
+		`{"version":1,"profiles":{%q:{"version":1,"control_url":%q,"access_token":"oat","refresh_token":"ort"}}}`,
+		profileKey(controlURL), controlURL,
+	)
+	require.NoError(t, os.WriteFile(path, []byte(document), 0o600))
 
-	document, err := os.ReadFile(path)
-	require.NoError(t, err)
-	replaced := strings.Replace(string(document), fmt.Sprintf("\"version\": %d", currentStateVersion), "\"version\": 1", 1)
-	require.NotEqual(t, string(document), replaced)
-	require.NoError(t, os.WriteFile(path, []byte(replaced), 0o600))
-
-	_, err = store.Load(controlURL)
+	_, err := NewPlaintextStore(path).Load(controlURL)
 	require.ErrorIs(t, err, ErrInvalidState)
 	require.Contains(t, err.Error(), "log in again")
 }

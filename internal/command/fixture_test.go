@@ -375,7 +375,7 @@ func runFakeCommand(t *testing.T, fake *fakeControlPlane, args ...string) (strin
 	})
 	root.SetArgs(append([]string{"--control-url", fake.URL}, args...))
 	err := root.ExecuteContext(t.Context())
-	for _, secret := range []string{"oat_access", "ort_refresh", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
+	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
 		require.NotContains(t, out.String()+diagnostics.String(), secret)
 	}
 	return out.String(), diagnostics.String(), err
@@ -448,7 +448,7 @@ func runLoginScenario(t *testing.T, fake *fakeControlPlane, scenario loginScenar
 	}
 	root.SetArgs(append([]string{"--control-url", fake.URL}, args...))
 	err := root.ExecuteContext(t.Context())
-	for _, secret := range []string{"oat_access", "ort_refresh", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
+	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
 		require.NotContains(t, out.String()+diagnostics.String(), secret)
 	}
 	return out.String(), diagnostics.String(), err
@@ -483,6 +483,6 @@ func sshEnvironment(name string) string {
 
 func runSSHLogin(t *testing.T, fake *fakeControlPlane, flags ...string) (string, string, error) {
 	t.Helper()
-	args := append([]string{"auth", "login", "--insecure-storage"}, flags...)
+	args := append([]string{"auth", "login", "--insecure-storage", "--device"}, flags...)
 	return runLoginScenario(t, fake, loginScenario{getenv: sshEnvironment, args: args})
 }

@@ -67,17 +67,22 @@ func TestLoopbackAcceptsOneCallback(t *testing.T) {
 	assert.Equal(t, "/callback", parsed.Path)
 	assert.NotEmpty(t, parsed.Port())
 
-	query := parsed.Query()
-	query.Set("code", "code-1")
-	query.Set("state", "state-1")
-	query.Set("iss", "https://control.example.com")
-	parsed.RawQuery = query.Encode()
-
-	response, err := http.Get(parsed.String())
-	require.NoError(t, err)
-	defer func() { _ = response.Body.Close() }()
-	assert.Equal(t, http.StatusOK, response.StatusCode)
-	assert.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+	callbackURL := func(code, state string) string {
+		copied := *parsed
+		query := parsed.Query()
+		query.Set("code", code)
+		query.Set("state", state)
+		query.Set("iss", "https://control.example.com")
+		copied.RawQuery = query.Encode()
+		return copied.String()
+	}
+	for _, target := range []string{callbackURL("code-1", "state-1"), callbackURL("code-2", "state-2")} {
+		response, err := http.Get(target)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, response.StatusCode)
+		assert.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+		_ = response.Body.Close()
+	}
 
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
@@ -89,12 +94,9 @@ func TestLoopbackAcceptsOneCallback(t *testing.T) {
 		Issuer: "https://control.example.com",
 	}, callback)
 
-	response, err = http.Get(parsed.String())
-	require.NoError(t, err)
-	_ = response.Body.Close()
 	select {
 	case other := <-listener.results:
-		assert.Equal(t, callback, other)
+		t.Fatalf("listener delivered a second callback: %+v", other)
 	default:
 	}
 }

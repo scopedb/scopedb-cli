@@ -1,6 +1,6 @@
 # Connect the CLI and your application
 
-Use `scope auth login` for terminal exploration. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring; SDKs do not read it.
+Use `scope auth login` for terminal exploration; it requires ScopeDB v0.23.0 or newer. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring; SDKs do not read it.
 
 ## Verify your login
 
@@ -25,7 +25,7 @@ Show the selected workspace's endpoint:
 scope workspace get
 ```
 
-Create an application key in the Console's [API keys](https://console.scopedb.io/keys) page. The key is shown only once; store it in your application's secret manager. A CLI login is a delegated credential that cannot manage persistent keys, so create and revoke them in the Console. Use separate keys for development, staging, and production.
+Create an application key in the Console's [API keys](https://console.scopedb.cloud/keys) page. The key is shown only once; store it in your application's secret manager. A CLI login is a delegated credential that cannot manage persistent keys, so create and revoke them in the Console. Use separate keys for development, staging, and production.
 
 Copy the workspace's data-plane endpoint, without appending `/v1/statements`. Set both values in your application environment or local shell:
 

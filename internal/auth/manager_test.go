@@ -93,6 +93,7 @@ type fakeControl struct {
 	workspaces    []controlplane.Workspace
 	details       controlplane.WorkspaceDetails
 	exchange      controlplane.TokenExchangeResponse
+	onExchange    func()
 	exchangeCalls int
 }
 
@@ -109,6 +110,9 @@ func (f *fakeControl) GetWorkspace(context.Context, string, string) (controlplan
 }
 
 func (f *fakeControl) ExchangeToken(context.Context, string, string) (controlplane.TokenExchangeResponse, error) {
+	if f.onExchange != nil {
+		f.onExchange()
+	}
 	f.exchangeCalls++
 	return f.exchange, nil
 }
@@ -177,13 +181,13 @@ func loginState(now time.Time, accessExpiry time.Time) credential.State {
 	}
 }
 
-func newManager(store credential.Store, control ControlPlane, oauth OAuthClient, now time.Time) *Manager {
+func newManager(t *testing.T, store credential.Store, control ControlPlane, oauth OAuthClient, now time.Time) *Manager {
 	return &Manager{
 		ControlURL:  "https://control.example.com",
 		Control:     control,
 		OAuth:       oauth,
 		Credentials: store,
-		LockFile:    filepath.Join(now.Location().String(), "unused"),
+		LockFile:    filepath.Join(t.TempDir(), "credentials.lock"),
 		Now:         func() time.Time { return now },
 		Sleep:       func(time.Duration) {},
 		Getenv:      func(string) string { return "" },
@@ -208,7 +212,7 @@ func TestLoadAccessReturnsFreshTokenWithoutRefresh(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour))}
 	oauth := &fakeOAuth{}
-	manager := newManager(store, &fakeControl{}, oauth, now)
+	manager := newManager(t, store, &fakeControl{}, oauth, now)
 
 	state, err := manager.LoadAccess(t.Context())
 	require.NoError(t, err)
@@ -220,7 +224,7 @@ func TestLoadAccessRefreshesExpiringToken(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{present: true, state: loginState(now, now.Add(30*time.Second))}
 	oauth := &fakeOAuth{results: []tokenOutcome{{tokens: accessTokens("oat_new", "ort_new")}}}
-	manager := newManager(store, &fakeControl{}, oauth, now)
+	manager := newManager(t, store, &fakeControl{}, oauth, now)
 	manager.LockFile = filepath.Join(t.TempDir(), "credentials.lock")
 
 	state, err := manager.LoadAccess(t.Context())
@@ -241,7 +245,7 @@ func TestLoadAccessRetriesServerFailures(t *testing.T) {
 		{err: &controlplane.OAuthError{Err: errors.New("connection reset")}},
 		{tokens: accessTokens("oat_new", "ort_new")},
 	}}
-	manager := newManager(store, &fakeControl{}, oauth, now)
+	manager := newManager(t, store, &fakeControl{}, oauth, now)
 	manager.LockFile = filepath.Join(t.TempDir(), "credentials.lock")
 
 	state, err := manager.LoadAccess(t.Context())
@@ -255,7 +259,7 @@ func TestLoadAccessDoesNotRetryRateLimits(t *testing.T) {
 	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Second))}
 	rateLimited := &controlplane.OAuthError{Code: "slow_down", Status: http.StatusTooManyRequests}
 	oauth := &fakeOAuth{results: []tokenOutcome{{err: rateLimited}}}
-	manager := newManager(store, &fakeControl{}, oauth, now)
+	manager := newManager(t, store, &fakeControl{}, oauth, now)
 	manager.LockFile = filepath.Join(t.TempDir(), "credentials.lock")
 
 	_, err := manager.LoadAccess(t.Context())
@@ -267,7 +271,7 @@ func TestLoadAccessDoesNotRetryRateLimits(t *testing.T) {
 func TestLoadAccessDeletesCredentialsWhenRefreshIsRejected(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Second))}
-	manager := newManager(store, &fakeControl{}, &fakeOAuth{rejectAll: true}, now)
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{rejectAll: true}, now)
 	manager.LockFile = filepath.Join(t.TempDir(), "credentials.lock")
 
 	_, err := manager.LoadAccess(t.Context())
@@ -279,7 +283,7 @@ func TestLoadAccessAdoptsAnotherProcessRotation(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Second))}
 	oauth := &fakeOAuth{}
-	manager := newManager(store, &fakeControl{}, oauth, now)
+	manager := newManager(t, store, &fakeControl{}, oauth, now)
 	manager.LockFile = filepath.Join(t.TempDir(), "credentials.lock")
 
 	rotated := store.saved()
@@ -300,9 +304,9 @@ func TestConcurrentRefreshRotatesOnce(t *testing.T) {
 	oauth := &fakeOAuth{results: []tokenOutcome{{tokens: accessTokens("oat_new", "ort_new")}}}
 	lockFile := filepath.Join(t.TempDir(), "credentials.lock")
 
-	first := newManager(store, &fakeControl{}, oauth, now)
+	first := newManager(t, store, &fakeControl{}, oauth, now)
 	first.LockFile = lockFile
-	second := newManager(store, &fakeControl{}, oauth, now)
+	second := newManager(t, store, &fakeControl{}, oauth, now)
 	second.LockFile = lockFile
 
 	entered := make(chan struct{})
@@ -366,11 +370,82 @@ func TestSelectWorkspaceClearsDataCredential(t *testing.T) {
 	state.DataTokenWorkspaceID = "ws-1"
 	state.DataTokenExpiresAt = now.Add(time.Hour)
 	store := &memoryStore{present: true, state: state}
-	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
 	require.NoError(t, manager.SelectWorkspace(t.Context(), "ws-2"))
 	require.Equal(t, "ws-2", store.saved().WorkspaceID)
 	require.Empty(t, store.saved().DataToken)
+}
+
+func TestSelectWorkspaceSerializesWithRefresh(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Second))}
+	oauth := &fakeOAuth{results: []tokenOutcome{{tokens: accessTokens("oat_new", "ort_new")}}}
+	manager := newManager(t, store, &fakeControl{}, oauth, now)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	oauth.onRefresh = func() {
+		once.Do(func() { close(entered) })
+		<-release
+	}
+
+	refreshDone := make(chan error, 1)
+	go func() {
+		_, err := manager.LoadAccess(context.Background())
+		refreshDone <- err
+	}()
+	<-entered
+
+	selectDone := make(chan error, 1)
+	go func() {
+		selectDone <- manager.SelectWorkspace(context.Background(), "ws-2")
+	}()
+	close(release)
+	require.NoError(t, <-refreshDone)
+	require.NoError(t, <-selectDone)
+	require.Equal(t, "oat_new", store.saved().AccessToken)
+	require.Equal(t, "ort_new", store.saved().RefreshToken)
+	require.Equal(t, "ws-2", store.saved().WorkspaceID)
+}
+
+func TestSaveDataTokenPreservesConcurrentSelection(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour))}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	control := &fakeControl{
+		user: controlplane.User{Status: "active"},
+		details: controlplane.WorkspaceDetails{
+			Workspace:    controlplane.Workspace{ID: "ws-1"},
+			Connection:   controlplane.Connection{APIBaseURL: "https://data.example.com"},
+			Provisioning: controlplane.Provisioning{Status: "ready"},
+		},
+		exchange: controlplane.TokenExchangeResponse{
+			AccessToken: "data-token",
+			TokenType:   "Bearer",
+			ExpiresAt:   now.Add(time.Hour),
+		},
+		onExchange: func() {
+			close(entered)
+			<-release
+		},
+	}
+	manager := newManager(t, store, control, &fakeOAuth{}, now)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := manager.ResolveDataAccess(context.Background())
+		done <- err
+	}()
+	<-entered
+	require.NoError(t, manager.SelectWorkspace(context.Background(), "ws-2"))
+	close(release)
+	require.NoError(t, <-done)
+	require.Equal(t, "ws-2", store.saved().WorkspaceID)
+	require.Equal(t, "data-token", store.saved().DataToken)
+	require.Equal(t, "ws-1", store.saved().DataTokenWorkspaceID)
 }
 
 func TestResolveDataAccessUsesCachedToken(t *testing.T) {
@@ -388,7 +463,7 @@ func TestResolveDataAccessUsesCachedToken(t *testing.T) {
 			Provisioning: controlplane.Provisioning{Status: "ready"},
 		},
 	}
-	manager := newManager(store, control, &fakeOAuth{}, now)
+	manager := newManager(t, store, control, &fakeOAuth{}, now)
 
 	access, err := manager.ResolveDataAccess(t.Context())
 	require.NoError(t, err)
@@ -418,7 +493,7 @@ func TestResolveDataAccessExchangesExpiringToken(t *testing.T) {
 			AccessToken: "fresh-data-token", TokenType: "Bearer", ExpiresAt: now.Add(time.Hour),
 		},
 	}
-	manager := newManager(store, control, &fakeOAuth{}, now)
+	manager := newManager(t, store, control, &fakeOAuth{}, now)
 
 	access, err := manager.ResolveDataAccess(t.Context())
 	require.NoError(t, err)
@@ -433,7 +508,7 @@ func TestResolveDataAccessRequiresSelection(t *testing.T) {
 	state.WorkspaceID = ""
 	store := &memoryStore{present: true, state: state}
 	control := &fakeControl{user: controlplane.User{Status: "active"}, workspaces: []controlplane.Workspace{{ID: "ws-1"}}}
-	manager := newManager(store, control, &fakeOAuth{}, now)
+	manager := newManager(t, store, control, &fakeOAuth{}, now)
 
 	_, err := manager.ResolveDataAccess(t.Context())
 	require.ErrorIs(t, err, ErrNoWorkspaceSelected)
@@ -444,7 +519,7 @@ func TestLogoutRevokesAndDeletes(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour))}
 	oauth := &fakeOAuth{}
-	manager := newManager(store, &fakeControl{}, oauth, now)
+	manager := newManager(t, store, &fakeControl{}, oauth, now)
 
 	require.NoError(t, manager.Logout(t.Context()))
 	require.Equal(t, []string{"ort_old"}, oauth.revoked)
@@ -452,14 +527,14 @@ func TestLogoutRevokesAndDeletes(t *testing.T) {
 }
 
 func TestLogoutWithoutCredentials(t *testing.T) {
-	manager := Manager{ControlURL: "https://control.example.com", Credentials: &memoryStore{}, OAuth: &fakeOAuth{}}
+	manager := newManager(t, &memoryStore{}, &fakeControl{}, &fakeOAuth{}, time.Now())
 	require.ErrorIs(t, manager.Logout(t.Context()), ErrNotLoggedIn)
 }
 
 func TestLogoutRemovesCredentialsWhenRevocationFails(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour))}
-	manager := newManager(store, &fakeControl{}, revokeFailOAuth{}, now)
+	manager := newManager(t, store, &fakeControl{}, revokeFailOAuth{}, now)
 
 	err := manager.Logout(t.Context())
 	var cleanup *LogoutCleanupError
@@ -480,14 +555,15 @@ func (revokeFailOAuth) RevokeToken(context.Context, string) error {
 func TestSaveLoginRejectsIncompleteTokenResponse(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{}
-	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
 	for _, tokens := range []controlplane.TokenSet{
 		{RefreshToken: "ort_new", ExpiresIn: 3600},
 		{AccessToken: "oat_new", ExpiresIn: 3600},
 		{AccessToken: "oat_new", RefreshToken: "ort_new"},
 	} {
-		require.Error(t, manager.SaveLogin(tokens))
+		_, _, _, err := manager.SaveLogin(t.Context(), tokens)
+		require.Error(t, err)
 	}
 	require.False(t, store.stored())
 }
@@ -495,9 +571,10 @@ func TestSaveLoginRejectsIncompleteTokenResponse(t *testing.T) {
 func TestSaveLoginStoresBothTokens(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{}
-	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	require.NoError(t, manager.SaveLogin(accessTokens("oat_new", "ort_new")))
+	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	require.NoError(t, err)
 	require.Equal(t, "oat_new", store.saved().AccessToken)
 	require.Equal(t, "ort_new", store.saved().RefreshToken)
 	require.Equal(t, now.Add(time.Hour), store.saved().AccessTokenExpiresAt)
@@ -511,9 +588,10 @@ func TestSaveLoginKeepsStoredSelectionAndClearsDataToken(t *testing.T) {
 	state.DataTokenWorkspaceID = "ws-1"
 	state.DataTokenExpiresAt = now.Add(time.Hour)
 	store := &memoryStore{present: true, state: state}
-	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	require.NoError(t, manager.SaveLogin(accessTokens("oat_new", "ort_new")))
+	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	require.NoError(t, err)
 	require.Equal(t, "ws-1", store.saved().WorkspaceID)
 	require.Equal(t, "oat_new", store.saved().AccessToken)
 	require.Empty(t, store.saved().DataToken)
@@ -524,9 +602,10 @@ func TestSaveLoginKeepsStoredSelectionAndClearsDataToken(t *testing.T) {
 func TestSaveLoginReplacesUnreadableStoredState(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{invalidHi: true}
-	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	require.NoError(t, manager.SaveLogin(accessTokens("oat_new", "ort_new")))
+	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	require.NoError(t, err)
 	require.Equal(t, "oat_new", store.saved().AccessToken)
 	require.Empty(t, store.saved().WorkspaceID)
 }
@@ -534,10 +613,30 @@ func TestSaveLoginReplacesUnreadableStoredState(t *testing.T) {
 func TestSaveLoginReportsCredentialLoadFailure(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{loadErr: errors.New("credential store unavailable")}
-	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	require.ErrorContains(t, manager.SaveLogin(accessTokens("oat_new", "ort_new")), "credential store unavailable")
+	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	require.ErrorContains(t, err, "credential store unavailable")
 	require.False(t, store.stored())
+}
+
+func TestRestoreLoginDoesNotReplaceANewerLogin(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{}
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
+
+	previous, found, written, err := manager.SaveLogin(t.Context(), accessTokens("oat_login", "ort_login"))
+	require.NoError(t, err)
+	require.False(t, found)
+	require.Equal(t, "oat_login", written)
+
+	newer := loginState(now, now.Add(time.Hour))
+	newer.AccessToken = "oat_newer"
+	newer.RefreshToken = "ort_newer"
+	require.NoError(t, store.Save(manager.ControlURL, newer))
+
+	require.NoError(t, manager.RestoreLogin(t.Context(), previous, found, written))
+	require.Equal(t, "oat_newer", store.saved().AccessToken)
 }
 
 func TestClearWorkspaceDropsSelectionAndDataToken(t *testing.T) {
@@ -547,7 +646,7 @@ func TestClearWorkspaceDropsSelectionAndDataToken(t *testing.T) {
 	state.DataTokenWorkspaceID = "ws-1"
 	state.DataTokenExpiresAt = now.Add(time.Hour)
 	store := &memoryStore{present: true, state: state}
-	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
 	require.NoError(t, manager.ClearWorkspace(t.Context()))
 	require.Empty(t, store.saved().WorkspaceID)
@@ -563,21 +662,21 @@ func TestClearWorkspaceWithoutSelectionKeepsCredentials(t *testing.T) {
 	state := loginState(now, now.Add(time.Hour))
 	state.WorkspaceID = ""
 	store := &memoryStore{present: true, state: state}
-	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
 	require.NoError(t, manager.ClearWorkspace(t.Context()))
 	require.Zero(t, store.saves)
 }
 
 func TestClearWorkspaceWithoutLogin(t *testing.T) {
-	manager := Manager{ControlURL: "https://control.example.com", Credentials: &memoryStore{}}
+	manager := newManager(t, &memoryStore{}, &fakeControl{}, &fakeOAuth{}, time.Now())
 	require.ErrorIs(t, manager.ClearWorkspace(t.Context()), ErrNotLoggedIn)
 }
 
 func TestClearWorkspaceReportsSaveFailure(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour)), saveErr: errors.New("disk full")}
-	manager := newManager(store, &fakeControl{}, &fakeOAuth{}, now)
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
 	err := manager.ClearWorkspace(t.Context())
 	require.ErrorContains(t, err, "workspace selection could not be cleared")
