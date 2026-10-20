@@ -72,6 +72,13 @@ func (a *app) newLoginCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
+			if _, stored, err := runtime.auth.RenewableLogin(); err != nil {
+				return NormalizeError(clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "existing credentials could not be read", err), "fix credential store access, then retry"))
+			} else if stored {
+				if err := refuseSecondLogin(cmd.Context(), runtime); err != nil {
+					return NormalizeError(err)
+				}
+			}
 			client, err := runtime.oauthClient(cmd.Context())
 			if err != nil {
 				var controlErr *controlplane.Error
@@ -109,6 +116,24 @@ func (a *app) newLoginCommand() *cobra.Command {
 	}
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
 	return command
+}
+
+// A second login would leave the first grant active in ScopeDB with no local credential left to end it.
+func refuseSecondLogin(ctx context.Context, runtime *runtimeContext) error {
+	accountCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	account, err := runtime.auth.Account(accountCtx)
+	cancel()
+	if err == nil {
+		return clierror.WithHint(clierror.New(clierror.ExitAuth, "already logged in as "+account.User.Email), "run 'scope auth logout' first")
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	// A login whose refresh token is rejected can never work again, so a new login replaces it instead of demanding a logout.
+	if errors.Is(err, auth.ErrNotLoggedIn) || errors.Is(err, auth.ErrLoginExpired) {
+		return nil
+	}
+	return clierror.WithHint(clierror.New(clierror.ExitAuth, "already logged in"), "run 'scope auth status' to see the account, or 'scope auth logout' to sign out first")
 }
 
 const loginCancelled = "login cancelled; no credentials were saved"

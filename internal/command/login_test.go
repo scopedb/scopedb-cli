@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -491,7 +492,7 @@ func TestLoginSelectsTheOnlyOwnedWorkspace(t *testing.T) {
 func TestLoginKeepsTheStoredSelection(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-	saveStoredLogin(t, store, fake.URL, "ws-1")
+	saveExpiredLogin(t, store, fake.URL, "ws-1")
 
 	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
 	require.NoError(t, err)
@@ -505,7 +506,7 @@ func TestLoginKeepsTheStoredSelection(t *testing.T) {
 func TestLoginKeepsTheStoredSelectionWithoutWritingCredentials(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-	saveStoredLogin(t, store, fake.URL, "ws-1")
+	saveExpiredLogin(t, store, fake.URL, "ws-1")
 	counting := &countingStore{Store: store}
 
 	var out, diagnostics bytes.Buffer
@@ -533,7 +534,7 @@ func TestLoginClearsASelectionScheduledForDeletion(t *testing.T) {
 		scheduledForDeletionFixture("ws-1", "Alpha"),
 		workspaceFixture("ws-2", "Beta"),
 	}
-	saveStoredLogin(t, store, fake.URL, "ws-1")
+	saveExpiredLogin(t, store, fake.URL, "ws-1")
 
 	out, diagnostics, err := runInteractiveLogin(t, fake, "\rjj\r")
 	require.NoError(t, err)
@@ -559,7 +560,7 @@ func TestLoginDoesNotSelectASingleWorkspaceScheduledForDeletion(t *testing.T) {
 
 func TestLoginClearsAStaleSelection(t *testing.T) {
 	fake, store := setupCLITest(t)
-	saveStoredLogin(t, store, fake.URL, "ws-1")
+	saveExpiredLogin(t, store, fake.URL, "ws-1")
 
 	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
 	require.NoError(t, err)
@@ -573,7 +574,7 @@ func TestLoginClearsAStaleSelection(t *testing.T) {
 func TestLoginSelectsTheOnlyWorkspaceOfTheNewAccount(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta")}
-	saveStoredLogin(t, store, fake.URL, "ws-1")
+	saveExpiredLogin(t, store, fake.URL, "ws-1")
 
 	out, _, err := runInteractiveLogin(t, fake, "\r")
 	require.NoError(t, err)
@@ -581,6 +582,79 @@ func TestLoginSelectsTheOnlyWorkspaceOfTheNewAccount(t *testing.T) {
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, "ws-2", state.WorkspaceID)
+}
+
+func TestLoginRefusesWhileALoginIsStored(t *testing.T) {
+	fake, store := setupCLITest(t)
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
+	require.Error(t, err)
+	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(NormalizeError(err)))
+	require.Contains(t, clierror.Render(err), "already logged in as dev@example.com")
+	require.Contains(t, clierror.Render(err), "run 'scope auth logout' first")
+	require.Empty(t, out)
+	require.NotContains(t, diagnostics, "Open this URL to approve the login")
+	require.Empty(t, fake.AuthorizationQuery)
+	require.Empty(t, fake.TokenForms)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
+	require.Equal(t, "ws-1", state.WorkspaceID)
+}
+
+func TestLoginRefusesWithoutTheAccountWhenLookupFails(t *testing.T) {
+	fake, store := setupCLITest(t)
+	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/user" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+			return
+		}
+		fake.serve(w, r)
+	}))
+	t.Cleanup(controlServer.Close)
+	fake.URL = controlServer.URL
+	fake.Issuer = controlServer.URL
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runInteractiveLogin(t, fake, "\r")
+	require.Error(t, err)
+	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(NormalizeError(err)))
+	require.Contains(t, clierror.Render(err), "already logged in")
+	require.NotContains(t, clierror.Render(err), "as dev@example.com")
+	require.Contains(t, clierror.Render(err), "scope auth status")
+	require.Empty(t, out)
+}
+
+func TestLoginReplacesALoginThatScopeDBRejects(t *testing.T) {
+	fake, store := setupCLITest(t)
+	var refreshes atomic.Int32
+	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/oauth/token" {
+			_ = r.ParseForm()
+			if r.PostForm.Get("grant_type") == "refresh_token" {
+				refreshes.Add(1)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"invalid_grant","error_description":"invalid_grant"}`))
+				return
+			}
+		}
+		fake.serve(w, r)
+	}))
+	t.Cleanup(controlServer.Close)
+	fake.URL = controlServer.URL
+	fake.Issuer = controlServer.URL
+	saveLogin(t, store, fake.URL, "ws-1", time.Now().Add(30*time.Second), time.Now().Add(24*time.Hour))
+
+	out, _, err := runInteractiveLogin(t, fake, "\r")
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Equal(t, int32(1), refreshes.Load())
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ort_refresh", state.RefreshToken)
 }
 func TestLoginWorkspaceMenuSelectsACandidate(t *testing.T) {
 	fake, store := setupCLITest(t)
@@ -741,7 +815,7 @@ func TestLoginPreservesUnreadableCredentialFile(t *testing.T) {
 
 	out, _, err := runInteractiveLogin(t, fake, "\r")
 	require.ErrorContains(t, err, "existing credentials could not be read")
-	require.Equal(t, []string{"ort_refresh"}, fake.RevokedTokens)
+	require.Empty(t, fake.RevokedTokens)
 	require.Empty(t, out)
 	preserved, err := os.ReadFile(paths.CredentialsFile)
 	require.NoError(t, err)

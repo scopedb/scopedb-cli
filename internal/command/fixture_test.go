@@ -351,11 +351,21 @@ func setupCLITest(t *testing.T) (*fakeControlPlane, *credential.PlaintextStore) 
 
 func saveStoredLogin(t *testing.T, store *credential.PlaintextStore, controlURL, workspaceID string) credential.State {
 	t.Helper()
+	return saveLogin(t, store, controlURL, workspaceID, time.Now().Add(time.Hour), time.Now().Add(24*time.Hour))
+}
+
+func saveExpiredLogin(t *testing.T, store *credential.PlaintextStore, controlURL, workspaceID string) credential.State {
+	t.Helper()
+	return saveLogin(t, store, controlURL, workspaceID, time.Now().Add(-2*time.Hour), time.Now().Add(-time.Hour))
+}
+
+func saveLogin(t *testing.T, store *credential.PlaintextStore, controlURL, workspaceID string, accessExpiresAt, refreshExpiresAt time.Time) credential.State {
+	t.Helper()
 	state := credential.State{
 		AccessToken:           "oat_access",
-		AccessTokenExpiresAt:  time.Now().Add(time.Hour),
+		AccessTokenExpiresAt:  accessExpiresAt,
 		RefreshToken:          "ort_refresh",
-		RefreshTokenExpiresAt: time.Now().Add(24 * time.Hour),
+		RefreshTokenExpiresAt: refreshExpiresAt,
 		WorkspaceID:           workspaceID,
 	}
 	require.NoError(t, store.Save(controlURL, state))

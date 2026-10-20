@@ -123,6 +123,22 @@ func (m *Manager) MachineAccess() (Access, bool, error) {
 	return Access{Endpoint: endpoint, APIKey: apiKey, Mode: "api_key"}, true, nil
 }
 
+// RenewableLogin reports the stored login that can still be renewed, without refreshing it.
+func (m *Manager) RenewableLogin() (credential.State, bool, error) {
+	state, err := m.load()
+	switch {
+	case errors.Is(err, ErrNotLoggedIn):
+		return credential.State{}, false, nil
+	case err != nil:
+		return credential.State{}, false, err
+	}
+	// An expired refresh token cannot renew the login, so the record can no longer work and a new login may replace it.
+	if !state.RefreshTokenExpiresAt.IsZero() && !state.RefreshTokenExpiresAt.After(m.now()) {
+		return credential.State{}, false, nil
+	}
+	return state, true, nil
+}
+
 func (m *Manager) LoadAccess(ctx context.Context) (credential.State, error) {
 	state, err := m.load()
 	if err != nil {
