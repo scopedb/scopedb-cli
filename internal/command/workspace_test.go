@@ -63,7 +63,7 @@ func TestStatusReportsOAuthLogin(t *testing.T) {
 	require.Equal(t, "dev@example.com", view.Email)
 	require.Equal(t, "ws-1", view.WorkspaceID)
 	require.Equal(t, "https://data.example.com", view.Endpoint)
-	require.NotEmpty(t, view.LoginExpiresAt)
+	require.NotEmpty(t, view.RefreshTokenExpiresAt)
 }
 
 func TestStatusClearsUnavailableWorkspace(t *testing.T) {

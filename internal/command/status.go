@@ -26,14 +26,14 @@ import (
 )
 
 type statusView struct {
-	ControlURL       string `json:"control_url,omitempty"`
-	Email            string `json:"email,omitempty"`
-	CredentialSource string `json:"credential_source"`
-	UserStatus       string `json:"user_status,omitempty"`
-	LoginExpiresAt   string `json:"login_expires_at,omitempty"`
-	WorkspaceID      string `json:"workspace_id,omitempty"`
-	WorkspaceName    string `json:"workspace_name,omitempty"`
-	Endpoint         string `json:"endpoint,omitempty"`
+	ControlURL            string `json:"control_url,omitempty"`
+	Email                 string `json:"email,omitempty"`
+	CredentialSource      string `json:"credential_source"`
+	UserStatus            string `json:"user_status,omitempty"`
+	RefreshTokenExpiresAt string `json:"refresh_token_expires_at,omitempty"`
+	WorkspaceID           string `json:"workspace_id,omitempty"`
+	WorkspaceName         string `json:"workspace_name,omitempty"`
+	Endpoint              string `json:"endpoint,omitempty"`
 }
 
 func (a *app) newStatusCommand() *cobra.Command {
@@ -80,12 +80,12 @@ func (a *app) newStatusCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			view := statusView{
-				ControlURL:       runtime.config.ControlURL,
-				Email:            account.User.Email,
-				CredentialSource: runtime.config.CredentialStore,
-				UserStatus:       account.User.Status,
-				LoginExpiresAt:   loginExpiry(state.RefreshTokenExpiresAt),
-				WorkspaceID:      account.SelectedWorkspaceID,
+				ControlURL:            runtime.config.ControlURL,
+				Email:                 account.User.Email,
+				CredentialSource:      runtime.config.CredentialStore,
+				UserStatus:            account.User.Status,
+				RefreshTokenExpiresAt: refreshTokenExpiry(state.RefreshTokenExpiresAt),
+				WorkspaceID:           account.SelectedWorkspaceID,
 			}
 			if account.SelectedWorkspaceID != "" {
 				details, err := runtime.control.GetWorkspace(cmd.Context(), state.AccessToken, account.SelectedWorkspaceID)
@@ -105,7 +105,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 	return command
 }
 
-func loginExpiry(expiresAt time.Time) string {
+func refreshTokenExpiry(expiresAt time.Time) string {
 	if expiresAt.IsZero() {
 		return ""
 	}
@@ -121,7 +121,7 @@ func renderStatus(out io.Writer, format string, view statusView) error {
 		{"Credential source", view.CredentialSource},
 		{"Email", emptyDash(view.Email)},
 		{"User status", emptyDash(view.UserStatus)},
-		{"Login expires", emptyDash(view.LoginExpiresAt)},
+		{"Refresh token expires", emptyDash(view.RefreshTokenExpiresAt)},
 		{"Workspace", emptyDash(view.WorkspaceName)},
 		{"Workspace ID", emptyDash(view.WorkspaceID)},
 		{"Endpoint", emptyDash(view.Endpoint)},
