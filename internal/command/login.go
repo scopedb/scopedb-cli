@@ -19,6 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,6 +44,7 @@ const (
 
 func (a *app) newLoginCommand() *cobra.Command {
 	var noBrowser, insecureStorage bool
+	var format, workspace string
 	command := &cobra.Command{
 		Use:   "login",
 		Short: "Log in through the ScopeDB Console",
@@ -49,7 +52,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 			"Opens your browser by default and completes the login automatically after approval.\n\n" +
 			"Use --no-browser to print a device verification link and code instead, for example\n" +
 			"in an SSH session or container. Approve the code in a browser on another device.\n\n" +
-			"Keeps your selected workspace or selects the first available one and prints its\n" +
+			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
 			"name and ID. Use 'scope workspace use <id-or-name>' to switch afterwards.\n" +
 			"Login does not require an interactive terminal.",
 		Example: "  # Sign in using your browser\n" +
@@ -58,6 +61,9 @@ func (a *app) newLoginCommand() *cobra.Command {
 			"  scope auth login --no-browser",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := validateTextFormat(format); err != nil {
+				return err
+			}
 			paths, cfg, err := a.loadConfig(cmd)
 			if err != nil {
 				return NormalizeError(err)
@@ -106,9 +112,12 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return err
 			}
 
-			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime)
+			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, workspace)
 			if err != nil {
 				return NormalizeError(err)
+			}
+			if format == structuredFormatJSON {
+				return writeJSON(a.out, selection.result())
 			}
 			if selection.email != "" {
 				_, err = fmt.Fprintf(a.out, "Logged in as %s.\n", selection.email)
@@ -122,6 +131,8 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().BoolVar(&noBrowser, "no-browser", false, "sign in with a device code without opening a browser")
+	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
+	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace; defaults to the first available workspace by ID")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
 	return command
 }
@@ -150,9 +161,23 @@ type loginSelection struct {
 	kept      bool
 }
 
+type loginResult struct {
+	Email     string             `json:"email,omitempty"`
+	Workspace *workspaceListItem `json:"workspace,omitempty"`
+}
+
+func (s loginSelection) result() loginResult {
+	result := loginResult{Email: s.email}
+	if s.workspace != nil {
+		view := workspaceListItemFor(*s.workspace, true)
+		result.Workspace = &view
+	}
+	return result
+}
+
 // selectLoginWorkspace decides which workspace the new login uses. The account lookup stays best
 // effort, because a login that is already stored must not fail when only the account check did.
-func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext) (loginSelection, error) {
+func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext, requested string) (loginSelection, error) {
 	accountCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	account, err := runtime.auth.Account(accountCtx)
 	cancel()
@@ -162,6 +187,9 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext)
 		}
 		if errors.Is(err, context.Canceled) {
 			return loginSelection{}, err
+		}
+		if strings.TrimSpace(requested) != "" {
+			return loginSelection{}, workspaceSelectionError(err, requested)
 		}
 		a.warnAccountUnchecked()
 		return loginSelection{}, nil
@@ -174,20 +202,34 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext)
 	}
 
 	selection := loginSelection{email: account.User.Email}
-	if account.SelectedWorkspaceID != "" {
+	switch {
+	case strings.TrimSpace(requested) != "":
+		workspace, err := resolveWorkspace(account.Workspaces, requested)
+		if err != nil {
+			return loginSelection{}, workspaceSelectionError(err, requested)
+		}
+		if workspace.ScheduledForDeletion() {
+			return loginSelection{}, workspaceSelectionError(clierror.WithHint(
+				clierror.New(clierror.ExitUsage, fmt.Sprintf("workspace %s (%s) is scheduled for deletion", workspace.Name(), workspace.ID)),
+				"restore it in the Console before selecting it",
+			), requested)
+		}
+		if err := runtime.auth.SelectWorkspace(ctx, workspace.ID); err != nil {
+			return loginSelection{}, workspaceSelectionError(err, requested)
+		}
+		selection.workspace = &workspace
+	case account.SelectedWorkspaceID != "":
 		workspace, _ := workspaceByID(account.Workspaces, account.SelectedWorkspaceID)
 		selection.workspace = &workspace
 		selection.kept = true
-	} else {
-		for _, workspace := range account.Workspaces {
-			if workspace.ScheduledForDeletion() {
-				continue
-			}
+	default:
+		available := availableWorkspaces(account.Workspaces)
+		if len(available) > 0 {
+			workspace := available[0]
 			if err := runtime.auth.SelectWorkspace(ctx, workspace.ID); err != nil {
 				return loginSelection{}, err
 			}
 			selection.workspace = &workspace
-			break
 		}
 	}
 	if selection.workspace == nil {
@@ -196,6 +238,27 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext)
 		}
 	}
 	return selection, nil
+}
+
+func workspaceSelectionError(err error, requested string) error {
+	result := NormalizeError(err)
+	var cliErr *clierror.Error
+	if errors.As(result, &cliErr) {
+		cliErr.Message = fmt.Sprintf("login saved, but workspace %s was not selected: %s", requested, cliErr.Message)
+		cliErr.Hint = fmt.Sprintf("run 'scope workspace use %s'", requested)
+	}
+	return result
+}
+
+func availableWorkspaces(workspaces []controlplane.Workspace) []controlplane.Workspace {
+	available := make([]controlplane.Workspace, 0, len(workspaces))
+	for _, workspace := range workspaces {
+		if !workspace.ScheduledForDeletion() {
+			available = append(available, workspace)
+		}
+	}
+	sort.Slice(available, func(i, j int) bool { return available[i].ID < available[j].ID })
+	return available
 }
 
 func (a *app) renderLoginSelection(selection loginSelection) error {

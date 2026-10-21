@@ -52,9 +52,9 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-`scope auth login` opens your browser, asks you to approve the request in the ScopeDB Console, and stores the login in the operating system keyring. CLI login requires ScopeDB v0.23.0 or newer, and upgrading from an older CLI asks you to log in again. Use `scope auth login --no-browser` to approve a device code from another device, for example in an SSH session or container; it prints a verification link and code without opening a local browser. Login does not require an interactive terminal. If the default browser flow cannot open a browser, it prints the authorization URL and keeps waiting for the redirect so you can open the URL yourself. Authorization instructions and progress go to stderr; the login result goes to stdout. For unattended access, use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`. Get machine-readable state from `scope auth status --format json` and `scope workspace list --format json`.
+`scope auth login` opens your browser, asks you to approve the request in the ScopeDB Console, and stores the login in the operating system keyring. CLI login requires ScopeDB v0.23.0 or newer, and upgrading from an older CLI asks you to log in again. Use `scope auth login --no-browser` to approve a device code from another device, for example in an SSH session or container; it prints a verification link and code without opening a local browser. Login does not require an interactive terminal. If the default browser flow cannot open a browser, it prints the authorization URL and keeps waiting for the redirect so you can open the URL yourself. Authorization instructions and progress go to stderr; `--format text|json` selects the result format on stdout. For unattended access, use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; `scope auth status --format json` and `scope workspace list --format json` report machine-readable state.
 
-The login keeps the workspace already selected for the profile if the account still owns it and it is not scheduled for deletion. Otherwise, it selects the first workspace returned by ScopeDB that is not scheduled for deletion, even when several workspaces are available. The result prints the selected workspace name and ID. Use `scope workspace use <id-or-name>` to switch afterwards.
+Pass `--workspace <id-or-name>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account still owns it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. The text and JSON results report the selected workspace name and ID. Use `scope workspace use <id-or-name>` to switch afterwards.
 
 A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status, or `scope workspace create` to create your first workspace. Once a workspace is available, select it without logging in again:
 
@@ -82,7 +82,7 @@ Files created with `scope query --output` have permissions `0600` on Unix-like s
 
 ## JSON output
 
-Business commands other than `auth login` support `--format json` for scripts while keeping their usual human-readable output by default. Action commands return an object describing the result; `scope auth logout` reports `changed: true` when it clears an existing login and `changed: false` when already logged out.
+Business commands support `--format json` for scripts while keeping their usual human-readable output by default. Action commands return an object describing the result; `scope auth logout` reports `changed: true` when it clears an existing login and `changed: false` when already logged out.
 
 ```sh
 scope auth status --format json

@@ -758,7 +758,7 @@ func TestLoginWithoutAnInteractiveTerminalSelectsFirstWorkspace(t *testing.T) {
 					args:          flow.args,
 				})
 				require.NoError(t, err)
-				require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", out)
+				require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Alpha (ws-1).\n", out)
 				require.NotContains(t, diagnostics, "no workspace is selected")
 				if !terminal.diagnostics {
 					require.NotContains(t, diagnostics, "\x1b")
@@ -766,7 +766,7 @@ func TestLoginWithoutAnInteractiveTerminalSelectsFirstWorkspace(t *testing.T) {
 				state, err := store.Load(fake.URL)
 				require.NoError(t, err)
 				require.Equal(t, "ort_refresh", state.RefreshToken)
-				require.Equal(t, "ws-2", state.WorkspaceID)
+				require.Equal(t, "ws-1", state.WorkspaceID)
 			})
 		}
 	}
@@ -804,8 +804,121 @@ func TestLoginSelectsFirstAvailableWorkspace(t *testing.T) {
 	}
 	out, _, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
+	require.Contains(t, out, "Using workspace Alpha (ws-1).")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-1", state.WorkspaceID)
+}
+
+func TestLoginSelectsRequestedWorkspaceByName(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, _, err := runLoginScenario(t, fake, loginScenario{
+		args: []string{"auth", "login", "--insecure-storage", "--workspace", "beta"},
+	})
+	require.NoError(t, err)
 	require.Contains(t, out, "Using workspace Beta (ws-2).")
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, "ws-2", state.WorkspaceID)
+}
+
+func TestLoginSelectsRequestedWorkspaceByID(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, _, err := runLoginScenario(t, fake, loginScenario{
+		args: []string{"auth", "login", "--insecure-storage", "--workspace", "ws-2"},
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "Using workspace Beta (ws-2).")
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-2", state.WorkspaceID)
+}
+
+func TestLoginRejectsUnknownRequestedWorkspace(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+
+	out, _, err := runLoginScenario(t, fake, loginScenario{
+		args: []string{"auth", "login", "--insecure-storage", "--workspace", "missing"},
+	})
+	require.Equal(t, clierror.ExitNotFound, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "login saved, but workspace missing was not selected")
+	require.Contains(t, clierror.Render(err), "scope workspace use missing")
+	require.Empty(t, out)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginRejectsScheduledRequestedWorkspace(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{scheduledForDeletionFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+
+	out, _, err := runLoginScenario(t, fake, loginScenario{
+		args: []string{"auth", "login", "--insecure-storage", "--workspace", "ws-1"},
+	})
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "login saved, but workspace ws-1 was not selected")
+	require.Contains(t, clierror.Render(err), "scheduled for deletion")
+	require.Empty(t, out)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginReportsSelectedWorkspaceAsJSON(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta"), workspaceFixture("ws-1", "Alpha")}
+
+	out, _, err := runLoginScenario(t, fake, loginScenario{
+		args: []string{"auth", "login", "--insecure-storage", "--format", "json"},
+	})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"email":"dev@example.com","workspace":{"id":"ws-1","display_name":"Alpha","status":"ready","current":true}}`, out)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Equal(t, "ws-1", state.WorkspaceID)
+}
+
+func TestLoginReportsNoWorkspaceAsJSON(t *testing.T) {
+	fake, store := setupCLITest(t)
+
+	out, _, err := runLoginScenario(t, fake, loginScenario{
+		args: []string{"auth", "login", "--insecure-storage", "--format", "json"},
+	})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"email":"dev@example.com"}`, out)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
+}
+
+func TestLoginRequestedWorkspaceLookupFailureIsReported(t *testing.T) {
+	fake, store := setupCLITest(t)
+	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/user" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+			return
+		}
+		fake.serve(w, r)
+	}))
+	t.Cleanup(controlServer.Close)
+	fake.URL = controlServer.URL
+	fake.Issuer = controlServer.URL
+
+	out, _, err := runLoginScenario(t, fake, loginScenario{
+		args: []string{"auth", "login", "--insecure-storage", "--workspace", "ws-1"},
+	})
+	require.Equal(t, clierror.ExitTemporary, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "login saved, but workspace ws-1 was not selected")
+	require.Contains(t, clierror.Render(err), "scope workspace use ws-1")
+	require.Empty(t, out)
+	state, err := store.Load(fake.URL)
+	require.NoError(t, err)
+	require.Empty(t, state.WorkspaceID)
 }
