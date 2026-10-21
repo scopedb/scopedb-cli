@@ -111,17 +111,7 @@ scope query --format json 'SELECT 1 AS ready'
 
 Both variables are required and override the saved login for queries, `auth status`, and connection checks. Setting only one fails instead of falling back to your login. Unset both to return to your logged-in workspace.
 
-## Manage API keys
-
-`scope api-key list`, `scope api-key create`, and `scope api-key revoke` manage persistent API keys for the selected workspace. `create` prints the secret to stdout once; copy it before the command exits. These keys are ordinary persistent keys and stay active after you log out or the login grant expires.
-
-```sh
-scope api-key list
-scope api-key create my-app --expires-in 720h
-scope api-key revoke my-app --yes
-```
-
-For SDK setup, get the endpoint with `scope workspace get`, create an application key with `scope api-key create`, and use the same endpoint and key in your SDK configuration. Run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
+For SDK setup, get the endpoint with `scope workspace get` and create an application key with `scope api-key create <name>`. Use the same endpoint and key in your SDK configuration, then run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
 
 ## Development
 

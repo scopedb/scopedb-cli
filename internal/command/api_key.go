@@ -15,13 +15,11 @@
 package command
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/spf13/cobra"
 )
@@ -43,26 +41,6 @@ func (a *app) newAPIKeyCommand() *cobra.Command {
 	return command
 }
 
-type apiKeyAccess struct {
-	token       string
-	workspaceID string
-}
-
-func (a *app) loadAPIKeyAccess(ctx context.Context, runtime *runtimeContext) (apiKeyAccess, error) {
-	account, err := runtime.auth.Account(ctx)
-	if err != nil {
-		return apiKeyAccess{}, err
-	}
-	if err := auth.RequireWorkspace(account); err != nil {
-		return apiKeyAccess{}, err
-	}
-	state, err := runtime.auth.LoadAccess(ctx)
-	if err != nil {
-		return apiKeyAccess{}, err
-	}
-	return apiKeyAccess{token: state.AccessToken, workspaceID: account.SelectedWorkspaceID}, nil
-}
-
 func (a *app) newAPIKeyListCommand() *cobra.Command {
 	var format string
 	var limit int
@@ -81,11 +59,11 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			access, err := a.loadAPIKeyAccess(cmd.Context(), runtime)
+			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			keys, err := runtime.control.ListAPIKeys(cmd.Context(), access.token, access.workspaceID)
+			keys, err := runtime.control.ListAPIKeys(cmd.Context(), state.SessionToken, state.WorkspaceID)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -121,6 +99,7 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 	return command
 }
 
+// apiKeyListItem intentionally excludes the one-time secret returned by create.
 type apiKeyListItem struct {
 	ID        string     `json:"id"`
 	Name      string     `json:"name"`
@@ -157,11 +136,11 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			access, err := a.loadAPIKeyAccess(cmd.Context(), runtime)
+			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			created, err := runtime.control.CreateAPIKey(cmd.Context(), access.token, access.workspaceID, controlplane.CreateAPIKeyRequest{
+			created, err := runtime.control.CreateAPIKey(cmd.Context(), state.SessionToken, state.WorkspaceID, controlplane.CreateAPIKeyRequest{
 				Name:      name,
 				Tags:      tags,
 				ExpiresAt: expiresAt,
@@ -253,11 +232,11 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			access, err := a.loadAPIKeyAccess(cmd.Context(), runtime)
+			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			if err := runtime.control.RevokeAPIKey(cmd.Context(), access.token, access.workspaceID, name); err != nil {
+			if err := runtime.control.RevokeAPIKey(cmd.Context(), state.SessionToken, state.WorkspaceID, name); err != nil {
 				return NormalizeError(err)
 			}
 			if format == structuredFormatJSON {

@@ -21,19 +21,14 @@ If your account is awaiting approval or has no workspace, follow the instruction
 
 ## Get application credentials
 
-Show the selected workspace's endpoint:
+Show the selected workspace's endpoint and create a key for your application:
 
 ```sh
 scope workspace get
-```
-
-Create an application key with `scope api-key create` in the selected workspace. The key is shown only once; store it in your application's secret manager. These are persistent keys, so they stay active after you log out or the login grant expires. Use separate keys for development, staging, and production.
-
-```sh
 scope api-key create my-app --expires-in 720h
-scope api-key list
-scope api-key revoke my-app --yes
 ```
+
+The key is shown only once on stdout. Store it in your application's secret manager. The command requires a CLI login; an existing API key cannot manage keys through the CLI. Use separate keys for development, staging, and production.
 
 Copy the workspace's data-plane endpoint, without appending `/v1/statements`. Set both values in your application environment or local shell:
 
@@ -45,13 +40,13 @@ scope doctor --timeout 15s
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-`scope auth status` shows `api_key` mode when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login and warns when environment credentials override data commands. Workspace details also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
+`scope auth status` shows `api_key` mode when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login session and warns when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
 
 ```sh
 unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
 ```
 
-To end your login, run `scope auth logout` after unsetting both variables. The command revokes the login in ScopeDB and then removes the local credentials; if ScopeDB cannot be reached, it reports that the login stays valid until it expires or is revoked in the Console. The command refuses to log out while machine credentials are configured, and it never affects application API keys.
+To end your login session, run `scope auth logout` after unsetting both variables. The command refuses to log out while machine credentials are configured; it does not revoke application API keys.
 
 ## Connect an SDK
 

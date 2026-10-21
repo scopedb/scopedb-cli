@@ -57,9 +57,6 @@ type fakeControlPlane struct {
 	Details             map[string]controlplane.WorkspaceDetails
 	Exchange            controlplane.TokenExchangeResponse
 	Signup              controlplane.SignupConfig
-	APIKeys             []controlplane.APIKey
-	APIKeyRequests      []controlplane.CreateAPIKeyRequest
-	RevokedAPIKeys      []string
 	TokenResponseMutate func(*controlplane.TokenSet)
 
 	Issuer                string
@@ -191,59 +188,20 @@ func (f *fakeControlPlane) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (f *fakeControlPlane) serveWorkspace(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/workspaces/")
-	if strings.HasSuffix(path, "/token-exchange") {
+	id := strings.TrimPrefix(r.URL.Path, "/api/workspaces/")
+	if strings.HasSuffix(id, "/token-exchange") {
 		f.mu.Lock()
 		f.ExchangeCalls++
 		f.mu.Unlock()
 		f.writeJSON(w, http.StatusOK, f.Exchange)
 		return
 	}
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) == 2 && parts[1] == "api-keys" {
-		f.serveAPIKeys(w, r)
-		return
-	}
-	if len(parts) == 2 && strings.HasPrefix(parts[1], "api-keys/") {
-		f.mu.Lock()
-		f.RevokedAPIKeys = append(f.RevokedAPIKeys, strings.TrimPrefix(parts[1], "api-keys/"))
-		f.mu.Unlock()
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-	details, ok := f.Details[path]
+	details, ok := f.Details[id]
 	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 	f.writeJSON(w, http.StatusOK, details)
-}
-
-func (f *fakeControlPlane) serveAPIKeys(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		keys := make([]controlplane.APIKey, len(f.APIKeys))
-		copy(keys, f.APIKeys)
-		f.writeJSON(w, http.StatusOK, keys)
-	case http.MethodPost:
-		var request controlplane.CreateAPIKeyRequest
-		assert.NoError(f.t, json.NewDecoder(r.Body).Decode(&request))
-		f.mu.Lock()
-		f.APIKeyRequests = append(f.APIKeyRequests, request)
-		f.mu.Unlock()
-		f.writeJSON(w, http.StatusCreated, controlplane.APIKey{
-			ID:        "key-new",
-			Name:      request.Name,
-			Tags:      request.Tags,
-			Status:    "active",
-			CreatedAt: time.Now().UTC(),
-			ExpiresAt: request.ExpiresAt,
-			Key:       "secret-key",
-		})
-	default:
-		f.t.Errorf("unexpected API key method: %s %s", r.Method, r.URL.Path)
-		http.NotFound(w, r)
-	}
 }
 
 func (f *fakeControlPlane) serveToken(w http.ResponseWriter, r *http.Request) {

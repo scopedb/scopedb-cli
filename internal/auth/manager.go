@@ -215,6 +215,28 @@ func (m *Manager) RestoreLogin(ctx context.Context, state credential.State, foun
 	return m.deleteIgnoringMissing()
 }
 
+type WorkspaceSession struct {
+	SessionToken string
+	WorkspaceID  string
+}
+
+// LoadWorkspaceSession exposes the OAuth access token and selected workspace to workspace-scoped
+// control-plane commands that predate the OAuth login.
+func (m *Manager) LoadWorkspaceSession(ctx context.Context) (WorkspaceSession, error) {
+	account, err := m.Account(ctx)
+	if err != nil {
+		return WorkspaceSession{}, err
+	}
+	if err := RequireWorkspace(account); err != nil {
+		return WorkspaceSession{}, err
+	}
+	state, err := m.LoadAccess(ctx)
+	if err != nil {
+		return WorkspaceSession{}, err
+	}
+	return WorkspaceSession{SessionToken: state.AccessToken, WorkspaceID: account.SelectedWorkspaceID}, nil
+}
+
 func (m *Manager) Account(ctx context.Context) (Account, error) {
 	account, _, err := m.account(ctx)
 	return account, err
