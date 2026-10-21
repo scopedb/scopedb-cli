@@ -42,24 +42,23 @@ const (
 	deviceMaxBackoff   = 30 * time.Second
 )
 
+var errBrowserUnavailable = errors.New("browser could not be opened")
+
 func (a *app) newLoginCommand() *cobra.Command {
-	var noBrowser, insecureStorage bool
+	var insecureStorage bool
 	var format, workspace string
 	command := &cobra.Command{
 		Use:   "login",
 		Short: "Log in through the ScopeDB Console",
 		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
-			"Opens your browser by default and completes the login automatically after approval.\n\n" +
-			"Use --no-browser to print a device verification link and code instead, for example\n" +
-			"in an SSH session or container. Approve the code in a browser on another device.\n\n" +
+			"Opens your browser and completes the login after approval. When no browser can be opened,\n" +
+			"the CLI prints a device verification link and code instead; press Enter to open the link\n" +
+			"locally, or approve the code in a browser on another device.\n\n" +
 			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
 			"name and ID. Use 'scope workspace use <id-or-name>' to switch afterwards.\n" +
 			"Login does not require an interactive terminal.",
-		Example: "  # Sign in using your browser\n" +
-			"  scope auth login\n\n" +
-			"  # Approve a device code without opening a local browser\n" +
-			"  scope auth login --no-browser",
-		Args: cobra.NoArgs,
+		Example: "  scope auth login",
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateTextFormat(format); err != nil {
 				return err
@@ -99,11 +98,12 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 
-			var tokens controlplane.TokenSet
-			if noBrowser {
+			tokens, err := a.loopbackLogin(cmd.Context(), client)
+			if errors.Is(err, errBrowserUnavailable) {
+				if _, writeErr := fmt.Fprintln(a.errOut, "Could not open a browser; using a device code instead."); writeErr != nil {
+					return NormalizeError(writeErr)
+				}
 				tokens, err = a.deviceLogin(cmd.Context(), client)
-			} else {
-				tokens, err = a.loopbackLogin(cmd.Context(), client)
 			}
 			if err != nil {
 				return NormalizeError(err)
@@ -130,7 +130,6 @@ func (a *app) newLoginCommand() *cobra.Command {
 			return a.renderLoginSelection(selection)
 		},
 	}
-	command.Flags().BoolVar(&noBrowser, "no-browser", false, "sign in with a device code without opening a browser")
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace; defaults to the first available workspace by ID")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
@@ -289,13 +288,11 @@ func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (co
 	defer func() { _ = listener.Close() }()
 
 	target := client.AuthorizationURL(state, pkce.Challenge, listener.RedirectURI())
+	if err := a.openURL(target); err != nil {
+		return controlplane.TokenSet{}, fmt.Errorf("%w: %v", errBrowserUnavailable, err)
+	}
 	if _, err := fmt.Fprintf(a.errOut, "Open this URL to approve the login:\n%s\n", target); err != nil {
 		return controlplane.TokenSet{}, err
-	}
-	if err := a.openURL(target); err != nil {
-		if _, writeErr := fmt.Fprintf(a.errOut, "Could not open a browser (%s); open the URL above to continue.\n", err); writeErr != nil {
-			return controlplane.TokenSet{}, writeErr
-		}
 	}
 
 	waitCtx, cancel := context.WithTimeout(ctx, authorizationRequestTTL)
@@ -334,6 +331,7 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 	if err := a.writeDeviceInstructions(device); err != nil {
 		return controlplane.TokenSet{}, err
 	}
+	a.offerBrowserOpen(device)
 	stopWaiting := a.startAuthorizationWait(time.Duration(device.ExpiresIn) * time.Second)
 	defer stopWaiting()
 
@@ -391,6 +389,36 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 			return controlplane.TokenSet{}, err
 		}
 	}
+}
+
+// offerBrowserOpen lets a user on the same machine open the verification page without making the
+// device flow depend on a browser: nothing opens until Enter is pressed, and polling continues.
+func (a *app) offerBrowserOpen(device controlplane.DeviceAuthorization) {
+	if a.isInputTerminal == nil || !a.isInputTerminal() {
+		return
+	}
+	target := device.VerificationURIComplete
+	if target == "" {
+		target = device.VerificationURI
+	}
+	if _, err := fmt.Fprintf(a.errOut, "Press Enter to open %s in your browser...\n", target); err != nil {
+		return
+	}
+	go func() {
+		for {
+			line, err := a.input.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if strings.TrimSpace(line) != "" {
+				continue
+			}
+			if err := a.openURL(target); err != nil {
+				_, _ = fmt.Fprintf(a.errOut, "Could not open a browser (%s); open the URL above to continue.\n", err)
+			}
+			return
+		}
+	}()
 }
 
 func (a *app) writeDeviceInstructions(device controlplane.DeviceAuthorization) error {

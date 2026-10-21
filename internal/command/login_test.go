@@ -219,36 +219,82 @@ func TestDeviceLoginPrintsThePrefilledLinkAndKeepsTheCode(t *testing.T) {
 	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
 }
 
-func TestDeviceLoginNeverOpensABrowser(t *testing.T) {
+func TestDeviceLoginDoesNotOpenAutomatically(t *testing.T) {
 	fake, _ := setupCLITest(t)
-	var opened []string
 	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		input:         "\r",
-		inputTerminal: true,
-		errorTerminal: true,
-		openURL:       func(target string) error { opened = append(opened, target); return nil },
-		args:          []string{"auth", "login", "--insecure-storage", "--no-browser"},
+		openURL: failLoopbackOpenURL,
+		args:    []string{"auth", "login", "--insecure-storage"},
 	})
 	require.NoError(t, err)
-	require.Empty(t, opened)
 	require.Equal(t, "Logged in as dev@example.com.\n", out)
 	require.Contains(t, diagnostics, "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP")
+	require.NotContains(t, diagnostics, "Press Enter to open")
+}
+
+func TestDeviceLoginOpensTheCompleteLinkOnEnter(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	opened := make(chan string, 1)
+	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+		input:         "\n",
+		inputTerminal: true,
+		errorTerminal: true,
+		openURL: func(target string) error {
+			if strings.Contains(target, "/oauth/device") {
+				opened <- target
+				return nil
+			}
+			return errors.New("no browser available")
+		},
+		args: []string{"auth", "login", "--insecure-storage"},
+	})
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as dev@example.com.")
+	require.Contains(t, diagnostics, "Press Enter to open https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP in your browser...")
+	select {
+	case target := <-opened:
+		require.Equal(t, "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP", target)
+	case <-time.After(time.Second):
+		t.Fatal("Enter did not open the verification link")
+	}
+}
+
+func TestDeviceLoginOpensThePlainLinkOnEnter(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	empty := ""
+	fake.DeviceCompleteURI = &empty
+	opened := make(chan string, 1)
+	_, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+		input:         "\n",
+		inputTerminal: true,
+		errorTerminal: true,
+		openURL: func(target string) error {
+			if strings.Contains(target, "/oauth/device") {
+				opened <- target
+				return nil
+			}
+			return errors.New("no browser available")
+		},
+		args: []string{"auth", "login", "--insecure-storage"},
+	})
+	require.NoError(t, err)
+	require.Contains(t, diagnostics, "Press Enter to open https://console.example.com/oauth/device in your browser...")
+	select {
+	case target := <-opened:
+		require.Equal(t, "https://console.example.com/oauth/device", target)
+	case <-time.After(time.Second):
+		t.Fatal("Enter did not open the verification link")
+	}
 }
 
 func TestDeviceLoginFallsBackToThePlainVerificationURL(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	empty := ""
 	fake.DeviceCompleteURI = &empty
-	var opened []string
 	_, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		input:         "\r",
-		inputTerminal: true,
-		errorTerminal: true,
-		openURL:       func(target string) error { opened = append(opened, target); return nil },
-		args:          []string{"auth", "login", "--insecure-storage", "--no-browser"},
+		openURL: failLoopbackOpenURL,
+		args:    []string{"auth", "login", "--insecure-storage"},
 	})
 	require.NoError(t, err)
-	require.Empty(t, opened)
 	require.Contains(t, diagnostics, "open https://console.example.com/oauth/device and enter the code")
 	require.NotContains(t, diagnostics, "#user_code=")
 	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
@@ -282,25 +328,19 @@ func TestDeviceLoginSpinsTheWaitOnATerminal(t *testing.T) {
 	require.Contains(t, diagnostics, "\x1b[K")
 	require.NotContains(t, out, "\x1b")
 }
-func TestLoopbackLoginKeepsWaitingWhenTheBrowserCannotOpen(t *testing.T) {
+func TestLoginFallsBackToDeviceWhenTheBrowserCannotOpen(t *testing.T) {
 	fake, store := setupCLITest(t)
 	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		input:         "\r",
 		inputTerminal: true,
 		errorTerminal: true,
-		openURL: func(target string) error {
-			if err := fake.authorizationURL(t)(target); err != nil {
-				return err
-			}
-			return errors.New("no browser available")
-		},
+		openURL:       failLoopbackOpenURL,
 	})
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
-	require.Contains(t, diagnostics, "Open this URL to approve the login")
-	require.Contains(t, diagnostics, "Could not open a browser (no browser available); open the URL above to continue.")
-	require.NotContains(t, diagnostics, "BCDF-GHJK-LMNP")
-	require.Zero(t, fake.DevicePolls)
+	require.Contains(t, diagnostics, "Could not open a browser; using a device code instead.")
+	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
+	require.NotContains(t, diagnostics, "Open this URL to approve the login")
+	require.Equal(t, 1, fake.DevicePolls)
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, "ort_refresh", state.RefreshToken)
@@ -734,11 +774,11 @@ func TestLoginReportsUnreachableControlPlane(t *testing.T) {
 
 func TestLoginWithoutAnInteractiveTerminalSelectsFirstWorkspace(t *testing.T) {
 	for _, flow := range []struct {
-		name string
-		args []string
+		name    string
+		openURL func(string) error
 	}{
 		{name: "browser"},
-		{name: "device", args: []string{"--no-browser"}},
+		{name: "device", openURL: failLoopbackOpenURL},
 	} {
 		for _, terminal := range []struct {
 			name        string
@@ -755,7 +795,7 @@ func TestLoginWithoutAnInteractiveTerminalSelectsFirstWorkspace(t *testing.T) {
 				out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
 					inputTerminal: terminal.input,
 					errorTerminal: terminal.diagnostics,
-					args:          flow.args,
+					openURL:       flow.openURL,
 				})
 				require.NoError(t, err)
 				require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Alpha (ws-1).\n", out)

@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -472,12 +473,17 @@ func runInteractiveCommand(t *testing.T, args ...string) (string, string, error)
 
 func runDeviceLogin(t *testing.T, fake *fakeControlPlane, flags ...string) (string, string, error) {
 	t.Helper()
-	args := append([]string{"auth", "login", "--insecure-storage", "--no-browser"}, flags...)
+	args := append([]string{"auth", "login", "--insecure-storage"}, flags...)
 	return runLoginScenario(t, fake, loginScenario{
 		inputTerminal: true,
 		errorTerminal: true,
+		openURL:       failLoopbackOpenURL,
 		args:          args,
 	})
+}
+
+func failLoopbackOpenURL(string) error {
+	return errors.New("no browser available")
 }
 
 func runInteractiveLogin(t *testing.T, fake *fakeControlPlane, input string, flags ...string) (string, string, error) {
