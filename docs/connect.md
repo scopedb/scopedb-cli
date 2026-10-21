@@ -1,6 +1,6 @@
 # Connect the CLI and your application
 
-Use `scope auth login` for terminal exploration; it requires ScopeDB v0.23.0 or newer. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring; SDKs do not read it.
+Use `scope auth login` for terminal exploration. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring; SDKs do not read it.
 
 ## Verify your login
 

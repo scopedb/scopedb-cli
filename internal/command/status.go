@@ -26,7 +26,6 @@ import (
 )
 
 type statusView struct {
-	AuthMode         string `json:"auth_mode"`
 	ControlURL       string `json:"control_url,omitempty"`
 	Email            string `json:"email,omitempty"`
 	CredentialSource string `json:"credential_source"`
@@ -59,7 +58,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 					return NormalizeError(machineErr)
 				}
 				return renderStatus(a.out, format, statusView{
-					AuthMode: access.Mode, CredentialSource: "environment", Endpoint: access.Endpoint,
+					CredentialSource: "environment", Endpoint: access.Endpoint,
 				})
 			}
 
@@ -81,7 +80,6 @@ func (a *app) newStatusCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			view := statusView{
-				AuthMode:         "oauth",
 				ControlURL:       runtime.config.ControlURL,
 				Email:            account.User.Email,
 				CredentialSource: runtime.config.CredentialStore,
@@ -120,7 +118,6 @@ func renderStatus(out io.Writer, format string, view statusView) error {
 	}
 	t := newTable(out, "FIELD", "VALUE")
 	t.AppendRows([]table.Row{
-		{"Auth mode", view.AuthMode},
 		{"Credential source", view.CredentialSource},
 		{"Email", emptyDash(view.Email)},
 		{"User status", emptyDash(view.UserStatus)},

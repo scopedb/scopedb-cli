@@ -148,7 +148,6 @@ func TestStatusReportsOAuthLogin(t *testing.T) {
 	require.Empty(t, diagnostics)
 	var view statusView
 	require.NoError(t, json.Unmarshal([]byte(out), &view))
-	require.Equal(t, "oauth", view.AuthMode)
 	require.Equal(t, "dev@example.com", view.Email)
 	require.Equal(t, "ws-1", view.WorkspaceID)
 	require.Equal(t, "https://data.example.com", view.Endpoint)
@@ -207,7 +206,7 @@ func TestStatusMachineCredentialsSkipTheLogin(t *testing.T) {
 	})
 	root.SetArgs([]string{"auth", "status", "--format", "json"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.JSONEq(t, `{"auth_mode":"api_key","credential_source":"environment","endpoint":"https://data.example.com"}`, out.String())
+	require.JSONEq(t, `{"credential_source":"environment","endpoint":"https://data.example.com"}`, out.String())
 	require.NotContains(t, out.String()+diagnostics.String(), "machine-secret")
 }
 
