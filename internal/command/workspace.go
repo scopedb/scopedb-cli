@@ -16,6 +16,7 @@ package command
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -61,38 +62,23 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			_, session, err := runtime.auth.LoadSession(cmd.Context())
+			account, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			workspaces := limitedResults(session.Workspaces, limit)
-			views := make([]workspaceListItem, 0, len(workspaces))
-			for _, workspace := range workspaces {
-				views = append(views, workspaceListItem{
-					ID:          workspace.ID,
-					DisplayName: workspace.DisplayName,
-					Current:     workspace.ID == session.CurrentWorkspaceID,
-				})
-			}
+			workspaces := limitedResults(account.Workspaces, limit)
+			views := workspaceListItems(workspaces, account.SelectedWorkspaceID)
 			// Choosing a workspace is what this command enables, so a missing
 			// selection needs no notice; only an empty account cannot be listed.
-			if len(session.Workspaces) == 0 {
-				if err := a.writeWorkspaceSetup(session); err != nil {
+			if len(account.Workspaces) == 0 {
+				if err := a.writeWorkspaceSetup(account); err != nil {
 					return err
 				}
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, views)
 			}
-			t := newTable(a.out, "CURRENT", "NAME", "ID")
-			for index, workspace := range workspaces {
-				current := ""
-				if views[index].Current {
-					current = "*"
-				}
-				t.AppendRow(table.Row{current, workspace.Name(), workspace.ID})
-			}
-			t.Render()
+			writeWorkspaceListTable(a.out, workspaces, account.SelectedWorkspaceID)
 			return nil
 		},
 	}
@@ -104,15 +90,53 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 type workspaceListItem struct {
 	ID          string  `json:"id"`
 	DisplayName *string `json:"display_name"`
+	Status      string  `json:"status"`
 	Current     bool    `json:"current"`
+}
+
+func workspaceListItemFor(workspace controlplane.Workspace, current bool) workspaceListItem {
+	return workspaceListItem{
+		ID:          workspace.ID,
+		DisplayName: workspace.DisplayName,
+		Status:      workspaceStatus(workspace),
+		Current:     current,
+	}
+}
+
+func workspaceListItems(workspaces []controlplane.Workspace, selectedID string) []workspaceListItem {
+	views := make([]workspaceListItem, 0, len(workspaces))
+	for _, workspace := range workspaces {
+		views = append(views, workspaceListItemFor(workspace, workspace.ID == selectedID))
+	}
+	return views
+}
+
+func writeWorkspaceListTable(out io.Writer, workspaces []controlplane.Workspace, selectedID string) {
+	views := workspaceListItems(workspaces, selectedID)
+	t := newTable(out, "CURRENT", "NAME", "ID", "STATUS")
+	for index, workspace := range workspaces {
+		current := ""
+		if views[index].Current {
+			current = "*"
+		}
+		t.AppendRow(table.Row{current, workspace.Name(), workspace.ID, views[index].Status})
+	}
+	t.Render()
+}
+
+func workspaceStatus(workspace controlplane.Workspace) string {
+	if workspace.ScheduledForDeletion() {
+		return "scheduled for deletion"
+	}
+	return workspace.ProvisioningStatus
 }
 
 func (a *app) newWorkspaceUseCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
 		Use:   "use <id-or-name>",
-		Short: "Select the workspace for your login session",
-		Long: "Select the workspace for your login session.\n" +
+		Short: "Select the workspace for this login",
+		Long: "Select the workspace for this login.\n" +
 			"Data commands use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when set, regardless of this selection.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -123,20 +147,26 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, session, err := runtime.auth.LoadSession(cmd.Context())
+			account, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			if len(session.Workspaces) == 0 {
-				return NormalizeError(auth.RequireWorkspace(session))
+			if len(account.Workspaces) == 0 {
+				return NormalizeError(auth.RequireWorkspace(account))
 			}
-			workspace, err := resolveWorkspace(session.Workspaces, args[0])
+			workspace, err := resolveWorkspace(account.Workspaces, args[0])
 			if err != nil {
 				return err
 			}
-			changed := workspace.ID != session.CurrentWorkspaceID
+			if workspace.ScheduledForDeletion() {
+				return clierror.WithHint(
+					clierror.New(clierror.ExitUsage, fmt.Sprintf("workspace %s (%s) is scheduled for deletion", workspace.Name(), workspace.ID)),
+					"restore it in the Console before selecting it",
+				)
+			}
+			changed := workspace.ID != account.SelectedWorkspaceID
 			if changed {
-				if err := runtime.auth.SelectWorkspace(cmd.Context(), state, workspace.ID); err != nil {
+				if err := runtime.auth.SelectWorkspace(cmd.Context(), workspace.ID); err != nil {
 					return NormalizeError(err)
 				}
 			}
@@ -153,10 +183,10 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 				return writeJSON(a.out, workspaceUseResult{ID: workspace.ID, DisplayName: workspace.DisplayName, Changed: changed})
 			}
 			if !changed {
-				_, err := fmt.Fprintf(a.out, "Already using workspace %s (%s) for your login session.\n", workspace.Name(), workspace.ID)
+				_, err := fmt.Fprintf(a.out, "Already using workspace %s (%s) for this login.\n", workspace.Name(), workspace.ID)
 				return NormalizeError(err)
 			}
-			_, err = fmt.Fprintf(a.out, "Now using workspace %s (%s) for your login session.\n", workspace.Name(), workspace.ID)
+			_, err = fmt.Fprintf(a.out, "Now using workspace %s (%s) for this login.\n", workspace.Name(), workspace.ID)
 			return NormalizeError(err)
 		},
 	}
@@ -193,7 +223,7 @@ func (a *app) newWorkspaceGetCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
 		Use:   "get",
-		Short: "Get details of your login session's current workspace",
+		Short: "Get details of the selected workspace",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
@@ -203,11 +233,18 @@ func (a *app) newWorkspaceGetCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
+			account, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			details, err := runtime.control.GetWorkspace(cmd.Context(), state.SessionToken, state.WorkspaceID)
+			if err := auth.RequireWorkspace(account); err != nil {
+				return NormalizeError(err)
+			}
+			state, err := runtime.auth.LoadAccess(cmd.Context())
+			if err != nil {
+				return NormalizeError(err)
+			}
+			details, err := runtime.control.GetWorkspace(cmd.Context(), state.AccessToken, account.SelectedWorkspaceID)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -239,6 +276,15 @@ func (a *app) newWorkspaceGetCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
 	return command
+}
+
+func workspaceByID(workspaces []controlplane.Workspace, id string) (controlplane.Workspace, bool) {
+	for _, workspace := range workspaces {
+		if workspace.ID == id {
+			return workspace, true
+		}
+	}
+	return controlplane.Workspace{}, false
 }
 
 func resolveWorkspace(workspaces []controlplane.Workspace, value string) (controlplane.Workspace, error) {

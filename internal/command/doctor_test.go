@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/config"
+	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -33,7 +35,7 @@ import (
 
 const doctorQueryResult = `{"statement_id":"01989a4e-4ee2-7e63-87a5-65ac3b5161dc","status":"finished","created_at":"2026-09-09T00:00:00Z","progress":{},"result_set":{"metadata":{"fields":[{"name":"ready","data_type":"u_int"}],"num_rows":1},"format":"json","rows":[["1"]]}}`
 
-func TestDoctorChecksSessionDataAccess(t *testing.T) {
+func TestDoctorChecksOAuthDataAccess(t *testing.T) {
 	for _, phase := range []struct {
 		name           string
 		provisioning   string
@@ -47,7 +49,7 @@ func TestDoctorChecksSessionDataAccess(t *testing.T) {
 		{"exchange rejected", "ready", 0, http.StatusUnauthorized, "scope auth login"},
 	} {
 		t.Run(phase.name, func(t *testing.T) {
-			queries, exchanges := 0, 0
+			queries := 0
 			data := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				queries++
 				assert.Equal(t, "POST /v1/statements", r.Method+" "+r.URL.Path)
@@ -61,46 +63,45 @@ func TestDoctorChecksSessionDataAccess(t *testing.T) {
 				}
 			}))
 			t.Cleanup(data.Close)
-			store, controlURL := setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				if r.URL.Path != "/healthz" {
-					assert.Equal(t, "Bearer session-secret", r.Header.Get("Authorization"))
-				}
-				switch r.Method + " " + r.URL.Path {
-				case "GET /healthz":
-					w.WriteHeader(http.StatusOK)
-				case "GET /api/session":
-					_, _ = w.Write([]byte(`{"user":{"email":"dev@example.com","status":"active"},"current_workspace_id":"ws-1"}`))
-				case "GET /api/workspaces/ws-1":
-					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-						"workspace":    map[string]string{"id": "ws-1"},
-						"connection":   map[string]string{"api_base_url": data.URL},
-						"provisioning": map[string]string{"status": phase.provisioning},
-					}))
-				case "POST /api/workspaces/ws-1/token-exchange":
-					exchanges++
-					if phase.exchangeStatus != http.StatusOK {
-						w.Header().Set("X-Request-ID", "exchange-request")
-						w.WriteHeader(phase.exchangeStatus)
-						_, _ = w.Write([]byte(`{"message":"session expired"}`))
-						return
+
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+			fake.Details["ws-1"] = controlplane.WorkspaceDetails{
+				Workspace:    controlplane.Workspace{ID: "ws-1"},
+				Connection:   controlplane.Connection{APIBaseURL: data.URL},
+				Provisioning: controlplane.Provisioning{Status: phase.provisioning},
+			}
+			fake.Exchange = controlplane.TokenExchangeResponse{
+				AccessToken: "data-secret", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Hour).UTC(),
+			}
+			saveStoredLogin(t, store, fake.URL, "ws-1")
+
+			var out, diagnostics bytes.Buffer
+			root := NewRoot(Dependencies{
+				Out: &out, ErrOut: &diagnostics,
+				Getenv: func(string) string { return "" },
+				Sleep:  func(time.Duration) {},
+				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+					if r.URL.Path == "/api/workspaces/ws-1/token-exchange" && phase.exchangeStatus != http.StatusOK {
+						header := http.Header{}
+						header.Set("Content-Type", "application/json")
+						header.Set("X-Request-ID", "exchange-request")
+						return &http.Response{
+							StatusCode: phase.exchangeStatus,
+							Header:     header,
+							Body:       io.NopCloser(strings.NewReader(`{"message":"session expired"}`)),
+							Request:    r,
+						}, nil
 					}
-					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-						"access_token": "data-secret", "token_type": "Bearer",
-						"expires_at": time.Now().Add(time.Hour).UTC(),
-					}))
-				default:
-					t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-					http.NotFound(w, r)
-				}
-			}))
-			t.Setenv("SCOPEDB_CREDENTIAL_STORE", "plaintext")
-			require.NoError(t, store.Save(controlURL, credential.State{SessionToken: "session-secret", WorkspaceID: "ws-1"}))
-			out, diagnostics, err := runCommand(t, "doctor", "--format", "json")
+					return http.DefaultTransport.RoundTrip(r)
+				})},
+			})
+			root.SetArgs([]string{"--control-url", fake.URL, "doctor", "--format", "json"})
+			err := root.ExecuteContext(t.Context())
 			var report doctorReport
-			require.NoError(t, json.Unmarshal([]byte(out), &report))
-			require.Empty(t, diagnostics)
-			require.NotContains(t, out, "data-secret")
+			require.NoError(t, json.Unmarshal(out.Bytes(), &report))
+			require.Empty(t, diagnostics.String())
+			require.NotContains(t, out.String(), "data-secret")
 			if phase.wantDetail == "" {
 				require.NoError(t, err)
 				require.True(t, report.OK)
@@ -108,7 +109,7 @@ func TestDoctorChecksSessionDataAccess(t *testing.T) {
 			} else {
 				require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
 				require.False(t, report.OK)
-				require.Contains(t, out, phase.wantDetail)
+				require.Contains(t, out.String(), phase.wantDetail)
 				require.Equal(t, "fail", report.Checks[len(report.Checks)-1].Status)
 			}
 			if phase.queryStatus != 0 {
@@ -116,13 +117,13 @@ func TestDoctorChecksSessionDataAccess(t *testing.T) {
 			} else {
 				require.Zero(t, queries)
 			}
-			if phase.provisioning == "ready" {
-				require.Equal(t, 1, exchanges)
+			if phase.provisioning == "ready" && phase.exchangeStatus == http.StatusOK {
+				require.Equal(t, 1, fake.ExchangeCalls)
 			} else {
-				require.Zero(t, exchanges)
+				require.Zero(t, fake.ExchangeCalls)
 			}
 			if phase.exchangeStatus == http.StatusUnauthorized {
-				require.Contains(t, out, "exchange-request")
+				require.Contains(t, out.String(), "exchange-request")
 			}
 		})
 	}
@@ -140,10 +141,7 @@ func TestDoctorMachineCredentials(t *testing.T) {
 		{"partial", "", 0, "must be set together"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				t.Errorf("machine mode must not contact control plane: %s", r.URL.Path)
-				http.NotFound(w, r)
-			}))
+			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
@@ -218,7 +216,7 @@ func (f doctorTransport) RoundTrip(r *http.Request) (*http.Response, error) { re
 func TestDoctorTimeoutAndCancellation(t *testing.T) {
 	for _, interrupt := range []bool{false, true} {
 		t.Run(map[bool]string{false: "timeout", true: "interrupt"}[interrupt], func(t *testing.T) {
-			setupLoginTest(t, http.NotFoundHandler())
+			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var out bytes.Buffer
@@ -267,11 +265,8 @@ func TestDoctorRejectsInvalidTimeout(t *testing.T) {
 }
 
 func TestDoctorGuidesNewUsers(t *testing.T) {
-	setupLoginTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/healthz", r.URL.Path)
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "plaintext")
+	fake, _ := setupCLITest(t)
+	assert.NotEmpty(t, fake.URL)
 	for _, format := range []string{"table", "json"} {
 		out, diagnostics, err := runCommand(t, "doctor", "--format", format)
 		require.NoError(t, err)
@@ -279,4 +274,16 @@ func TestDoctorGuidesNewUsers(t *testing.T) {
 		require.Contains(t, out, "scope auth login")
 		require.Contains(t, out, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 	}
+}
+
+func TestDoctorWarnsUnavailableWorkspace(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runCommand(t, "--control-url", fake.URL, "doctor", "--format", "json")
+	require.NoError(t, err)
+	require.Contains(t, out, "selected workspace is no longer available")
+	require.Contains(t, out, `"status": "warn"`)
+	require.Zero(t, fake.ExchangeCalls)
 }

@@ -39,6 +39,7 @@ type Paths struct {
 	Directory       string
 	Config          string
 	CredentialsFile string
+	LockFile        string
 }
 
 // Config contains non-secret user configuration.
@@ -72,6 +73,7 @@ func ResolvePaths() (Paths, error) {
 		Directory:       directory,
 		Config:          filepath.Join(directory, "config.toml"),
 		CredentialsFile: filepath.Join(directory, "credentials.json"),
+		LockFile:        filepath.Join(directory, "credentials.lock"),
 	}, nil
 }
 

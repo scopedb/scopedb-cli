@@ -6,13 +6,19 @@ All significant changes to this project will be documented in this file.
 
 ### Breaking changes
 
+* `scope auth login` approves a login in the ScopeDB Console instead of requesting an email verification code. `--email`, `--code`, and the interactive code prompt are gone, and the login no longer stores a browser session. For unattended access use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; `scope auth login --format json` reports the signed-in account and selected workspace.
+* `scope workspace use` stores the workspace locally for the current login instead of rotating a credential, so it no longer changes the workspace of another machine or a Console session. `scope auth status` still reports the selected workspace.
 * Authentication commands are grouped under `scope auth`: replace `scope login`, `scope logout`, and `scope status` with `scope auth login`, `scope auth logout`, and `scope auth status`. Replace `scope workspace show` with `scope workspace get`. The old command paths are not aliases.
 * `-f` selects query input files. Replace every `-f <format>` with `--format <format>`; use `scope query -f <file>` as shorthand for `--file <file>`. In particular, `scope query -f json` reads a file named `json`.
-* `scope auth status --format json` uses `email` instead of `user`, includes `credential_source`, and omits deployment state; read `provisioning.status` from `scope workspace get --format json` instead of `provisioning_state` from status. Workspace JSON uses `connection.endpoint` instead of `connection.api_base_url`.
+* `scope auth status --format json` no longer reports `auth_mode`; `credential_source` identifies environment credentials or the login store. It adds `refresh_token_expires_at` and uses `email` instead of `user`, and omits deployment state. Read `provisioning.status` from `scope workspace get --format json` instead of `provisioning_state` from status. Workspace JSON uses `connection.endpoint` instead of `connection.api_base_url`.
 * `scope console` replaces `scope open` and prints the Console URL by default. Replace `scope open [page]` with `scope console [page] --open` to launch the browser, or replace `scope open [page] --print` with `scope console [page]` to print the URL. Both modes print the URL to stdout.
 
 ### New features
 
+* `scope auth login` opens a browser by default and completes the login through a loopback redirect. If the browser cannot be opened, the CLI switches to a device code, prints a prefilled verification link and code to approve from another device, and does not open a local browser automatically. Device login shows a waiting message with the request's remaining lifetime until approval, denial, or expiry. A loopback response is accepted only when its `state` and issuer match the request, including error responses. Neither flow requires an interactive terminal. Login keeps the profile's existing workspace selection when the account still owns it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID. `--workspace <id-or-name>` chooses one explicitly. The text and `--format json` results report the selected workspace name and ID; use `scope workspace use <id-or-name>` to switch afterwards. Login refuses to start while a renewable login is stored and asks you to run `scope auth logout` first; a stored login whose refresh token has expired is replaced.
+* The CLI login is renewed automatically before its access token expires, using a rotating refresh token that is shared safely between concurrent `scope` processes; every credential update is serialized under the file lock.
+* `scope auth logout` revokes the login in ScopeDB before removing local credentials, so a signed-out CLI cannot keep using its grant.
+* `scope workspace list` shows whether each workspace is ready, still provisioning, or scheduled for deletion, and the CLI refuses to select a workspace that is scheduled for deletion.
 * `scope auth login`, `auth logout`, `workspace use`, `api-key revoke`, `console`, and `version` support `--format json` for machine-readable action results. Logout reports whether it cleared an existing login with `changed`.
 * `scope workspace list` and `api-key list` accept `--limit` to cap displayed results without changing the default of showing all items.
 
@@ -20,15 +26,15 @@ All significant changes to this project will be documented in this file.
 
 * `scope doctor` now verifies query access for a logged-in workspace, reporting provisioning, token exchange, and query failures that previously went unchecked.
 * Query timeout errors retain the statement ID and report when server cancellation could not be confirmed, so users can check the outcome before retrying.
-* `scope auth login` no longer saves endpoint and credential-store settings before authentication succeeds; if the final configuration write fails, it restores the previous valid credentials.
+* `scope auth login` no longer saves endpoint and credential-store settings before authentication succeeds; if the final configuration write fails, it revokes the new login and restores the previous valid credentials.
 * `scope workspace list` no longer prints a "no workspace is selected" notice pointing back at itself when the account has workspaces to choose from; it now only reports setup guidance when there is nothing to list.
 
 ### Improvements
 
 * Report the underlying cause when the CLI renders an error, in the terminal output and in `scope doctor` details, so a failure such as a credential store problem explains itself.
+* A login that ScopeDB rejects, expires, or revokes is removed from the credential store after a failed refresh, and the next command asks you to run `scope auth login` instead of failing with an opaque credential error.
 * `scope workspace use` identifies the selected login workspace and warns when environment credentials override data commands or form an incomplete pair.
 * `scope doctor` supports `--timeout` for slower connections and `--timeout 0` to disable per-check limits (individual control-plane requests retain a 15-second limit), includes recovery hints and request IDs in failed checks, and preserves exit code 130 when interrupted.
-* `scope auth login` hides verification codes entered at a terminal and warns that `--code` exposes the value in process arguments.
 * `scope api-key list --format json` excludes one-time key material from its output.
 * `scope query --output` creates result files with permissions `0600` on Unix-like systems.
 

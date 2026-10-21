@@ -12,12 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !darwin && !linux && !windows
+// Package filelock serializes credential refresh across CLI processes.
+package filelock
 
-package command
+import (
+	"context"
+	"time"
+)
 
-import "errors"
+type Lock interface {
+	Close() error
+}
 
-func hideTerminalInput(int) (func() error, error) {
-	return nil, errors.New("terminal echo control is unavailable on this platform")
+const lockRetryInterval = 50 * time.Millisecond
+
+func Acquire(ctx context.Context, path string) (Lock, error) {
+	return acquire(ctx, path)
 }
