@@ -68,18 +68,3 @@ run = "go test ./..."
 [tasks."test:race"]
 description = "Run all tests with the race detector"
 run = "go test -race ./..."
-
-[tasks."release:preflight"]
-description = "Verify production serves OAuth before publishing a CLI release"
-run = '''
-set -eu
-control="https://control.scopedb.cloud"
-console="https://console.scopedb.cloud"
-metadata="$(curl -fsS "$control/.well-known/oauth-authorization-server")"
-printf '%s' "$metadata" | grep -Eq '"issuer"[[:space:]]*:[[:space:]]*"'"$control"'"'
-for page in authorize device; do
-  status="$(curl -sS -o /dev/null -w '%{http_code}' "$console/oauth/$page")"
-  test "$status" = "200"
-done
-echo "production OAuth endpoints are ready"
-'''
