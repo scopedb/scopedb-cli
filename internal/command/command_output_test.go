@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
@@ -37,6 +38,7 @@ func TestCommandJSONOutput(t *testing.T) {
 		{"workspace list --limit 1", `[{"id":"ws-1","display_name":"Alpha","status":"ready","current":true}]`},
 		{"workspace use Beta", `{"id":"ws-2","display_name":"Beta","changed":true}`},
 		{"workspace use ws-2", `{"id":"ws-2","display_name":"Beta","changed":false}`},
+		{"api-key revoke automation --yes", `{"name":"automation","revoked":true}`},
 		{"auth logout", `{"changed":true}`},
 	} {
 		args := append([]string{"--control-url", fake.URL}, strings.Fields(step.args)...)
@@ -46,8 +48,25 @@ func TestCommandJSONOutput(t *testing.T) {
 		require.Empty(t, diagnostics, step.args)
 		require.JSONEq(t, step.json, out, step.args)
 	}
+	require.Equal(t, []string{"automation"}, fake.RevokedAPIKeys)
 	_, err := store.Load(fake.URL)
 	require.ErrorIs(t, err, credential.ErrNotFound)
+}
+
+func TestRevokeJSONCancellation(t *testing.T) {
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		In: strings.NewReader("n\n"), Out: &out, ErrOut: &diagnostics,
+		IsInputTerminal: func() bool { return true },
+		CredentialStore: func(string, config.Paths) (credential.Store, error) {
+			t.Fatal("cancellation must not access credentials or call the service")
+			return nil, nil
+		},
+	})
+	root.SetArgs([]string{"api-key", "revoke", "automation", "--format", "json"})
+	require.NoError(t, root.ExecuteContext(t.Context()))
+	require.JSONEq(t, `{"name":"automation","revoked":false}`, out.String())
+	require.Contains(t, diagnostics.String(), "Revoke API key")
 }
 
 func TestWorkspaceUseTextOutput(t *testing.T) {

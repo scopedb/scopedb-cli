@@ -52,8 +52,8 @@ func (a *app) newLoginCommand() *cobra.Command {
 		Short: "Log in through the ScopeDB Console",
 		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
 			"Opens your browser and completes the login after approval. When no browser can be opened,\n" +
-			"the CLI prints a device verification link and code instead; press Enter to open the link\n" +
-			"locally, or approve the code in a browser on another device.\n\n" +
+			"the CLI prints a device verification link and code instead; approve the code in a browser\n" +
+			"on another device.\n\n" +
 			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
 			"name and ID. Use 'scope workspace use <id-or-name>' to switch afterwards.\n" +
 			"Login does not require an interactive terminal.",
@@ -331,7 +331,6 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 	if err := a.writeDeviceInstructions(device); err != nil {
 		return controlplane.TokenSet{}, err
 	}
-	a.offerBrowserOpen(device)
 	stopWaiting := a.startAuthorizationWait(time.Duration(device.ExpiresIn) * time.Second)
 	defer stopWaiting()
 
@@ -389,36 +388,6 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 			return controlplane.TokenSet{}, err
 		}
 	}
-}
-
-// offerBrowserOpen lets a user on the same machine open the verification page without making the
-// device flow depend on a browser: nothing opens until Enter is pressed, and polling continues.
-func (a *app) offerBrowserOpen(device controlplane.DeviceAuthorization) {
-	if a.isInputTerminal == nil || !a.isInputTerminal() {
-		return
-	}
-	target := device.VerificationURIComplete
-	if target == "" {
-		target = device.VerificationURI
-	}
-	if _, err := fmt.Fprintf(a.errOut, "Press Enter to open %s in your browser...\n", target); err != nil {
-		return
-	}
-	go func() {
-		for {
-			line, err := a.input.ReadString('\n')
-			if err != nil {
-				return
-			}
-			if strings.TrimSpace(line) != "" {
-				continue
-			}
-			if err := a.openURL(target); err != nil {
-				_, _ = fmt.Fprintf(a.errOut, "Could not open a browser (%s); open the URL above to continue.\n", err)
-			}
-			return
-		}
-	}()
 }
 
 func (a *app) writeDeviceInstructions(device controlplane.DeviceAuthorization) error {

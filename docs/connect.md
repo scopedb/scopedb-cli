@@ -11,7 +11,7 @@ scope doctor
 scope query 'SELECT 1 AS ready'
 ```
 
-Login opens your browser by default. If the browser cannot be opened, it switches to a device verification link and code for approval from another device. Neither flow requires an interactive terminal; device login waits for Enter before opening the link locally. Login keeps a valid workspace selection or automatically selects the first workspace that is not scheduled for deletion, and prints its name and ID. Use `scope workspace use <id-or-name>` to switch.
+Login opens your browser by default. If the browser cannot be opened, it switches to a device verification link and code for approval from another device. Neither flow requires an interactive terminal. Login keeps a valid workspace selection or automatically selects the first workspace that is not scheduled for deletion, and prints its name and ID. Use `scope workspace use <id-or-name>` to switch.
 
 If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id-or-name>`.
 

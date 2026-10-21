@@ -16,7 +16,6 @@ package command
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -228,62 +227,6 @@ func TestDeviceLoginDoesNotOpenAutomatically(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "Logged in as dev@example.com.\n", out)
 	require.Contains(t, diagnostics, "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP")
-	require.NotContains(t, diagnostics, "Press Enter to open")
-}
-
-func TestDeviceLoginOpensTheCompleteLinkOnEnter(t *testing.T) {
-	fake, _ := setupCLITest(t)
-	opened := make(chan string, 1)
-	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		input:         "\n",
-		inputTerminal: true,
-		errorTerminal: true,
-		openURL: func(target string) error {
-			if strings.Contains(target, "/oauth/device") {
-				opened <- target
-				return nil
-			}
-			return errors.New("no browser available")
-		},
-		args: []string{"auth", "login", "--insecure-storage"},
-	})
-	require.NoError(t, err)
-	require.Contains(t, out, "Logged in as dev@example.com.")
-	require.Contains(t, diagnostics, "Press Enter to open https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP in your browser...")
-	select {
-	case target := <-opened:
-		require.Equal(t, "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP", target)
-	case <-time.After(time.Second):
-		t.Fatal("Enter did not open the verification link")
-	}
-}
-
-func TestDeviceLoginOpensThePlainLinkOnEnter(t *testing.T) {
-	fake, _ := setupCLITest(t)
-	empty := ""
-	fake.DeviceCompleteURI = &empty
-	opened := make(chan string, 1)
-	_, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		input:         "\n",
-		inputTerminal: true,
-		errorTerminal: true,
-		openURL: func(target string) error {
-			if strings.Contains(target, "/oauth/device") {
-				opened <- target
-				return nil
-			}
-			return errors.New("no browser available")
-		},
-		args: []string{"auth", "login", "--insecure-storage"},
-	})
-	require.NoError(t, err)
-	require.Contains(t, diagnostics, "Press Enter to open https://console.example.com/oauth/device in your browser...")
-	select {
-	case target := <-opened:
-		require.Equal(t, "https://console.example.com/oauth/device", target)
-	case <-time.After(time.Second):
-		t.Fatal("Enter did not open the verification link")
-	}
 }
 
 func TestDeviceLoginFallsBackToThePlainVerificationURL(t *testing.T) {
@@ -961,4 +904,37 @@ func TestLoginRequestedWorkspaceLookupFailureIsReported(t *testing.T) {
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Empty(t, state.WorkspaceID)
+}
+
+func TestAPIKeyCommandsReportWorkspaceSetup(t *testing.T) {
+	for _, phase := range []struct {
+		name       string
+		status     string
+		workspaces []controlplane.Workspace
+		hint       string
+		exitCode   int
+	}{
+		{"pending", "pending", nil, "scope console --open", clierror.ExitAuth},
+		{"no workspaces", "active", nil, "scope workspace create", clierror.ExitUsage},
+		{"no selection", "active", []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}, "scope workspace list", clierror.ExitUsage},
+	} {
+		t.Run(phase.name, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.User.Status = phase.status
+			fake.Workspaces = phase.workspaces
+			saveStoredLogin(t, store, fake.URL, "")
+
+			for _, args := range [][]string{
+				{"api-key", "list"},
+				{"api-key", "create", "automation"},
+				{"api-key", "revoke", "automation", "--yes"},
+			} {
+				command := append([]string{"--control-url", fake.URL}, args...)
+				out, _, err := runCommand(t, command...)
+				require.Equal(t, phase.exitCode, clierror.ExitCode(err), "%v: %v", args, err)
+				require.Empty(t, out)
+				require.Contains(t, clierror.Render(err), phase.hint)
+			}
+		})
+	}
 }

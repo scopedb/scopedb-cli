@@ -108,3 +108,41 @@ func TestWorkspaceGetRequiresSelection(t *testing.T) {
 	require.ErrorContains(t, err, "no workspace is selected")
 	require.Empty(t, out)
 }
+
+func TestListLimitsCapRenderedItems(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta"), workspaceFixture("ws-3", "Gamma")}
+	fake.APIKeys = []controlplane.APIKey{
+		{ID: "key-1", Name: "first", Status: "active", Key: "returned-key-secret"},
+		{ID: "key-2", Name: "second", Status: "active"},
+		{ID: "key-3", Name: "third", Status: "active"},
+	}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	for _, args := range [][]string{
+		{"workspace", "list", "--format", "json", "--limit", "2"},
+		{"api-key", "list", "--format", "json", "--limit", "2"},
+	} {
+		out, _, err := runCommand(t, append([]string{"--control-url", fake.URL}, args...)...)
+		require.NoError(t, err)
+		require.NotContains(t, out, "returned-key-secret")
+		var items []map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &items))
+		require.Len(t, items, 2)
+	}
+
+	out, _, err := runCommand(t, "--control-url", fake.URL, "api-key", "list", "--limit", "1")
+	require.NoError(t, err)
+	require.Contains(t, out, "first")
+	require.NotContains(t, out, "second")
+
+	out, _, err = runCommand(t, "--control-url", fake.URL, "workspace", "list", "--format", "json", "--limit", "0")
+	require.NoError(t, err)
+	var items []map[string]any
+	require.NoError(t, json.Unmarshal([]byte(out), &items))
+	require.Len(t, items, 3)
+
+	out, _, err = runCommand(t, "--control-url", fake.URL, "api-key", "list", "--limit", "-1")
+	require.ErrorContains(t, err, "--limit must not be negative")
+	require.Empty(t, out)
+}
