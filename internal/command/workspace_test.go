@@ -17,11 +17,14 @@ package command
 import (
 	"bytes"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
+	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
 )
 
@@ -136,6 +139,33 @@ func TestStatusRefreshesExpiredLogin(t *testing.T) {
 	_, _, err := runCommand(t, "--control-url", fake.URL, "auth", "status", "--format", "json")
 	require.NoError(t, err, "an expired access token refreshes before the account lookup")
 	require.Equal(t, 1, fake.Refreshes)
+}
+
+func TestQueryClearsARevokedGrant(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/user" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"invalid access token"}`))
+			return
+		}
+		fake.serve(w, r)
+	}))
+	t.Cleanup(controlServer.Close)
+	fake.URL = controlServer.URL
+	fake.Issuer = controlServer.URL
+	fake.TokenStatus = http.StatusBadRequest
+	fake.TokenError = "invalid_grant"
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runCommand(t, "--control-url", fake.URL, "query", "show tables")
+	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
+	require.Empty(t, out)
+	require.Contains(t, clierror.Render(err), "scope auth login")
+	require.Equal(t, 1, fake.Refreshes)
+	_, loadErr := store.Load(fake.URL)
+	require.ErrorIs(t, loadErr, credential.ErrNotFound)
 }
 
 func TestQueryWithoutLoginReportsLoginHint(t *testing.T) {

@@ -89,19 +89,27 @@ func (s *memoryStore) stored() bool {
 }
 
 type fakeControl struct {
-	user          controlplane.User
-	workspaces    []controlplane.Workspace
-	details       controlplane.WorkspaceDetails
-	exchange      controlplane.TokenExchangeResponse
-	onExchange    func()
-	exchangeCalls int
+	user           controlplane.User
+	workspaces     []controlplane.Workspace
+	details        controlplane.WorkspaceDetails
+	exchange       controlplane.TokenExchangeResponse
+	onExchange     func()
+	getUser        func(string) (controlplane.User, error)
+	listWorkspaces func(string) ([]controlplane.Workspace, error)
+	exchangeCalls  int
 }
 
-func (f *fakeControl) GetUser(context.Context, string) (controlplane.User, error) {
+func (f *fakeControl) GetUser(_ context.Context, token string) (controlplane.User, error) {
+	if f.getUser != nil {
+		return f.getUser(token)
+	}
 	return f.user, nil
 }
 
-func (f *fakeControl) ListWorkspaces(context.Context, string) ([]controlplane.Workspace, error) {
+func (f *fakeControl) ListWorkspaces(_ context.Context, token string) ([]controlplane.Workspace, error) {
+	if f.listWorkspaces != nil {
+		return f.listWorkspaces(token)
+	}
 	return f.workspaces, nil
 }
 
@@ -218,6 +226,57 @@ func TestLoadAccessReturnsFreshTokenWithoutRefresh(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "oat_old", state.AccessToken)
 	require.Zero(t, oauth.refreshCalls())
+}
+
+func TestAccountClearsARevokedGrant(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour))}
+	control := &fakeControl{getUser: func(token string) (controlplane.User, error) {
+		if token == "oat_old" {
+			return controlplane.User{}, &controlplane.Error{Status: http.StatusUnauthorized, Message: "invalid access token"}
+		}
+		return controlplane.User{Email: "dev@example.com", Status: "active"}, nil
+	}}
+	manager := newManager(t, store, control, &fakeOAuth{rejectAll: true}, now)
+
+	_, err := manager.Account(t.Context())
+	require.ErrorIs(t, err, ErrLoginExpired)
+	require.False(t, store.stored())
+}
+
+func TestAccountRetriesAfterRefreshingARejectedAccessToken(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour))}
+	control := &fakeControl{getUser: func(token string) (controlplane.User, error) {
+		if token == "oat_old" {
+			return controlplane.User{}, &controlplane.Error{Status: http.StatusUnauthorized, Message: "invalid access token"}
+		}
+		return controlplane.User{Email: "dev@example.com", Status: "active"}, nil
+	}}
+	oauth := &fakeOAuth{results: []tokenOutcome{{tokens: accessTokens("oat_new", "ort_new")}}}
+	manager := newManager(t, store, control, oauth, now)
+
+	account, err := manager.Account(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "dev@example.com", account.User.Email)
+	require.Equal(t, 1, oauth.refreshCalls())
+	require.Equal(t, "oat_new", store.saved().AccessToken)
+	require.True(t, store.stored())
+}
+
+func TestAccountKeepsACredentialRejectedWithForbidden(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour))}
+	control := &fakeControl{getUser: func(string) (controlplane.User, error) {
+		return controlplane.User{}, &controlplane.Error{Status: http.StatusForbidden, Message: "forbidden"}
+	}}
+	oauth := &fakeOAuth{}
+	manager := newManager(t, store, control, oauth, now)
+
+	_, err := manager.Account(t.Context())
+	require.Error(t, err)
+	require.Zero(t, oauth.refreshCalls())
+	require.True(t, store.stored())
 }
 
 func TestLoadAccessRefreshesExpiringToken(t *testing.T) {

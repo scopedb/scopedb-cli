@@ -32,7 +32,7 @@ All significant changes to this project will be documented in this file.
 ### Improvements
 
 * Report the underlying cause when the CLI renders an error, in the terminal output and in `scope doctor` details, so a failure such as a credential store problem explains itself.
-* A login that ScopeDB rejects, expires, or revokes is removed from the credential store, and the next command asks you to run `scope auth login` instead of failing with an opaque credential error.
+* A login that ScopeDB rejects, expires, or revokes is removed from the credential store after a failed refresh, and the next command asks you to run `scope auth login` instead of failing with an opaque credential error.
 * `scope workspace use` identifies the selected login workspace and warns when environment credentials override data commands or form an incomplete pair.
 * `scope doctor` supports `--timeout` for slower connections and `--timeout 0` to disable per-check limits (individual control-plane requests retain a 15-second limit), includes recovery hints and request IDs in failed checks, and preserves exit code 130 when interrupted.
 * `scope api-key list --format json` excludes one-time key material from its output.

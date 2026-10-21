@@ -239,7 +239,6 @@ func (f *fakeControlPlane) serveToken(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 
 	if f.TokenStatus != 0 {
-		w.WriteHeader(f.TokenStatus)
 		code := f.TokenError
 		if code == "" {
 			code = "server_error"

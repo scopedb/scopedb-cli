@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -247,15 +248,38 @@ func (m *Manager) account(ctx context.Context) (Account, credential.State, error
 	if err != nil {
 		return Account{}, credential.State{}, err
 	}
+	for attempt := 0; ; attempt++ {
+		account, err := m.readAccount(ctx, state)
+		if err == nil {
+			return account, state, nil
+		}
+		if attempt > 0 || !isControlUnauthorized(err) {
+			return Account{}, credential.State{}, err
+		}
+		// A valid access token can still be rejected after its grant is revoked. Refresh to tell
+		// that apart from a transient 401; invalid_grant removes the dead login in refresh.
+		state, err = m.refresh(ctx, state)
+		if err != nil {
+			return Account{}, credential.State{}, err
+		}
+	}
+}
+
+func (m *Manager) readAccount(ctx context.Context, state credential.State) (Account, error) {
 	user, err := m.Control.GetUser(ctx, state.AccessToken)
 	if err != nil {
-		return Account{}, credential.State{}, err
+		return Account{}, err
 	}
 	workspaces, err := m.Control.ListWorkspaces(ctx, state.AccessToken)
 	if err != nil {
-		return Account{}, credential.State{}, err
+		return Account{}, err
 	}
-	return Account{User: user, Workspaces: workspaces, SelectedWorkspaceID: state.WorkspaceID}, state, nil
+	return Account{User: user, Workspaces: workspaces, SelectedWorkspaceID: state.WorkspaceID}, nil
+}
+
+func isControlUnauthorized(err error) bool {
+	var controlErr *controlplane.Error
+	return errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized
 }
 
 // An OAuth credential is never rotated to change workspace, so the selection is local state. The
@@ -391,6 +415,13 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	}
 
 	exchanged, err := m.Control.ExchangeToken(ctx, state.AccessToken, state.WorkspaceID)
+	if isControlUnauthorized(err) {
+		state, err = m.refresh(ctx, state)
+		if err != nil {
+			return Access{}, err
+		}
+		exchanged, err = m.Control.ExchangeToken(ctx, state.AccessToken, state.WorkspaceID)
+	}
 	if err != nil {
 		return Access{}, err
 	}
