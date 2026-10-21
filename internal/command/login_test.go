@@ -37,7 +37,7 @@ import (
 
 func TestLoopbackLoginStoresTokens(t *testing.T) {
 	fake, store := setupCLITest(t)
-	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
+	out, diagnostics, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.Contains(t, diagnostics, "Open this URL to approve the login")
@@ -170,7 +170,7 @@ func TestLoopbackLoginIgnoresAForgedErrorCallback(t *testing.T) {
 func TestDeviceLoginPollsUntilApproved(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.DeviceOutcomes = []string{"authorization_pending", "slow_down", ""}
-	out, diagnostics, err := runSSHLogin(t, fake)
+	out, diagnostics, err := runDeviceLogin(t, fake)
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
@@ -192,7 +192,7 @@ func TestDeviceLoginFailureOutcomes(t *testing.T) {
 		t.Run(tc.outcome, func(t *testing.T) {
 			fake, store := setupCLITest(t)
 			fake.DeviceOutcomes = []string{tc.outcome}
-			out, _, err := runSSHLogin(t, fake)
+			out, _, err := runDeviceLogin(t, fake)
 			require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
 			require.Contains(t, err.Error(), tc.wantError)
 			require.Empty(t, out)
@@ -205,13 +205,13 @@ func TestDeviceLoginFailureOutcomes(t *testing.T) {
 func TestDeviceLoginRejectsIncompleteResponse(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	fake.UserCode = ""
-	_, _, err := runSSHLogin(t, fake)
+	_, _, err := runDeviceLogin(t, fake)
 	require.ErrorContains(t, err, "incomplete device authorization")
 }
 
 func TestDeviceLoginPrintsThePrefilledLinkAndKeepsTheCode(t *testing.T) {
 	fake, _ := setupCLITest(t)
-	out, diagnostics, err := runSSHLogin(t, fake)
+	out, diagnostics, err := runDeviceLogin(t, fake)
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.Contains(t, diagnostics, "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP")
@@ -226,9 +226,8 @@ func TestDeviceLoginNeverOpensABrowser(t *testing.T) {
 		input:         "\r",
 		inputTerminal: true,
 		errorTerminal: true,
-		getenv:        sshEnvironment,
 		openURL:       func(target string) error { opened = append(opened, target); return nil },
-		args:          []string{"auth", "login", "--insecure-storage"},
+		args:          []string{"auth", "login", "--insecure-storage", "--no-browser"},
 	})
 	require.NoError(t, err)
 	require.Empty(t, opened)
@@ -245,9 +244,8 @@ func TestDeviceLoginFallsBackToThePlainVerificationURL(t *testing.T) {
 		input:         "\r",
 		inputTerminal: true,
 		errorTerminal: true,
-		getenv:        sshEnvironment,
 		openURL:       func(target string) error { opened = append(opened, target); return nil },
-		args:          []string{"auth", "login", "--insecure-storage"},
+		args:          []string{"auth", "login", "--insecure-storage", "--no-browser"},
 	})
 	require.NoError(t, err)
 	require.Empty(t, opened)
@@ -269,7 +267,7 @@ func TestDeviceLoginReportsTheServerLifetime(t *testing.T) {
 		t.Run(fmt.Sprintf("%ds", tc.seconds), func(t *testing.T) {
 			fake, _ := setupCLITest(t)
 			fake.DeviceExpiresIn = tc.seconds
-			_, diagnostics, err := runSSHLogin(t, fake)
+			_, diagnostics, err := runDeviceLogin(t, fake)
 			require.NoError(t, err)
 			require.Contains(t, diagnostics, "Waiting for authorization... ("+tc.want+"; Ctrl+C to cancel)")
 		})
@@ -277,7 +275,7 @@ func TestDeviceLoginReportsTheServerLifetime(t *testing.T) {
 }
 func TestDeviceLoginSpinsTheWaitOnATerminal(t *testing.T) {
 	fake, _ := setupCLITest(t)
-	out, diagnostics, err := runSSHLogin(t, fake)
+	out, diagnostics, err := runDeviceLogin(t, fake)
 	require.NoError(t, err)
 	require.Contains(t, diagnostics, "\r")
 	require.Contains(t, diagnostics, "Waiting for authorization")
@@ -308,103 +306,12 @@ func TestLoopbackLoginKeepsWaitingWhenTheBrowserCannotOpen(t *testing.T) {
 	require.Equal(t, "ort_refresh", state.RefreshToken)
 }
 
-func TestLoginMenuSelectsTheBrowserFlow(t *testing.T) {
-	fake, store := setupCLITest(t)
-	result := runLoginMenu(t, fake, "\r")
-	require.NoError(t, result.err)
-	require.Equal(t, "Logged in as dev@example.com.\n", result.out)
-	require.Contains(t, result.diagnostics, "? How do you want to sign in?")
-	require.Contains(t, result.diagnostics, "Sign in with your browser (recommended)")
-	require.Contains(t, result.diagnostics, "Sign in with a device code")
-	require.Contains(t, result.diagnostics, "✔ Sign in with your browser")
-	require.Contains(t, result.diagnostics, "Open this URL to approve the login")
-	require.Zero(t, fake.DevicePolls)
-	require.Equal(t, 1, result.raw.restores)
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ort_refresh", state.RefreshToken)
-}
-
-func TestLoginMenuSelectsTheDeviceFlow(t *testing.T) {
-	fake, store := setupCLITest(t)
-	result := runLoginMenu(t, fake, "j\r")
-	require.NoError(t, result.err)
-	require.Equal(t, "Logged in as dev@example.com.\n", result.out)
-	require.Contains(t, result.diagnostics, "✔ Sign in with a device code")
-	require.Contains(t, result.diagnostics, "BCDF-GHJK-LMNP")
-	require.NotContains(t, result.diagnostics, "Open this URL to approve the login")
-	require.Equal(t, 1, fake.DevicePolls)
-	require.Equal(t, 1, result.raw.restores)
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ort_refresh", state.RefreshToken)
-}
-func TestLoginMenuCancelsWithoutStoring(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		input    string
-		wantCode int
-		wantText string
-	}{
-		{"quit", "q", clierror.ExitAuth, "login cancelled"},
-		{"escape", "\x1b", clierror.ExitAuth, "login cancelled"},
-		{"interrupt", "\x03", clierror.ExitInterrupted, "login interrupted; no credentials were saved"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			fake, store := setupCLITest(t)
-			result := runLoginMenu(t, fake, tc.input)
-			require.Equal(t, tc.wantCode, clierror.ExitCode(result.err))
-			require.Contains(t, result.err.Error(), tc.wantText)
-			require.Empty(t, result.out)
-			require.Equal(t, 1, result.raw.restores)
-			require.Zero(t, fake.DevicePolls)
-			_, loadErr := store.Load(fake.URL)
-			require.ErrorIs(t, loadErr, credential.ErrNotFound)
-		})
-	}
-}
-
-func TestLoginWorkspaceMenuInterruptLeavesTheLogin(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-	result := runLoginMenu(t, fake, "\r\x03")
-	require.Equal(t, clierror.ExitInterrupted, clierror.ExitCode(result.err))
-	require.Contains(t, result.err.Error(), "credentials already saved remain")
-	require.Contains(t, result.diagnostics, "Login saved; no workspace was selected.")
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ort_refresh", state.RefreshToken)
-	require.Empty(t, state.WorkspaceID)
-}
-
-func TestLoginMenuKeepsWaitingWhenTheBrowserCannotOpen(t *testing.T) {
-	fake, store := setupCLITest(t)
-	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		input:         "\r",
-		inputTerminal: true,
-		errorTerminal: true,
-		openURL: func(target string) error {
-			if err := fake.authorizationURL(t)(target); err != nil {
-				return err
-			}
-			return errors.New("no browser available")
-		},
-	})
-	require.NoError(t, err)
-	require.Contains(t, out, "Logged in as dev@example.com.")
-	require.Contains(t, diagnostics, "Open this URL to approve the login")
-	require.Contains(t, diagnostics, "Could not open a browser (no browser available); open the URL above to continue.")
-	require.Zero(t, fake.DevicePolls)
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ort_refresh", state.RefreshToken)
-}
 func TestDiscoveryRejectsForeignIssuer(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	fake.MetadataMutate = func(metadata *controlplane.AuthorizationServerMetadata) {
 		metadata.Issuer = "https://elsewhere.example.com"
 	}
-	_, _, err := runInteractiveLogin(t, fake, "\r")
+	_, _, err := runInteractiveLogin(t, fake, "")
 	require.ErrorContains(t, err, "issuer")
 }
 
@@ -413,7 +320,7 @@ func TestDiscoveryRejectsForeignEndpoint(t *testing.T) {
 	fake.MetadataMutate = func(metadata *controlplane.AuthorizationServerMetadata) {
 		metadata.TokenEndpoint = "https://elsewhere.example.com/oauth/token"
 	}
-	_, _, err := runInteractiveLogin(t, fake, "\r")
+	_, _, err := runInteractiveLogin(t, fake, "")
 	require.ErrorContains(t, err, "token_endpoint")
 }
 
@@ -428,7 +335,7 @@ func TestDiscoveryRequiresPKCEAndIssuerParameter(t *testing.T) {
 	} {
 		fake, _ := setupCLITest(t)
 		fake.MetadataMutate = mutate
-		_, _, err := runInteractiveLogin(t, fake, "\r")
+		_, _, err := runInteractiveLogin(t, fake, "")
 		require.Error(t, err)
 	}
 }
@@ -457,7 +364,7 @@ func TestLoginKeepsCredentialsWhenAccountLookupFails(t *testing.T) {
 	fake.URL = controlServer.URL
 	fake.Issuer = controlServer.URL
 
-	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
+	out, diagnostics, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in.")
 	require.Contains(t, diagnostics, "scope auth status")
@@ -469,7 +376,7 @@ func TestLoginKeepsCredentialsWhenAccountLookupFails(t *testing.T) {
 func TestLoginReportsWorkspaceSetup(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	fake.User.Status = "pending"
-	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
+	out, diagnostics, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.Contains(t, diagnostics, "awaiting approval")
@@ -479,7 +386,7 @@ func TestLoginReportsWorkspaceSetup(t *testing.T) {
 func TestLoginSelectsTheOnlyOwnedWorkspace(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
-	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
+	out, diagnostics, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.Contains(t, out, "Using workspace Alpha (ws-1).")
@@ -492,15 +399,15 @@ func TestLoginSelectsTheOnlyOwnedWorkspace(t *testing.T) {
 func TestLoginKeepsTheStoredSelection(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-	saveExpiredLogin(t, store, fake.URL, "ws-1")
+	saveExpiredLogin(t, store, fake.URL, "ws-2")
 
-	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
+	out, diagnostics, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
-	require.Contains(t, out, "Keeping workspace Alpha (ws-1).")
+	require.Contains(t, out, "Keeping workspace Beta (ws-2).")
 	require.NotContains(t, diagnostics, "no workspace is selected")
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
-	require.Equal(t, "ws-1", state.WorkspaceID)
+	require.Equal(t, "ws-2", state.WorkspaceID)
 	require.Equal(t, "ort_refresh", state.RefreshToken)
 }
 func TestLoginKeepsTheStoredSelectionWithoutWritingCredentials(t *testing.T) {
@@ -520,7 +427,6 @@ func TestLoginKeepsTheStoredSelectionWithoutWritingCredentials(t *testing.T) {
 		CredentialStore: func(_ string, _ config.Paths) (credential.Store, error) { return counting, nil },
 		IsInputTerminal: func() bool { return true },
 		IsErrorTerminal: func() bool { return true },
-		MakeRaw:         func() (func(), error) { return func() {}, nil },
 	})
 	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
@@ -536,20 +442,21 @@ func TestLoginClearsASelectionScheduledForDeletion(t *testing.T) {
 	}
 	saveExpiredLogin(t, store, fake.URL, "ws-1")
 
-	out, diagnostics, err := runInteractiveLogin(t, fake, "\rjj\r")
+	out, diagnostics, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
-	require.Contains(t, diagnostics, "no workspace is selected")
+	require.NotContains(t, diagnostics, "no workspace is selected")
+	require.Contains(t, out, "Using workspace Beta (ws-2).")
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
-	require.Empty(t, state.WorkspaceID)
+	require.Equal(t, "ws-2", state.WorkspaceID)
 }
 
 func TestLoginDoesNotSelectASingleWorkspaceScheduledForDeletion(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{scheduledForDeletionFixture("ws-1", "Alpha")}
 
-	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
+	out, diagnostics, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.Contains(t, diagnostics, "no workspace is selected")
@@ -562,7 +469,7 @@ func TestLoginClearsAStaleSelection(t *testing.T) {
 	fake, store := setupCLITest(t)
 	saveExpiredLogin(t, store, fake.URL, "ws-1")
 
-	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
+	out, diagnostics, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.Contains(t, diagnostics, "no workspaces")
@@ -576,7 +483,7 @@ func TestLoginSelectsTheOnlyWorkspaceOfTheNewAccount(t *testing.T) {
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta")}
 	saveExpiredLogin(t, store, fake.URL, "ws-1")
 
-	out, _, err := runInteractiveLogin(t, fake, "\r")
+	out, _, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Using workspace Beta (ws-2).")
 	state, err := store.Load(fake.URL)
@@ -588,7 +495,7 @@ func TestLoginRefusesWhileALoginIsStored(t *testing.T) {
 	fake, store := setupCLITest(t)
 	saveStoredLogin(t, store, fake.URL, "ws-1")
 
-	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
+	out, diagnostics, err := runInteractiveLogin(t, fake, "")
 	require.Error(t, err)
 	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(NormalizeError(err)))
 	require.Contains(t, clierror.Render(err), "already logged in as dev@example.com")
@@ -618,7 +525,7 @@ func TestLoginRefusesWithoutTheAccountWhenLookupFails(t *testing.T) {
 	fake.Issuer = controlServer.URL
 	saveStoredLogin(t, store, fake.URL, "ws-1")
 
-	out, _, err := runInteractiveLogin(t, fake, "\r")
+	out, _, err := runInteractiveLogin(t, fake, "")
 	require.Error(t, err)
 	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(NormalizeError(err)))
 	require.Contains(t, clierror.Render(err), "already logged in")
@@ -648,7 +555,7 @@ func TestLoginReplacesALoginThatScopeDBRejects(t *testing.T) {
 	fake.Issuer = controlServer.URL
 	saveLogin(t, store, fake.URL, "ws-1", time.Now().Add(30*time.Second), time.Now().Add(24*time.Hour))
 
-	out, _, err := runInteractiveLogin(t, fake, "\r")
+	out, _, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.Equal(t, int32(1), refreshes.Load())
@@ -656,91 +563,11 @@ func TestLoginReplacesALoginThatScopeDBRejects(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "ort_refresh", state.RefreshToken)
 }
-func TestLoginWorkspaceMenuSelectsACandidate(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
 
-	result := runLoginMenu(t, fake, "\rj\r")
-	require.NoError(t, result.err)
-	require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", result.out)
-	require.Contains(t, result.diagnostics, "Which workspace do you want to use?")
-	require.Contains(t, result.diagnostics, "Alpha (ws-1, ready)")
-	require.Contains(t, result.diagnostics, "Beta (ws-2, ready)")
-	require.Contains(t, result.diagnostics, "Skip for now (select later with 'scope workspace use <id-or-name>')")
-	require.Contains(t, result.diagnostics, "✔ Beta (ws-2, ready)")
-	require.NotContains(t, result.out, "Which workspace")
-	require.Equal(t, 2, result.raw.restores)
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ws-2", state.WorkspaceID)
-}
-
-func TestLoginWorkspaceMenuSelectsADigitShortcut(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-
-	result := runLoginMenu(t, fake, "\r2\r")
-	require.NoError(t, result.err)
-	require.Contains(t, result.diagnostics, "✔ Beta (ws-2, ready)")
-	require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", result.out)
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ws-2", state.WorkspaceID)
-}
-
-func TestLoginWorkspaceMenuSkipsTheLastOption(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-
-	result := runLoginMenu(t, fake, "\rjj\r")
-	require.NoError(t, result.err)
-	require.Equal(t, "Logged in as dev@example.com.\n", result.out)
-	require.Contains(t, result.diagnostics, "✔ Skip for now")
-	require.Contains(t, result.diagnostics, "no workspace is selected")
-	require.Contains(t, result.diagnostics, "scope workspace use <id-or-name>")
-	require.NotContains(t, result.out, "CURRENT")
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Empty(t, state.WorkspaceID)
-}
-
-func TestLoginWorkspaceMenuSkipsOnQuit(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-
-	result := runLoginMenu(t, fake, "\rq")
-	require.NoError(t, result.err)
-	require.Equal(t, "Logged in as dev@example.com.\n", result.out)
-	require.Contains(t, result.diagnostics, "q to skip")
-	require.Contains(t, result.diagnostics, "no workspace is selected")
-	require.Contains(t, result.diagnostics, "scope workspace use <id-or-name>")
-	require.NotContains(t, result.out, "CURRENT")
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Empty(t, state.WorkspaceID)
-}
-
-func TestLoginWorkspaceMenuRefusesADeletedWorkspaceAndAsksAgain(t *testing.T) {
-	fake, store := setupCLITest(t)
-	deleted := workspaceFixture("ws-1", "Alpha")
-	deletedAt := time.Now().Add(time.Hour)
-	deleted.ScheduledForDeletionAt = &deletedAt
-	fake.Workspaces = []controlplane.Workspace{deleted, workspaceFixture("ws-2", "Beta")}
-
-	result := runLoginMenu(t, fake, "\r\rj\r")
-	require.NoError(t, result.err)
-	require.Contains(t, result.diagnostics, "Alpha (ws-1, scheduled for deletion)")
-	require.Contains(t, result.diagnostics, "Workspace Alpha is scheduled for deletion; restore it in the Console or choose another.")
-	require.Equal(t, 3, strings.Count(result.diagnostics, "Which workspace do you want to use?"))
-	require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", result.out)
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ws-2", state.WorkspaceID)
-}
 func TestLoginWithoutWorkspacesReportsSetup(t *testing.T) {
 	fake, store := setupCLITest(t)
 
-	out, diagnostics, err := runInteractiveLogin(t, fake, "\r")
+	out, diagnostics, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.NotContains(t, out, "CURRENT")
@@ -775,7 +602,6 @@ func TestLoginRollsBackFailedPersistence(t *testing.T) {
 		OpenURL:         fake.authorizationURL(t),
 		IsInputTerminal: func() bool { return true },
 		IsErrorTerminal: func() bool { return true },
-		MakeRaw:         func() (func(), error) { return func() {}, nil },
 		CredentialStore: func(_ string, paths config.Paths) (credential.Store, error) {
 			return &interruptSaveStore{Store: store, afterSave: func() error { return os.Mkdir(paths.Config, 0o700) }}, nil
 		},
@@ -813,7 +639,7 @@ func TestLoginPreservesUnreadableCredentialFile(t *testing.T) {
 	const broken = `{"version":1,"profiles":`
 	require.NoError(t, os.WriteFile(paths.CredentialsFile, []byte(broken), 0o600))
 
-	out, _, err := runInteractiveLogin(t, fake, "\r")
+	out, _, err := runInteractiveLogin(t, fake, "")
 	require.ErrorContains(t, err, "existing credentials could not be read")
 	require.Empty(t, fake.RevokedTokens)
 	require.Empty(t, out)
@@ -830,7 +656,7 @@ func TestLoginRecoversFromOlderStoredState(t *testing.T) {
 	require.NoError(t, os.MkdirAll(paths.Directory, 0o700))
 	require.NoError(t, os.WriteFile(paths.CredentialsFile, []byte(legacy), 0o600))
 
-	out, _, err := runInteractiveLogin(t, fake, "\r")
+	out, _, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	state, err := store.Load(fake.URL)
@@ -906,31 +732,80 @@ func TestLoginReportsUnreachableControlPlane(t *testing.T) {
 	require.Contains(t, rendered, "connection refused")
 }
 
-func TestLoginRequiresAnInteractiveTerminal(t *testing.T) {
-	fake, store := setupCLITest(t)
-	out, _, err := runLoginScenario(t, fake, loginScenario{})
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "requires an interactive terminal")
-	require.Contains(t, clierror.Render(err), "SCOPEDB_ENDPOINT")
-	require.Empty(t, out)
-	_, loadErr := store.Load(fake.URL)
-	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+func TestLoginWithoutAnInteractiveTerminalSelectsFirstWorkspace(t *testing.T) {
+	for _, flow := range []struct {
+		name string
+		args []string
+	}{
+		{name: "browser"},
+		{name: "device", args: []string{"--no-browser"}},
+	} {
+		for _, terminal := range []struct {
+			name        string
+			input       bool
+			diagnostics bool
+		}{
+			{name: "neither"},
+			{name: "stdin only", input: true},
+			{name: "stderr only", diagnostics: true},
+		} {
+			t.Run(flow.name+"/"+terminal.name, func(t *testing.T) {
+				fake, store := setupCLITest(t)
+				fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta"), workspaceFixture("ws-1", "Alpha")}
+				out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+					inputTerminal: terminal.input,
+					errorTerminal: terminal.diagnostics,
+					args:          flow.args,
+				})
+				require.NoError(t, err)
+				require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Beta (ws-2).\n", out)
+				require.NotContains(t, diagnostics, "no workspace is selected")
+				if !terminal.diagnostics {
+					require.NotContains(t, diagnostics, "\x1b")
+				}
+				state, err := store.Load(fake.URL)
+				require.NoError(t, err)
+				require.Equal(t, "ort_refresh", state.RefreshToken)
+				require.Equal(t, "ws-2", state.WorkspaceID)
+			})
+		}
+	}
 }
 
-func TestLoginMenuUsesDeviceFirstInSSHSession(t *testing.T) {
+func TestLoginDefaultsToBrowserInRemoteEnvironments(t *testing.T) {
+	for _, variable := range []string{"SSH_CONNECTION", "KUBERNETES_SERVICE_HOST", "container"} {
+		t.Run(variable, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			out, _, err := runLoginScenario(t, fake, loginScenario{
+				getenv: func(name string) string {
+					if name == variable {
+						return "set"
+					}
+					return ""
+				},
+			})
+			require.NoError(t, err)
+			require.Contains(t, out, "Logged in as dev@example.com.")
+			require.NotEmpty(t, fake.AuthorizationQuery)
+			require.Zero(t, fake.DevicePolls)
+			state, err := store.Load(fake.URL)
+			require.NoError(t, err)
+			require.Equal(t, "ort_refresh", state.RefreshToken)
+		})
+	}
+}
+
+func TestLoginSelectsFirstAvailableWorkspace(t *testing.T) {
 	fake, store := setupCLITest(t)
-	_, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		input:         "\r",
-		inputTerminal: true,
-		errorTerminal: true,
-		getenv:        sshEnvironment,
-	})
+	fake.Workspaces = []controlplane.Workspace{
+		scheduledForDeletionFixture("ws-3", "Deleted"),
+		workspaceFixture("ws-2", "Beta"),
+		workspaceFixture("ws-1", "Alpha"),
+	}
+	out, _, err := runInteractiveLogin(t, fake, "")
 	require.NoError(t, err)
-	require.Contains(t, diagnostics, "Sign in with a device code (recommended)")
-	require.Contains(t, diagnostics, "✔ Sign in with a device code")
-	require.NotContains(t, diagnostics, "Open this URL")
-	require.Equal(t, 1, fake.DevicePolls)
+	require.Contains(t, out, "Using workspace Beta (ws-2).")
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
-	require.Equal(t, "ort_refresh", state.RefreshToken)
+	require.Equal(t, "ws-2", state.WorkspaceID)
 }

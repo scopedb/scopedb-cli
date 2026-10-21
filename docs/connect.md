@@ -11,6 +11,8 @@ scope doctor
 scope query 'SELECT 1 AS ready'
 ```
 
+Login opens your browser by default. Use `scope auth login --no-browser` to print a device verification link and code for approval from another device. Neither flow requires an interactive terminal. Login keeps a valid workspace selection or automatically selects the first workspace that is not scheduled for deletion, and prints its name and ID. Use `scope workspace use <id-or-name>` to switch.
+
 If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id-or-name>`.
 
 `scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`. In login mode it verifies your login against ScopeDB and reports when the login expires; in environment mode it displays the configured endpoint without validating the API key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.

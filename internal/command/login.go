@@ -41,21 +41,23 @@ const (
 )
 
 func (a *app) newLoginCommand() *cobra.Command {
-	var insecureStorage bool
+	var noBrowser, insecureStorage bool
 	command := &cobra.Command{
 		Use:   "login",
 		Short: "Log in through the ScopeDB Console",
 		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
-			"The login asks how to sign in: approve in the browser, or approve a device code from another device.\n" +
-			"Device login prints a link and a code and never opens a browser.",
+			"Opens your browser by default and completes the login automatically after approval.\n\n" +
+			"Use --no-browser to print a device verification link and code instead, for example\n" +
+			"in an SSH session or container. Approve the code in a browser on another device.\n\n" +
+			"Keeps your selected workspace or selects the first available one and prints its\n" +
+			"name and ID. Use 'scope workspace use <id-or-name>' to switch afterwards.\n" +
+			"Login does not require an interactive terminal.",
+		Example: "  # Sign in using your browser\n" +
+			"  scope auth login\n\n" +
+			"  # Approve a device code without opening a local browser\n" +
+			"  scope auth login --no-browser",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if !a.isInteractive() {
-				return clierror.WithHint(
-					clierror.New(clierror.ExitUsage, "scope auth login requires an interactive terminal"),
-					"run it from a terminal, or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY for non-interactive access",
-				)
-			}
 			paths, cfg, err := a.loadConfig(cmd)
 			if err != nil {
 				return NormalizeError(err)
@@ -91,9 +93,14 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 
-			tokens, err := a.authorizeLogin(cmd.Context(), client)
+			var tokens controlplane.TokenSet
+			if noBrowser {
+				tokens, err = a.deviceLogin(cmd.Context(), client)
+			} else {
+				tokens, err = a.loopbackLogin(cmd.Context(), client)
+			}
 			if err != nil {
-				return NormalizeError(loginMenuError(err, false))
+				return NormalizeError(err)
 			}
 			if err := runtime.persistLogin(cmd.Context(), tokens); err != nil {
 				return err
@@ -101,7 +108,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 
 			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime)
 			if err != nil {
-				return NormalizeError(loginMenuError(err, true))
+				return NormalizeError(err)
 			}
 			if selection.email != "" {
 				_, err = fmt.Fprintf(a.out, "Logged in as %s.\n", selection.email)
@@ -114,6 +121,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 			return a.renderLoginSelection(selection)
 		},
 	}
+	command.Flags().BoolVar(&noBrowser, "no-browser", false, "sign in with a device code without opening a browser")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
 	return command
 }
@@ -134,53 +142,6 @@ func refuseSecondLogin(ctx context.Context, runtime *runtimeContext) error {
 		return nil
 	}
 	return clierror.WithHint(clierror.New(clierror.ExitAuth, "already logged in"), "run 'scope auth status' to see the account, or 'scope auth logout' to sign out first")
-}
-
-const loginCancelled = "login cancelled; no credentials were saved"
-
-func (a *app) isInteractive() bool {
-	return a.isInputTerminal != nil && a.isInputTerminal() && a.isErrorTerminal != nil && a.isErrorTerminal()
-}
-
-// loginMenuError turns the menu sentinels into the documented exit codes. A workspace menu runs after
-// the login is stored, so its interrupt leaves those credentials in place.
-func loginMenuError(err error, credentialsSaved bool) error {
-	switch {
-	case errors.Is(err, errMenuCancelled):
-		if credentialsSaved {
-			return clierror.New(clierror.ExitAuth, "login cancelled; the credentials already saved remain")
-		}
-		return clierror.New(clierror.ExitAuth, loginCancelled)
-	case errors.Is(err, errMenuInterrupted):
-		if credentialsSaved {
-			return clierror.New(clierror.ExitInterrupted, "login interrupted; the credentials already saved remain")
-		}
-		return clierror.New(clierror.ExitInterrupted, "login interrupted; no credentials were saved")
-	default:
-		return err
-	}
-}
-
-func (a *app) authorizeLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
-	deviceFirst := a.browserlessReason() != ""
-	options := []menuOption{
-		{label: "Sign in with your browser", note: "recommended"},
-		{label: "Sign in with a device code"},
-	}
-	if deviceFirst {
-		options = []menuOption{
-			{label: "Sign in with a device code", note: "recommended"},
-			{label: "Sign in with your browser"},
-		}
-	}
-	choice, err := a.chooseMenu("How do you want to sign in?", options)
-	if err != nil {
-		return controlplane.TokenSet{}, err
-	}
-	if deviceFirst == (choice == 0) {
-		return a.deviceLogin(ctx, client)
-	}
-	return a.loopbackLogin(ctx, client)
 }
 
 type loginSelection struct {
@@ -213,28 +174,20 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext)
 	}
 
 	selection := loginSelection{email: account.User.Email}
-	switch {
-	case account.SelectedWorkspaceID != "":
+	if account.SelectedWorkspaceID != "" {
 		workspace, _ := workspaceByID(account.Workspaces, account.SelectedWorkspaceID)
 		selection.workspace = &workspace
 		selection.kept = true
-	case len(account.Workspaces) == 1:
-		workspace := account.Workspaces[0]
-		if workspace.ScheduledForDeletion() {
+	} else {
+		for _, workspace := range account.Workspaces {
+			if workspace.ScheduledForDeletion() {
+				continue
+			}
+			if err := runtime.auth.SelectWorkspace(ctx, workspace.ID); err != nil {
+				return loginSelection{}, err
+			}
+			selection.workspace = &workspace
 			break
-		}
-		if err := runtime.auth.SelectWorkspace(ctx, workspace.ID); err != nil {
-			return loginSelection{}, err
-		}
-		selection.workspace = &workspace
-	case len(account.Workspaces) > 1:
-		picked, err := a.promptLoginWorkspace(ctx, runtime, account)
-		if err != nil {
-			return loginSelection{}, err
-		}
-		if picked != nil {
-			selection.workspace = picked
-			return selection, nil
 		}
 	}
 	if selection.workspace == nil {
@@ -243,48 +196,6 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext)
 		}
 	}
 	return selection, nil
-}
-
-func (a *app) promptLoginWorkspace(ctx context.Context, runtime *runtimeContext, account auth.Account) (*controlplane.Workspace, error) {
-	workspaces := account.Workspaces
-	options := make([]menuOption, 0, len(workspaces)+1)
-	for _, workspace := range workspaces {
-		options = append(options, menuOption{
-			label: fmt.Sprintf("%s (%s, %s)", workspace.Name(), workspace.ID, workspaceStatus(workspace)),
-		})
-	}
-	options = append(options, menuOption{
-		label: "Skip for now",
-		note:  "select later with 'scope workspace use <id-or-name>'",
-	})
-	for {
-		choice, err := a.chooseMenuWith("Which workspace do you want to use?", options, "skip")
-		if err != nil {
-			if errors.Is(err, errMenuCancelled) {
-				return nil, nil
-			}
-			if errors.Is(err, errMenuInterrupted) {
-				if _, writeErr := fmt.Fprintln(a.errOut, "Login saved; no workspace was selected."); writeErr != nil {
-					return nil, writeErr
-				}
-			}
-			return nil, err
-		}
-		if choice == len(workspaces) {
-			return nil, nil
-		}
-		workspace := workspaces[choice]
-		if workspace.ScheduledForDeletion() {
-			if _, err := fmt.Fprintf(a.errOut, "Workspace %s is scheduled for deletion; restore it in the Console or choose another.\n", workspace.Name()); err != nil {
-				return nil, err
-			}
-			continue
-		}
-		if err := runtime.auth.SelectWorkspace(ctx, workspace.ID); err != nil {
-			return nil, err
-		}
-		return &workspace, nil
-	}
 }
 
 func (a *app) renderLoginSelection(selection loginSelection) error {
@@ -512,19 +423,6 @@ func describeAuthorizationError(callback oauth.Callback) string {
 		return "the login request was denied in the console"
 	}
 	return "the login request failed; no credentials were saved"
-}
-
-func (a *app) browserlessReason() string {
-	if a.getenv("SSH_CONNECTION") != "" || a.getenv("SSH_TTY") != "" || a.getenv("SSH_CLIENT") != "" {
-		return "this is an SSH session"
-	}
-	if a.getenv("KUBERNETES_SERVICE_HOST") != "" {
-		return "this looks like a Kubernetes container"
-	}
-	if a.getenv("container") != "" {
-		return "this looks like a container"
-	}
-	return ""
 }
 
 func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.TokenSet) error {

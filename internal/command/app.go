@@ -51,7 +51,6 @@ type Dependencies struct {
 	CredentialStore credentialFactory
 	IsInputTerminal func() bool
 	IsErrorTerminal func() bool
-	MakeRaw         func() (restore func(), err error)
 	OpenURL         func(string) error
 	Now             func() time.Time
 	Sleep           func(time.Duration)
@@ -68,7 +67,6 @@ type app struct {
 	credentialFactory credentialFactory
 	isInputTerminal   func() bool
 	isErrorTerminal   func() bool
-	makeRaw           func() (restore func(), err error)
 	openURL           func(string) error
 	now               func() time.Time
 	sleep             func(time.Duration)
@@ -136,13 +134,10 @@ func newApp(deps Dependencies) *app {
 		deps.CredentialStore = credential.New
 	}
 	if deps.IsInputTerminal == nil {
-		deps.IsInputTerminal = func() bool { return isCharDevice(deps.In) }
+		deps.IsInputTerminal = func() bool { return isTerminal(deps.In) }
 	}
 	if deps.IsErrorTerminal == nil {
-		deps.IsErrorTerminal = func() bool { return isCharDevice(deps.ErrOut) }
-	}
-	if deps.MakeRaw == nil {
-		deps.MakeRaw = func() (func(), error) { return makeInputRaw(deps.In) }
+		deps.IsErrorTerminal = func() bool { return isTerminal(deps.ErrOut) }
 	}
 	if deps.Getenv == nil {
 		deps.Getenv = os.Getenv
@@ -166,7 +161,6 @@ func newApp(deps Dependencies) *app {
 		credentialFactory: deps.CredentialStore,
 		isInputTerminal:   deps.IsInputTerminal,
 		isErrorTerminal:   deps.IsErrorTerminal,
-		makeRaw:           deps.MakeRaw,
 		openURL:           deps.OpenURL,
 		now:               deps.Now,
 		sleep:             deps.Sleep,
@@ -231,26 +225,12 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	return a.newRuntime(paths, cfg)
 }
 
-func isCharDevice(stream any) bool {
+func isTerminal(stream any) bool {
 	file, ok := stream.(*os.File)
 	if !ok {
 		return false
 	}
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
-}
-
-func makeInputRaw(input io.Reader) (func(), error) {
-	file, ok := input.(*os.File)
-	if !ok {
-		return nil, errors.New("input is not a terminal")
-	}
-	fd := int(file.Fd())
-	state, err := term.MakeRaw(fd)
-	if err != nil {
-		return nil, err
-	}
-	return func() { _ = term.Restore(fd, state) }, nil
+	return term.IsTerminal(int(file.Fd()))
 }
 
 func openURL(target string, getenv func(string) string) error {

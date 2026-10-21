@@ -416,16 +416,11 @@ type loginScenario struct {
 	getenv          func(string) string
 	credentialStore func(string, config.Paths) (credential.Store, error)
 	openURL         func(string) error
-	makeRawError    error
-	raw             *rawTerminal
 	args            []string
 }
 
 func runLoginScenario(t *testing.T, fake *fakeControlPlane, scenario loginScenario) (string, string, error) {
 	t.Helper()
-	if scenario.raw == nil {
-		scenario.raw = &rawTerminal{}
-	}
 	getenv := scenario.getenv
 	if getenv == nil {
 		getenv = func(string) string { return "" }
@@ -445,12 +440,6 @@ func runLoginScenario(t *testing.T, fake *fakeControlPlane, scenario loginScenar
 		CredentialStore: scenario.credentialStore,
 		IsInputTerminal: func() bool { return scenario.inputTerminal },
 		IsErrorTerminal: func() bool { return scenario.errorTerminal },
-		MakeRaw: func() (func(), error) {
-			if scenario.makeRawError != nil {
-				return nil, scenario.makeRawError
-			}
-			return func() { scenario.raw.restores++ }, nil
-		},
 	})
 	args := scenario.args
 	if len(args) == 0 || args[0] != "auth" {
@@ -475,48 +464,18 @@ func runInteractiveCommand(t *testing.T, args ...string) (string, string, error)
 		Sleep:           func(time.Duration) {},
 		IsInputTerminal: func() bool { return true },
 		IsErrorTerminal: func() bool { return true },
-		MakeRaw:         func() (func(), error) { return func() {}, nil },
 	})
 	root.SetArgs(args)
 	err := root.ExecuteContext(t.Context())
 	return out.String(), diagnostics.String(), err
 }
 
-func runLoginMenu(t *testing.T, fake *fakeControlPlane, input string, args ...string) loginMenuResult {
+func runDeviceLogin(t *testing.T, fake *fakeControlPlane, flags ...string) (string, string, error) {
 	t.Helper()
-	raw := &rawTerminal{}
-	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		input:         input,
-		inputTerminal: true,
-		errorTerminal: true,
-		raw:           raw,
-		args:          args,
-	})
-	return loginMenuResult{out: out, diagnostics: diagnostics, err: err, raw: raw}
-}
-
-type loginMenuResult struct {
-	out         string
-	diagnostics string
-	err         error
-	raw         *rawTerminal
-}
-
-func sshEnvironment(name string) string {
-	if name == "SSH_CONNECTION" {
-		return "10.0.0.2 52100 10.0.0.1 22"
-	}
-	return ""
-}
-
-func runSSHLogin(t *testing.T, fake *fakeControlPlane, flags ...string) (string, string, error) {
-	t.Helper()
-	args := append([]string{"auth", "login", "--insecure-storage"}, flags...)
+	args := append([]string{"auth", "login", "--insecure-storage", "--no-browser"}, flags...)
 	return runLoginScenario(t, fake, loginScenario{
-		input:         "\r",
 		inputTerminal: true,
 		errorTerminal: true,
-		getenv:        sshEnvironment,
 		args:          args,
 	})
 }
