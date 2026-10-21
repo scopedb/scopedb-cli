@@ -15,7 +15,6 @@
 package command
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -41,7 +40,6 @@ func (a *app) newWorkspaceCommand() *cobra.Command {
 		a.newWorkspaceListCommand(),
 		a.newWorkspaceUseCommand(),
 		a.newWorkspaceGetCommand(),
-		a.newWorkspaceCreateCommand(),
 	)
 	return command
 }
@@ -278,117 +276,6 @@ func (a *app) newWorkspaceGetCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
 	return command
-}
-
-func (a *app) newWorkspaceCreateCommand() *cobra.Command {
-	var name string
-	var provider string
-	var region string
-	var format string
-	command := &cobra.Command{
-		Use:   "create",
-		Short: "Create a workspace",
-		Long: "Create a workspace owned by your account.\n" +
-			"Set both --provider and --region, or neither to use the deployment's default placement.",
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateTextFormat(format); err != nil {
-				return err
-			}
-			runtime, err := a.runtime(cmd)
-			if err != nil {
-				return NormalizeError(err)
-			}
-			provider = strings.TrimSpace(provider)
-			region = strings.TrimSpace(region)
-			switch {
-			case provider == "" && region == "":
-				placement, err := runtime.defaultPlacement(cmd.Context())
-				if err != nil {
-					return NormalizeError(err)
-				}
-				provider, region = placement.Provider, placement.Region
-			case provider == "" || region == "":
-				return usageError("--provider and --region must be set together")
-			}
-			account, err := runtime.auth.Account(cmd.Context())
-			if err != nil {
-				return NormalizeError(err)
-			}
-			state, err := runtime.auth.LoadAccess(cmd.Context())
-			if err != nil {
-				return NormalizeError(err)
-			}
-			created, err := runtime.control.CreateWorkspace(cmd.Context(), state.AccessToken, controlplane.CreateWorkspaceRequest{
-				DisplayName: strings.TrimSpace(name),
-				Provider:    provider,
-				Region:      region,
-			})
-			if err != nil {
-				return NormalizeError(err)
-			}
-			if created.WorkspaceID == "" {
-				return NormalizeError(fmt.Errorf("ScopeDB did not return the created workspace"))
-			}
-			selected := state.WorkspaceID == ""
-			if !selected {
-				if workspace, ok := workspaceByID(account.Workspaces, state.WorkspaceID); !ok || workspace.ScheduledForDeletion() {
-					selected = true
-				}
-			}
-			if selected {
-				if err := runtime.auth.SelectWorkspace(cmd.Context(), created.WorkspaceID); err != nil {
-					return NormalizeError(err)
-				}
-			}
-			if format == structuredFormatJSON {
-				return writeJSON(a.out, workspaceCreateResult{ID: created.WorkspaceID, Provider: provider, Region: region})
-			}
-			if selected {
-				_, err = fmt.Fprintf(a.out, "Created workspace %s.\nUsing workspace %s.\n", created.WorkspaceID, created.WorkspaceID)
-				return NormalizeError(err)
-			}
-			_, err = fmt.Fprintf(a.out, "Created workspace %s.\nRun 'scope workspace use %s' to select it.\n", created.WorkspaceID, created.WorkspaceID)
-			return NormalizeError(err)
-		},
-	}
-	command.Flags().StringVar(&name, "name", "", "display name for the workspace")
-	command.Flags().StringVar(&provider, "provider", "", "cloud provider; set with --region or omit both")
-	command.Flags().StringVar(&region, "region", "", "cloud region; set with --provider or omit both")
-	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
-	return command
-}
-
-type workspaceCreateResult struct {
-	ID       string `json:"id"`
-	Provider string `json:"provider"`
-	Region   string `json:"region"`
-}
-
-func (r *runtimeContext) defaultPlacement(ctx context.Context) (controlplane.Placement, error) {
-	config, err := r.control.GetSignupConfig(ctx)
-	if err != nil {
-		return controlplane.Placement{}, err
-	}
-	if placement := config.DefaultPlacement; placement != nil && placement.Provider != "" && placement.Region != "" {
-		return *placement, nil
-	}
-	switch len(config.Placements) {
-	case 0:
-		return controlplane.Placement{}, clierror.New(clierror.ExitGeneral, "this deployment has no available placement; pass --provider and --region")
-	case 1:
-		return config.Placements[0], nil
-	default:
-		return controlplane.Placement{}, usageError("--provider and --region are required; available placements: " + describePlacements(config.Placements))
-	}
-}
-
-func describePlacements(placements []controlplane.Placement) string {
-	values := make([]string, 0, len(placements))
-	for _, placement := range placements {
-		values = append(values, placement.Provider+"/"+placement.Region)
-	}
-	return strings.Join(values, ", ")
 }
 
 func workspaceByID(workspaces []controlplane.Workspace, id string) (controlplane.Workspace, bool) {

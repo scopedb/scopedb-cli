@@ -15,7 +15,6 @@
 package controlplane
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -57,29 +56,6 @@ func TestClientUserAndWorkspaceContract(t *testing.T) {
 	require.Len(t, workspaces, 1)
 	require.Equal(t, "Production", workspaces[0].Name())
 	require.False(t, workspaces[0].ScheduledForDeletion())
-}
-
-func TestClientCreateWorkspaceContract(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		assert.Equal(t, http.MethodPost, request.Method)
-		assert.Equal(t, "/api/workspaces", request.URL.Path)
-		assert.Equal(t, "application/json", request.Header.Get("Content-Type"))
-		var body CreateWorkspaceRequest
-		assert.NoError(t, json.NewDecoder(request.Body).Decode(&body))
-		assert.Equal(t, CreateWorkspaceRequest{DisplayName: "Analytics", Provider: "aws", Region: "us-east-1"}, body)
-		writer.Header().Set("Content-Type", "application/json")
-		writer.WriteHeader(http.StatusCreated)
-		_, _ = writer.Write([]byte(`{"token":"","workspace_id":"ws-new"}`))
-	}))
-	t.Cleanup(server.Close)
-
-	client, err := NewClient(server.URL, "", server.Client())
-	require.NoError(t, err)
-	created, err := client.CreateWorkspace(t.Context(), "oat_token", CreateWorkspaceRequest{
-		DisplayName: "Analytics", Provider: "aws", Region: "us-east-1",
-	})
-	require.NoError(t, err)
-	require.Equal(t, "ws-new", created.WorkspaceID)
 }
 
 func TestClientPreservesStructuredHTTPError(t *testing.T) {

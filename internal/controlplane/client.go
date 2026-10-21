@@ -95,18 +95,6 @@ func (c *Client) ListWorkspaces(ctx context.Context, token string) ([]Workspace,
 	return response.Workspaces, err
 }
 
-func (c *Client) CreateWorkspace(ctx context.Context, token string, request CreateWorkspaceRequest) (CreateWorkspaceResponse, error) {
-	var response CreateWorkspaceResponse
-	err := c.doJSON(ctx, http.MethodPost, "/api/workspaces", token, request, &response)
-	return response, err
-}
-
-func (c *Client) GetSignupConfig(ctx context.Context) (SignupConfig, error) {
-	var response SignupConfig
-	err := c.doJSON(ctx, http.MethodGet, "/api/signup/config", "", nil, &response)
-	return response, err
-}
-
 func (c *Client) GetWorkspace(ctx context.Context, token, workspaceID string) (WorkspaceDetails, error) {
 	var response WorkspaceDetails
 	err := c.doJSON(ctx, http.MethodGet, workspacePath(workspaceID), token, nil, &response)

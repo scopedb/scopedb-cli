@@ -17,7 +17,6 @@ package command
 import (
 	"bytes"
 	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 
@@ -25,93 +24,6 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/stretchr/testify/require"
 )
-
-func TestWorkspaceCreateUsesDefaultPlacement(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Signup = controlplane.SignupConfig{DefaultPlacement: &controlplane.Placement{Provider: "aws", Region: "eu-west-1"}}
-	saveStoredLogin(t, store, fake.URL, "")
-
-	out, diagnostics, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--name", "Analytics", "--format", "json")
-	require.NoError(t, err)
-	require.Empty(t, diagnostics)
-	require.JSONEq(t, `{"id":"ws-new","provider":"aws","region":"eu-west-1"}`, out)
-}
-
-func TestWorkspaceCreateRequiresChoiceWithoutDefault(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Signup = controlplane.SignupConfig{Placements: []controlplane.Placement{
-		{Provider: "aws", Region: "us-east-1"}, {Provider: "aws", Region: "eu-west-1"},
-	}}
-	saveStoredLogin(t, store, fake.URL, "")
-
-	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create")
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "aws/us-east-1, aws/eu-west-1")
-	require.Empty(t, out)
-}
-
-func TestWorkspaceCreateAcceptsExplicitPlacement(t *testing.T) {
-	fake, store := setupCLITest(t)
-	saveStoredLogin(t, store, fake.URL, "")
-
-	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws", "--region", "ap-northeast-1")
-	require.NoError(t, err)
-	require.Contains(t, out, "Created workspace ws-new.")
-	require.Contains(t, out, "Using workspace ws-new.")
-	require.NotContains(t, out, "scope workspace use")
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ws-new", state.WorkspaceID)
-}
-
-func TestWorkspaceCreateSelectsWhenNothingIsSelectedAsJSON(t *testing.T) {
-	fake, store := setupCLITest(t)
-	saveStoredLogin(t, store, fake.URL, "")
-
-	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws", "--region", "us-east-1", "--format", "json")
-	require.NoError(t, err)
-	require.JSONEq(t, `{"id":"ws-new","provider":"aws","region":"us-east-1"}`, out)
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ws-new", state.WorkspaceID)
-}
-
-func TestWorkspaceCreateSelectsWhenExistingIsUnavailable(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta")}
-	saveStoredLogin(t, store, fake.URL, "ws-1")
-
-	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws", "--region", "us-east-1")
-	require.NoError(t, err)
-	require.Contains(t, out, "Using workspace ws-new.")
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ws-new", state.WorkspaceID)
-}
-
-func TestWorkspaceCreateRejectsPartialPlacement(t *testing.T) {
-	fake, store := setupCLITest(t)
-	saveStoredLogin(t, store, fake.URL, "")
-
-	_, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws")
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "--provider and --region must be set together")
-}
-
-func TestWorkspaceCreateKeepsAnExistingSelection(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
-	saveStoredLogin(t, store, fake.URL, "ws-1")
-
-	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws", "--region", "ap-northeast-1")
-	require.NoError(t, err)
-	require.Contains(t, out, "Created workspace ws-new.")
-	require.Contains(t, out, "Run 'scope workspace use ws-new' to select it.")
-	require.NotContains(t, out, "Using workspace")
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ws-1", state.WorkspaceID)
-}
 
 func TestWorkspaceGetShowsSelectedWorkspace(t *testing.T) {
 	fake, store := setupCLITest(t)
@@ -232,13 +144,4 @@ func TestQueryWithoutLoginReportsLoginHint(t *testing.T) {
 	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(NormalizeError(err)))
 	require.Empty(t, out)
 	require.Contains(t, clierror.Render(NormalizeError(err)), "scope auth login")
-}
-
-func TestUnreachableControlPlaneIsTemporary(t *testing.T) {
-	fake, store := setupCLITest(t)
-	saveStoredLogin(t, store, fake.URL, "")
-	fake.CreateWorkspaceStatus = http.StatusInternalServerError
-
-	_, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "create", "--provider", "aws", "--region", "us-east-1")
-	require.Equal(t, clierror.ExitTemporary, clierror.ExitCode(NormalizeError(err)))
 }

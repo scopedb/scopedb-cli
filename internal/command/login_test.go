@@ -555,7 +555,7 @@ func TestLoginWithoutWorkspacesReportsSetup(t *testing.T) {
 	require.Contains(t, out, "Logged in as dev@example.com.")
 	require.NotContains(t, out, "CURRENT")
 	require.Contains(t, diagnostics, "no workspaces")
-	require.Contains(t, diagnostics, "scope workspace create")
+	require.Contains(t, diagnostics, "scope console --open")
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Empty(t, state.WorkspaceID)
@@ -915,7 +915,7 @@ func TestAPIKeyCommandsReportWorkspaceSetup(t *testing.T) {
 		exitCode   int
 	}{
 		{"pending", "pending", nil, "scope console --open", clierror.ExitAuth},
-		{"no workspaces", "active", nil, "scope workspace create", clierror.ExitUsage},
+		{"no workspaces", "active", nil, "scope console --open", clierror.ExitUsage},
 		{"no selection", "active", []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}, "scope workspace list", clierror.ExitUsage},
 	} {
 		t.Run(phase.name, func(t *testing.T) {

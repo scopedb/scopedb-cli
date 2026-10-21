@@ -56,19 +56,17 @@ type fakeControlPlane struct {
 	Workspaces          []controlplane.Workspace
 	Details             map[string]controlplane.WorkspaceDetails
 	Exchange            controlplane.TokenExchangeResponse
-	Signup              controlplane.SignupConfig
 	APIKeys             []controlplane.APIKey
 	APIKeyRequests      []controlplane.CreateAPIKeyRequest
 	RevokedAPIKeys      []string
 	TokenResponseMutate func(*controlplane.TokenSet)
 
-	Issuer                string
-	MetadataMutate        func(*controlplane.AuthorizationServerMetadata)
-	CreateWorkspaceStatus int
-	TokenStatus           int
-	TokenError            string
-	HealthStatus          int
-	RevokedStatus         int
+	Issuer         string
+	MetadataMutate func(*controlplane.AuthorizationServerMetadata)
+	TokenStatus    int
+	TokenError     string
+	HealthStatus   int
+	RevokedStatus  int
 
 	AuthorizationQuery url.Values
 	TokenForms         []url.Values
@@ -92,9 +90,6 @@ func newFakeControlPlane(t *testing.T) *fakeControlPlane {
 		DeviceCode:            "device-1",
 		User:                  controlplane.User{ID: "user-1", Email: "dev@example.com", Status: "active"},
 		Details:               map[string]controlplane.WorkspaceDetails{},
-		Signup: controlplane.SignupConfig{
-			DefaultPlacement: &controlplane.Placement{Provider: "aws", Region: "us-east-1"},
-		},
 	}
 	fake.Server = httptest.NewServer(http.HandlerFunc(fake.serve))
 	fake.URL = fake.Server.URL
@@ -165,17 +160,6 @@ func (f *fakeControlPlane) serve(w http.ResponseWriter, r *http.Request) {
 		f.writeJSON(w, http.StatusOK, f.User)
 	case r.URL.Path == "/api/workspaces" && r.Method == http.MethodGet:
 		f.writeJSON(w, http.StatusOK, controlplane.WorkspacesResponse{Workspaces: f.workspaces()})
-	case r.URL.Path == "/api/workspaces" && r.Method == http.MethodPost:
-		if f.CreateWorkspaceStatus != 0 {
-			w.WriteHeader(f.CreateWorkspaceStatus)
-			_, _ = w.Write([]byte(`{"message":"boom"}`))
-			return
-		}
-		var request controlplane.CreateWorkspaceRequest
-		assert.NoError(f.t, json.NewDecoder(r.Body).Decode(&request))
-		f.writeJSON(w, http.StatusCreated, controlplane.CreateWorkspaceResponse{WorkspaceID: "ws-new"})
-	case r.URL.Path == "/api/signup/config":
-		f.writeJSON(w, http.StatusOK, f.Signup)
 	case r.URL.Path == "/healthz":
 		status := f.HealthStatus
 		if status == 0 {

@@ -72,21 +72,6 @@ type Provisioning struct {
 	UpdatedAt *time.Time `json:"updated_at"`
 }
 
-type CreateWorkspaceRequest struct {
-	DisplayName string `json:"display_name"`
-	Provider    string `json:"provider"`
-	Region      string `json:"region"`
-}
-
-type CreateWorkspaceResponse struct {
-	WorkspaceID string `json:"workspace_id"`
-}
-
-type SignupConfig struct {
-	DefaultPlacement *Placement  `json:"default_placement"`
-	Placements       []Placement `json:"placements"`
-}
-
 type TokenExchangeResponse struct {
 	AccessToken string    `json:"access_token"`
 	TokenType   string    `json:"token_type"`

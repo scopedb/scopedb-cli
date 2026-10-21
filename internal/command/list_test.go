@@ -96,7 +96,7 @@ func TestListGuidesAccountWithoutWorkspaces(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `[]`, out)
 	require.Contains(t, diagnostics, "no workspaces")
-	require.Contains(t, diagnostics, "scope workspace create")
+	require.Contains(t, diagnostics, "scope console --open")
 }
 
 func TestWorkspaceGetRequiresSelection(t *testing.T) {
