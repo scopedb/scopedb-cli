@@ -87,12 +87,13 @@ Business commands support `--format json` for scripts while keeping their usual 
 ```sh
 scope auth status --format json
 scope workspace use <id-or-name> --format json
+scope api-key revoke <name> --yes --format json
 scope console --format json
 ```
 
 Results go to stdout; prompts, warnings, and errors go to stderr. `scope doctor --format json` prints its report and exits nonzero if checks fail. `scope version --format json` prints machine-readable version information; `--json` is also supported.
 
-`scope workspace list` accepts `--limit N` to show at most N items. The default and `--limit 0` show all items. This limits displayed results without reducing the amount fetched.
+`scope workspace list` and `scope api-key list` accept `--limit N` to show at most N items. The default and `--limit 0` show all items. This limits displayed results without reducing the amount fetched.
 
 Run `scope --help` or `scope <command> --help` for the complete command reference. See the [ScopeDB documentation](https://docs.scopedb.io/) for ScopeQL and service documentation.
 
@@ -110,7 +111,17 @@ scope query --format json 'SELECT 1 AS ready'
 
 Both variables are required and override the saved login for queries, `auth status`, and connection checks. Setting only one fails instead of falling back to your login. Unset both to return to your logged-in workspace.
 
-For SDK setup, get the endpoint with `scope workspace get` and create an application key in the [Console](https://console.scopedb.cloud/keys). Use the same endpoint and key in your SDK configuration, then run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
+## Manage API keys
+
+`scope api-key list`, `scope api-key create`, and `scope api-key revoke` manage persistent API keys for the selected workspace. `create` prints the secret to stdout once; copy it before the command exits. These keys are ordinary persistent keys and stay active after you log out or the login grant expires.
+
+```sh
+scope api-key list
+scope api-key create my-app --expires-in 720h
+scope api-key revoke my-app --yes
+```
+
+For SDK setup, get the endpoint with `scope workspace get`, create an application key with `scope api-key create`, and use the same endpoint and key in your SDK configuration. Run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
 
 ## Development
 

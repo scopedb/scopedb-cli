@@ -225,6 +225,32 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	return a.newRuntime(paths, cfg)
 }
 
+func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
+	if prompt != "" {
+		if _, err := fmt.Fprint(a.errOut, prompt); err != nil {
+			return "", err
+		}
+	}
+	type input struct {
+		value string
+		err   error
+	}
+	done := make(chan input, 1)
+	go func() {
+		value, err := a.input.ReadString('\n')
+		done <- input{value: value, err: err}
+	}()
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case result := <-done:
+		if result.err != nil && !errors.Is(result.err, io.EOF) {
+			return "", result.err
+		}
+		return strings.TrimSpace(result.value), nil
+	}
+}
+
 func isTerminal(stream any) bool {
 	file, ok := stream.(*os.File)
 	if !ok {

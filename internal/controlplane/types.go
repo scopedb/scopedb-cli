@@ -93,3 +93,21 @@ type TokenExchangeResponse struct {
 	ExpiresIn   int       `json:"expires_in"`
 	ExpiresAt   time.Time `json:"expires_at"`
 }
+
+type CreateAPIKeyRequest struct {
+	Name      string     `json:"name"`
+	Tags      []string   `json:"tags"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+}
+
+type APIKey struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Tags      []string   `json:"tags"`
+	Status    string     `json:"status"`
+	CreatedBy string     `json:"created_by"`
+	CreatedAt time.Time  `json:"created_at"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Key       string     `json:"key,omitempty"`
+}

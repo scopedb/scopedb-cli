@@ -27,7 +27,13 @@ Show the selected workspace's endpoint:
 scope workspace get
 ```
 
-Create an application key in the Console's [API keys](https://console.scopedb.cloud/keys) page. The key is shown only once; store it in your application's secret manager. A CLI login is a delegated credential that cannot manage persistent keys, so create and revoke them in the Console. Use separate keys for development, staging, and production.
+Create an application key with `scope api-key create` in the selected workspace. The key is shown only once; store it in your application's secret manager. These are persistent keys, so they stay active after you log out or the login grant expires. Use separate keys for development, staging, and production.
+
+```sh
+scope api-key create my-app --expires-in 720h
+scope api-key list
+scope api-key revoke my-app --yes
+```
 
 Copy the workspace's data-plane endpoint, without appending `/v1/statements`. Set both values in your application environment or local shell:
 

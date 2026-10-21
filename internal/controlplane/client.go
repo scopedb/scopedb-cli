@@ -119,6 +119,25 @@ func (c *Client) ExchangeToken(ctx context.Context, token, workspaceID string) (
 	return response, err
 }
 
+func (c *Client) ListAPIKeys(ctx context.Context, token, workspaceID string) ([]APIKey, error) {
+	var response []APIKey
+	err := c.doJSON(ctx, http.MethodGet, workspacePath(workspaceID)+"/api-keys", token, nil, &response)
+	if response == nil && err == nil {
+		response = []APIKey{}
+	}
+	return response, err
+}
+
+func (c *Client) CreateAPIKey(ctx context.Context, token, workspaceID string, request CreateAPIKeyRequest) (APIKey, error) {
+	var response APIKey
+	err := c.doJSON(ctx, http.MethodPost, workspacePath(workspaceID)+"/api-keys", token, request, &response)
+	return response, err
+}
+
+func (c *Client) RevokeAPIKey(ctx context.Context, token, workspaceID, name string) error {
+	return c.doJSON(ctx, http.MethodDelete, workspacePath(workspaceID)+"/api-keys/"+url.PathEscape(name), token, nil, nil)
+}
+
 func (c *Client) Health(ctx context.Context) error {
 	return c.doJSON(ctx, http.MethodGet, "/healthz", "", nil, nil)
 }
