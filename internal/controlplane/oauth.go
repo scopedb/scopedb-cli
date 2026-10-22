@@ -19,8 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -252,10 +250,9 @@ func (o *OAuth) postForm(ctx context.Context, endpoint string, form url.Values, 
 	}
 	data, err := readBounded(response.Body, maxSuccessBody)
 	if err != nil {
-		var networkError net.Error
 		return &OAuthError{
 			Status:    response.StatusCode,
-			Retryable: errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, &networkError),
+			Retryable: !errors.Is(err, errResponseTooLarge),
 			Err:       err,
 		}
 	}

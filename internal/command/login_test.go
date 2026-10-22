@@ -517,41 +517,68 @@ func TestLoginPreservesAnotherLoginCompletedDuringAuthorization(t *testing.T) {
 }
 
 func TestLoginRefreshRecoversTruncatedResponse(t *testing.T) {
-	for _, failures := range []int32{1, 3} {
-		t.Run(fmt.Sprintf("failures=%d", failures), func(t *testing.T) {
+	for _, scenario := range []struct {
+		http2    bool
+		failures int32
+	}{
+		{false, 1}, {false, 3},
+		{true, 1}, {true, 3},
+	} {
+		t.Run(fmt.Sprintf("http2=%t/failures=%d", scenario.http2, scenario.failures), func(t *testing.T) {
 			fake, store := setupCLITest(t)
 			fake.RefreshedAccessToken = "oat_rotated"
 			fake.RefreshedRefreshToken = "ort_rotated"
 			var attempts atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/oauth/token" {
+					if (r.ProtoMajor == 2) != scenario.http2 {
+						t.Errorf("unexpected protocol: %s", r.Proto)
+					}
 					_ = r.ParseForm()
 					if r.Form.Get("grant_type") == "refresh_token" {
 						if r.Form.Get("refresh_token") != "ort_refresh" {
 							t.Error("recovery must reuse the original refresh token")
 						}
-						if attempts.Add(1) <= failures {
+						if attempts.Add(1) <= scenario.failures {
 							w.Header().Set("Content-Length", "1000")
 							_, _ = w.Write([]byte(`{"access_token":"partial`))
+							if scenario.http2 {
+								// Send the successful headers before resetting the stream.
+								w.(http.Flusher).Flush()
+								panic(http.ErrAbortHandler)
+							}
 							return
 						}
 					}
 				}
 				fake.serve(w, r)
 			}))
+			server.EnableHTTP2 = scenario.http2
+			server.StartTLS()
 			t.Cleanup(server.Close)
 			fake.URL, fake.Issuer = server.URL, server.URL
 			saveLogin(t, store, fake.URL, "", time.Now().Add(-time.Minute), time.Now().Add(time.Hour))
 
-			_, _, err := runFakeCommand(t, fake, "auth", "status", "--format", "json")
+			var out, diagnostics bytes.Buffer
+			root := NewRoot(Dependencies{
+				Out: &out, ErrOut: &diagnostics,
+				Getenv:     func(string) string { return "" },
+				Sleep:      func(time.Duration) {},
+				HTTPClient: server.Client(),
+			})
+			root.SetArgs([]string{"--control-url", fake.URL, "auth", "status", "--format", "json"})
+			err := root.ExecuteContext(t.Context())
+			for _, secret := range []string{"oat_access", "ort_refresh", "oat_rotated", "ort_rotated"} {
+				require.NotContains(t, out.String()+diagnostics.String()+clierror.Render(err), secret)
+			}
 			state, loadErr := store.Load(fake.URL)
 			require.NoError(t, loadErr)
-			if failures == 1 {
+			if scenario.failures == 1 {
 				require.NoError(t, err)
 				require.EqualValues(t, 2, attempts.Load())
 				require.Equal(t, "ort_rotated", state.RefreshToken)
 			} else {
-				require.ErrorContains(t, err, "unexpected EOF")
+				require.Error(t, err)
 				require.EqualValues(t, 3, attempts.Load())
 				require.Equal(t, "ort_refresh", state.RefreshToken)
 			}

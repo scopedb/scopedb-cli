@@ -522,7 +522,8 @@ func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.T
 	}
 }
 
-// revokeIssuedLogin undoes a login the CLI could not store, so a failed login never leaves a live grant behind.
+// revokeIssuedLogin tries to revoke a login the CLI could not store.
+// Cleanup failures do not replace the original login error.
 func (r *runtimeContext) revokeIssuedLogin(tokens controlplane.TokenSet) {
 	token := tokens.RefreshToken
 	if token == "" {
