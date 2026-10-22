@@ -325,9 +325,6 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth, openB
 	if err != nil {
 		return controlplane.TokenSet{}, err
 	}
-	if device.DeviceCode == "" || device.UserCode == "" || device.VerificationURI == "" || device.ExpiresIn <= 0 {
-		return controlplane.TokenSet{}, errors.New("ScopeDB returned an incomplete device authorization")
-	}
 	if err := a.writeDeviceInstructions(device); err != nil {
 		return controlplane.TokenSet{}, err
 	}

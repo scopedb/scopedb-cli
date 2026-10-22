@@ -93,8 +93,8 @@ func (e *OAuthError) Error() string {
 
 func (e *OAuthError) Unwrap() error { return e.Err }
 
-// OAuth talks to the authorization server discovered for one Control Plane origin. Every endpoint
-// is validated against the issuer before it is used, so a metadata document cannot redirect
+// OAuth talks to the authorization server discovered for one Control Plane origin. Its API endpoints
+// are validated against the issuer before use, so a metadata document cannot redirect
 // credentials or authorization codes somewhere else.
 type OAuth struct {
 	metadata  AuthorizationServerMetadata
@@ -164,8 +164,23 @@ func (o *OAuth) StartDeviceAuthorization(ctx context.Context) (DeviceAuthorizati
 	}
 	form := url.Values{"client_id": {ClientID}, "scope": {ScopePlatform}}
 	var response DeviceAuthorization
-	err := o.postForm(ctx, o.metadata.DeviceAuthorizationEndpoint, form, &response)
-	return response, err
+	if err := o.postForm(ctx, o.metadata.DeviceAuthorizationEndpoint, form, &response); err != nil {
+		return DeviceAuthorization{}, err
+	}
+	if response.DeviceCode == "" || response.UserCode == "" || response.VerificationURI == "" || response.ExpiresIn <= 0 {
+		return DeviceAuthorization{}, errors.New("ScopeDB returned an incomplete device authorization")
+	}
+	// The Console may use a different origin, but verification URLs must only open a web browser.
+	for _, target := range []string{response.VerificationURI, response.VerificationURIComplete} {
+		if target == "" {
+			continue
+		}
+		parsed, err := url.Parse(target)
+		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Hostname() == "" {
+			return DeviceAuthorization{}, errors.New("ScopeDB returned an invalid device verification URL")
+		}
+	}
+	return response, nil
 }
 
 func (o *OAuth) ExchangeAuthorizationCode(ctx context.Context, code, redirectURI, verifier string) (TokenSet, error) {

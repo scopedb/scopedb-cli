@@ -205,7 +205,7 @@ func TestDeviceLoginFailureOutcomes(t *testing.T) {
 
 func TestDeviceLoginRejectsIncompleteResponse(t *testing.T) {
 	fake, _ := setupCLITest(t)
-	fake.UserCode = ""
+	fake.Device.UserCode = ""
 	_, _, err := runDeviceLogin(t, fake)
 	require.ErrorContains(t, err, "incomplete device authorization")
 }
@@ -263,7 +263,7 @@ func TestLoginAuthorizationModes(t *testing.T) {
 					require.False(t, tc.noBrowser)
 					require.Contains(t, diagnostics.String(), target)
 					if tc.device {
-						require.Equal(t, "https://console.example.com/oauth/device#user_code="+fake.UserCode, target)
+						require.Equal(t, fake.Device.VerificationURIComplete, target)
 					} else {
 						require.NoError(t, fake.authorizationURL(t)(target))
 					}
@@ -288,7 +288,7 @@ func TestLoginAuthorizationModes(t *testing.T) {
 			if tc.device {
 				require.Equal(t, controlplane.GrantTypeDeviceCode, fake.TokenForms[0].Get("grant_type"))
 				require.Empty(t, fake.AuthorizationQuery)
-				require.Contains(t, diagnostics.String(), fake.UserCode)
+				require.Contains(t, diagnostics.String(), fake.Device.UserCode)
 			} else {
 				require.Equal(t, "authorization_code", fake.TokenForms[0].Get("grant_type"))
 				require.NotEmpty(t, fake.TokenForms[0].Get("code_verifier"))
@@ -301,20 +301,84 @@ func TestLoginAuthorizationModes(t *testing.T) {
 	}
 }
 
-func TestDeviceLoginFallsBackToThePlainVerificationURL(t *testing.T) {
+func TestDeviceLoginVerificationURLs(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		uri         string
+		completeURI string
+	}{
+		{"prefilled link", "https://console.example.com/oauth/device?source=cli#approve", "https://console.example.com/oauth/device?next=%2Fhome#user_code=BCDF-GHJK-LMNP"},
+		{"plain link", "http://127.0.0.1:8080/oauth/device?source=cli#approve", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, _ := setupCLITest(t)
+			fake.Device.VerificationURI = tc.uri
+			fake.Device.VerificationURIComplete = tc.completeURI
+			var opened string
+			_, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+				openURL: func(target string) error { opened = target; return nil },
+				args:    []string{"--use-device-code"},
+			})
+			require.NoError(t, err)
+			if tc.completeURI != "" {
+				require.Equal(t, tc.completeURI, opened)
+				require.Contains(t, diagnostics, tc.completeURI)
+			} else {
+				require.Equal(t, tc.uri, opened)
+			}
+			require.Contains(t, diagnostics, tc.uri)
+			require.Contains(t, diagnostics, fake.Device.UserCode)
+		})
+	}
+}
+
+func TestDeviceLoginRejectsInvalidVerificationURLs(t *testing.T) {
+	for _, field := range []string{"verification_uri", "verification_uri_complete"} {
+		for _, tc := range []struct {
+			name   string
+			target string
+		}{
+			{"file", "file:///tmp/device-login"},
+			{"custom scheme", "scopedb-test://device-login"},
+			{"relative", "/oauth/device"},
+			{"scheme relative", "//console.example.com/oauth/device"},
+			{"missing host", "https:///oauth/device"},
+			{"port without host", "https://:443/oauth/device"},
+			{"opaque", "https:console.example.com/oauth/device"},
+			{"malformed escape", "https://console.example.com/%zz?user_code=BCDF-GHJK-LMNP"},
+		} {
+			t.Run(field+"/"+tc.name, func(t *testing.T) {
+				fake, store := setupCLITest(t)
+				if field == "verification_uri" {
+					fake.Device.VerificationURI = tc.target
+				} else {
+					fake.Device.VerificationURIComplete = tc.target
+				}
+				var opened []string
+				out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+					openURL: func(target string) error { opened = append(opened, target); return nil },
+					args:    []string{"--use-device-code"},
+				})
+				require.ErrorContains(t, err, "invalid device verification URL")
+				require.Empty(t, opened)
+				require.Empty(t, fake.TokenForms)
+				require.Empty(t, out)
+				require.NotContains(t, diagnostics+clierror.Render(err), tc.target)
+				require.NotContains(t, diagnostics+clierror.Render(err), fake.Device.UserCode)
+				_, loadErr := store.Load(fake.URL)
+				require.ErrorIs(t, loadErr, credential.ErrNotFound)
+			})
+		}
+	}
+}
+
+func TestDeviceLoginRejectsInvalidVerificationURLWithoutBrowser(t *testing.T) {
 	fake, _ := setupCLITest(t)
-	empty := ""
-	fake.DeviceCompleteURI = &empty
-	var opened string
-	_, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		openURL: func(target string) error { opened = target; return nil },
-		args:    []string{"--use-device-code"},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "https://console.example.com/oauth/device", opened)
-	require.Contains(t, diagnostics, "open https://console.example.com/oauth/device and enter the code")
-	require.NotContains(t, diagnostics, "#user_code=")
-	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
+	fake.Device.VerificationURIComplete = "file:///tmp/device-login"
+	_, diagnostics, err := runDeviceLogin(t, fake)
+	require.ErrorContains(t, err, "invalid device verification URL")
+	require.NotContains(t, diagnostics, fake.Device.VerificationURIComplete)
+	require.Empty(t, fake.TokenForms)
 }
 
 func TestDeviceLoginReportsTheServerLifetime(t *testing.T) {
@@ -329,7 +393,7 @@ func TestDeviceLoginReportsTheServerLifetime(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("%ds", tc.seconds), func(t *testing.T) {
 			fake, _ := setupCLITest(t)
-			fake.DeviceExpiresIn = tc.seconds
+			fake.Device.ExpiresIn = tc.seconds
 			_, diagnostics, err := runDeviceLogin(t, fake)
 			require.NoError(t, err)
 			require.Contains(t, diagnostics, "Waiting for authorization... ("+tc.want+"; Ctrl+C to cancel)")
