@@ -495,6 +495,9 @@ func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.T
 		if errors.Is(saveErr, context.Canceled) || errors.Is(saveErr, context.DeadlineExceeded) {
 			return saveErr
 		}
+		if errors.Is(saveErr, auth.ErrAlreadyLoggedIn) {
+			return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "another login completed while authorization was in progress", saveErr), "run 'scope auth status' to inspect it, or 'scope auth logout' before logging in again")
+		}
 		if errors.Is(saveErr, auth.ErrCredentialsUnreadable) {
 			return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but existing credentials could not be read", saveErr)
 		}
