@@ -27,7 +27,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,7 +42,7 @@ func installBrowserLauncher(t *testing.T, script string) {
 	t.Setenv("DISPLAY", ":0")
 }
 
-func TestLoginFallsBackWhenBrowserLauncherExitsUnsuccessfully(t *testing.T) {
+func TestLoginContinuesWhenBrowserLauncherExitsUnsuccessfully(t *testing.T) {
 	fake, store := setupCLITest(t)
 	installBrowserLauncher(t, "exit 17\n")
 	var out, diagnostics bytes.Buffer
@@ -51,17 +50,26 @@ func TestLoginFallsBackWhenBrowserLauncherExitsUnsuccessfully(t *testing.T) {
 		In:     strings.NewReader(""),
 		Out:    &out,
 		ErrOut: &diagnostics,
-		Sleep:  func(time.Duration) {},
+		OpenURL: func(target string) error {
+			err := openURL(target, os.Getenv)
+			require.ErrorContains(t, err, "open browser: exit status 17")
+			require.Contains(t, diagnostics.String(), target)
+			// The user opens the printed URL manually after the launcher fails.
+			require.NoError(t, fake.authorizationURL(t)(target))
+			return err
+		},
+		Sleep: func(time.Duration) {},
 	})
 	root.SetArgs([]string{"auth", "login"})
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 
 	require.NoError(t, root.ExecuteContext(ctx))
-	require.Contains(t, diagnostics.String(), "Could not open a browser; using a device code instead.")
+	require.Contains(t, diagnostics.String(), "scope auth login --use-device-code")
 	require.Contains(t, out.String(), "Logged in as dev@example.com.")
 	require.Len(t, fake.TokenForms, 1)
-	require.Equal(t, controlplane.GrantTypeDeviceCode, fake.TokenForms[0].Get("grant_type"))
+	require.Equal(t, "authorization_code", fake.TokenForms[0].Get("grant_type"))
+	require.Zero(t, fake.DevicePolls)
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, fake.RefreshToken, state.RefreshToken)

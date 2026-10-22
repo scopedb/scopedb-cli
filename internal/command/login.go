@@ -42,22 +42,20 @@ const (
 	deviceMaxBackoff   = 30 * time.Second
 )
 
-var errBrowserUnavailable = errors.New("browser could not be opened")
-
 func (a *app) newLoginCommand() *cobra.Command {
-	var insecureStorage bool
+	var insecureStorage, noBrowser, useDeviceCode bool
 	var format, workspace string
 	command := &cobra.Command{
 		Use:   "login",
 		Short: "Log in through the ScopeDB Console",
 		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
-			"Opens your browser and completes the login after approval. When no browser can be opened,\n" +
-			"the CLI prints a device verification link and code instead; approve the code in a browser\n" +
-			"on another device.\n\n" +
+			"Opens your browser and completes the login through a callback on this device. If the browser\n" +
+			"does not open, open the printed URL on the same device. Use --use-device-code to approve\n" +
+			"from another device, or --no-browser to skip opening a browser automatically in either flow.\n\n" +
 			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
 			"name and ID. Use 'scope workspace use <id-or-name>' to switch afterwards.\n" +
 			"Login does not require an interactive terminal.",
-		Example: "  scope auth login",
+		Example: "  scope auth login\n  scope auth login --use-device-code --no-browser",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateTextFormat(format); err != nil {
@@ -98,12 +96,11 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 
-			tokens, err := a.loopbackLogin(cmd.Context(), client)
-			if errors.Is(err, errBrowserUnavailable) {
-				if _, writeErr := fmt.Fprintln(a.errOut, "Could not open a browser; using a device code instead."); writeErr != nil {
-					return NormalizeError(writeErr)
-				}
-				tokens, err = a.deviceLogin(cmd.Context(), client)
+			var tokens controlplane.TokenSet
+			if useDeviceCode {
+				tokens, err = a.deviceLogin(cmd.Context(), client, !noBrowser)
+			} else {
+				tokens, err = a.loopbackLogin(cmd.Context(), client, !noBrowser)
 			}
 			if err != nil {
 				return NormalizeError(err)
@@ -132,6 +129,8 @@ func (a *app) newLoginCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
 	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace; defaults to the first available workspace by ID")
+	command.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open the browser automatically")
+	command.Flags().BoolVar(&useDeviceCode, "use-device-code", false, "use a device code to approve login from any device")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
 	return command
 }
@@ -272,7 +271,7 @@ func (a *app) renderLoginSelection(selection loginSelection) error {
 	return NormalizeError(err)
 }
 
-func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
+func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth, openBrowser bool) (controlplane.TokenSet, error) {
 	pkce, err := oauth.NewPKCE()
 	if err != nil {
 		return controlplane.TokenSet{}, err
@@ -288,11 +287,12 @@ func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (co
 	defer func() { _ = listener.Close() }()
 
 	target := client.AuthorizationURL(state, pkce.Challenge, listener.RedirectURI())
-	if err := a.openURL(target); err != nil {
-		return controlplane.TokenSet{}, fmt.Errorf("%w: %v", errBrowserUnavailable, err)
-	}
-	if _, err := fmt.Fprintf(a.errOut, "Open this URL to approve the login:\n%s\n", target); err != nil {
+	if _, err := fmt.Fprintf(a.errOut, "Open this URL to approve the login on this device:\n%s\n\nTo approve from another device, cancel and run 'scope auth login --use-device-code'.\n", target); err != nil {
 		return controlplane.TokenSet{}, err
+	}
+	if openBrowser {
+		// Opening the browser is best effort; the printed URL can still complete this flow.
+		_ = a.openURL(target)
 	}
 
 	waitCtx, cancel := context.WithTimeout(ctx, authorizationRequestTTL)
@@ -320,7 +320,7 @@ func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth) (co
 	return client.ExchangeAuthorizationCode(ctx, callback.Code, listener.RedirectURI(), pkce.Verifier)
 }
 
-func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (controlplane.TokenSet, error) {
+func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth, openBrowser bool) (controlplane.TokenSet, error) {
 	device, err := client.StartDeviceAuthorization(ctx)
 	if err != nil {
 		return controlplane.TokenSet{}, err
@@ -330,6 +330,14 @@ func (a *app) deviceLogin(ctx context.Context, client *controlplane.OAuth) (cont
 	}
 	if err := a.writeDeviceInstructions(device); err != nil {
 		return controlplane.TokenSet{}, err
+	}
+	if openBrowser {
+		target := device.VerificationURIComplete
+		if target == "" {
+			target = device.VerificationURI
+		}
+		// Keep polling even if the user must open the printed link manually.
+		_ = a.openURL(target)
 	}
 	stopWaiting := a.startAuthorizationWait(time.Duration(device.ExpiresIn) * time.Second)
 	defer stopWaiting()

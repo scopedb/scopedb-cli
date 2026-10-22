@@ -16,6 +16,8 @@ package command
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -218,26 +220,98 @@ func TestDeviceLoginPrintsThePrefilledLinkAndKeepsTheCode(t *testing.T) {
 	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
 }
 
-func TestDeviceLoginDoesNotOpenAutomatically(t *testing.T) {
-	fake, _ := setupCLITest(t)
-	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		openURL: failLoopbackOpenURL,
-		args:    []string{"auth", "login", "--insecure-storage"},
-	})
-	require.NoError(t, err)
-	require.Equal(t, "Logged in as dev@example.com.\n", out)
-	require.Contains(t, diagnostics, "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP")
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+func TestLoginAuthorizationModes(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		flags        []string
+		device       bool
+		noBrowser    bool
+		browserFails bool
+	}{
+		{name: "loopback"},
+		{name: "loopback without browser", flags: []string{"--no-browser"}, noBrowser: true},
+		{name: "device", flags: []string{"--use-device-code"}, device: true},
+		{name: "device without browser", flags: []string{"--use-device-code", "--no-browser"}, device: true, noBrowser: true},
+		{name: "loopback browser failure", browserFails: true},
+		{name: "device browser failure", flags: []string{"--use-device-code"}, device: true, browserFails: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			var out, diagnostics bytes.Buffer
+			browserCalls := 0
+			root := NewRoot(Dependencies{
+				In:  strings.NewReader(""),
+				Out: &out,
+				ErrOut: writerFunc(func(p []byte) (int, error) {
+					n, err := diagnostics.Write(p)
+					if tc.noBrowser && !tc.device {
+						// Simulate manually approving the printed URL without invoking the launcher.
+						for line := range strings.SplitSeq(string(p), "\n") {
+							if strings.HasPrefix(line, fake.URL+"/oauth/authorize?") {
+								require.NoError(t, fake.authorizationURL(t)(line))
+							}
+						}
+					}
+					return n, err
+				}),
+				OpenURL: func(target string) error {
+					browserCalls++
+					require.False(t, tc.noBrowser)
+					require.Contains(t, diagnostics.String(), target)
+					if tc.device {
+						require.Equal(t, "https://console.example.com/oauth/device#user_code="+fake.UserCode, target)
+					} else {
+						require.NoError(t, fake.authorizationURL(t)(target))
+					}
+					if tc.browserFails {
+						return errors.New("browser unavailable")
+					}
+					return nil
+				},
+				Sleep: func(time.Duration) {},
+			})
+			root.SetArgs(append([]string{"auth", "login"}, tc.flags...))
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			require.NoError(t, root.ExecuteContext(ctx))
+			require.Equal(t, "Logged in as dev@example.com.\n", out.String())
+			if tc.noBrowser {
+				require.Zero(t, browserCalls)
+			} else {
+				require.Equal(t, 1, browserCalls)
+			}
+			require.Len(t, fake.TokenForms, 1)
+			if tc.device {
+				require.Equal(t, controlplane.GrantTypeDeviceCode, fake.TokenForms[0].Get("grant_type"))
+				require.Empty(t, fake.AuthorizationQuery)
+				require.Contains(t, diagnostics.String(), fake.UserCode)
+			} else {
+				require.Equal(t, "authorization_code", fake.TokenForms[0].Get("grant_type"))
+				require.NotEmpty(t, fake.TokenForms[0].Get("code_verifier"))
+				require.Zero(t, fake.DevicePolls)
+			}
+			state, err := store.Load(fake.URL)
+			require.NoError(t, err)
+			require.Equal(t, fake.RefreshToken, state.RefreshToken)
+		})
+	}
 }
 
 func TestDeviceLoginFallsBackToThePlainVerificationURL(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	empty := ""
 	fake.DeviceCompleteURI = &empty
+	var opened string
 	_, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		openURL: failLoopbackOpenURL,
-		args:    []string{"auth", "login", "--insecure-storage"},
+		openURL: func(target string) error { opened = target; return nil },
+		args:    []string{"--use-device-code"},
 	})
 	require.NoError(t, err)
+	require.Equal(t, "https://console.example.com/oauth/device", opened)
 	require.Contains(t, diagnostics, "open https://console.example.com/oauth/device and enter the code")
 	require.NotContains(t, diagnostics, "#user_code=")
 	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
@@ -271,24 +345,6 @@ func TestDeviceLoginSpinsTheWaitOnATerminal(t *testing.T) {
 	require.Contains(t, diagnostics, "\x1b[K")
 	require.NotContains(t, out, "\x1b")
 }
-func TestLoginFallsBackToDeviceWhenTheBrowserCannotOpen(t *testing.T) {
-	fake, store := setupCLITest(t)
-	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
-		inputTerminal: true,
-		errorTerminal: true,
-		openURL:       failLoopbackOpenURL,
-	})
-	require.NoError(t, err)
-	require.Contains(t, out, "Logged in as dev@example.com.")
-	require.Contains(t, diagnostics, "Could not open a browser; using a device code instead.")
-	require.Contains(t, diagnostics, "BCDF-GHJK-LMNP")
-	require.NotContains(t, diagnostics, "Open this URL to approve the login")
-	require.Equal(t, 1, fake.DevicePolls)
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ort_refresh", state.RefreshToken)
-}
-
 func TestDiscoveryRejectsForeignIssuer(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	fake.MetadataMutate = func(metadata *controlplane.AuthorizationServerMetadata) {
@@ -810,11 +866,11 @@ func TestLoginReportsUnreachableControlPlane(t *testing.T) {
 
 func TestLoginWithoutAnInteractiveTerminalSelectsFirstWorkspace(t *testing.T) {
 	for _, flow := range []struct {
-		name    string
-		openURL func(string) error
+		name  string
+		flags []string
 	}{
 		{name: "browser"},
-		{name: "device", openURL: failLoopbackOpenURL},
+		{name: "device", flags: []string{"--use-device-code", "--no-browser"}},
 	} {
 		for _, terminal := range []struct {
 			name        string
@@ -831,7 +887,7 @@ func TestLoginWithoutAnInteractiveTerminalSelectsFirstWorkspace(t *testing.T) {
 				out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
 					inputTerminal: terminal.input,
 					errorTerminal: terminal.diagnostics,
-					openURL:       flow.openURL,
+					args:          flow.flags,
 				})
 				require.NoError(t, err)
 				require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Alpha (ws-1).\n", out)
