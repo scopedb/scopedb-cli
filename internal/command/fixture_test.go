@@ -20,7 +20,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -46,11 +45,8 @@ type fakeControlPlane struct {
 	RefreshedAccessToken  string
 	RefreshedRefreshToken string
 	AuthorizationCode     string
-	UserCode              string
-	DeviceCode            string
+	Device                controlplane.DeviceAuthorization
 	DeviceOutcomes        []string
-	DeviceExpiresIn       int64
-	DeviceCompleteURI     *string
 
 	User                controlplane.User
 	Workspaces          []controlplane.Workspace
@@ -86,10 +82,15 @@ func newFakeControlPlane(t *testing.T) *fakeControlPlane {
 		RefreshedAccessToken:  "oat_access",
 		RefreshedRefreshToken: "ort_refresh",
 		AuthorizationCode:     "code-1",
-		UserCode:              "BCDF-GHJK-LMNP",
-		DeviceCode:            "device-1",
-		User:                  controlplane.User{ID: "user-1", Email: "dev@example.com", Status: "active"},
-		Details:               map[string]controlplane.WorkspaceDetails{},
+		Device: controlplane.DeviceAuthorization{
+			DeviceCode:              "device-1",
+			UserCode:                "BCDF-GHJK-LMNP",
+			VerificationURI:         "https://console.example.com/oauth/device",
+			VerificationURIComplete: "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP",
+			ExpiresIn:               600,
+		},
+		User:    controlplane.User{ID: "user-1", Email: "dev@example.com", Status: "active"},
+		Details: map[string]controlplane.WorkspaceDetails{},
 	}
 	fake.Server = httptest.NewServer(http.HandlerFunc(fake.serve))
 	fake.URL = fake.Server.URL
@@ -137,25 +138,7 @@ func (f *fakeControlPlane) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(status)
 	case r.URL.Path == "/oauth/device/authorization":
-		expiresIn := f.DeviceExpiresIn
-		if expiresIn <= 0 {
-			expiresIn = 600
-		}
-		if f.DeviceCode == "" {
-			f.DeviceCode = "device-1"
-		}
-		complete := "https://console.example.com/oauth/device#user_code=" + f.UserCode
-		if f.DeviceCompleteURI != nil {
-			complete = *f.DeviceCompleteURI
-		}
-		f.writeJSON(w, http.StatusOK, map[string]any{
-			"device_code":               f.DeviceCode,
-			"user_code":                 f.UserCode,
-			"verification_uri":          "https://console.example.com/oauth/device",
-			"verification_uri_complete": complete,
-			"expires_in":                expiresIn,
-			"interval":                  0,
-		})
+		f.writeJSON(w, http.StatusOK, f.Device)
 	case r.URL.Path == "/api/user":
 		f.writeJSON(w, http.StatusOK, f.User)
 	case r.URL.Path == "/api/workspaces" && r.Method == http.MethodGet:
@@ -493,17 +476,12 @@ func runInteractiveCommand(t *testing.T, args ...string) (string, string, error)
 
 func runDeviceLogin(t *testing.T, fake *fakeControlPlane, flags ...string) (string, string, error) {
 	t.Helper()
-	args := append([]string{"auth", "login", "--insecure-storage"}, flags...)
+	args := append([]string{"auth", "login", "--insecure-storage", "--use-device-code", "--no-browser"}, flags...)
 	return runLoginScenario(t, fake, loginScenario{
 		inputTerminal: true,
 		errorTerminal: true,
-		openURL:       failLoopbackOpenURL,
 		args:          args,
 	})
-}
-
-func failLoopbackOpenURL(string) error {
-	return errors.New("no browser available")
 }
 
 func runInteractiveLogin(t *testing.T, fake *fakeControlPlane, input string, flags ...string) (string, string, error) {
