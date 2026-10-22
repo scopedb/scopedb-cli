@@ -275,8 +275,19 @@ func openURL(target string, getenv func(string) string) error {
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("open browser: %w", err)
 	}
-	go func() { _ = command.Wait() }()
-	return nil
+	exited := make(chan error, 1)
+	go func() { exited <- command.Wait() }()
+	// Some launchers stay alive with the browser. Observe startup failures without
+	// waiting for the user to close it; a successful start cannot prove the page loaded.
+	select {
+	case err := <-exited:
+		if err != nil {
+			return fmt.Errorf("open browser: %w", err)
+		}
+		return nil
+	case <-time.After(3 * time.Second):
+		return nil
+	}
 }
 
 // NormalizeError maps domain and HTTP errors to the public CLI exit contract.
