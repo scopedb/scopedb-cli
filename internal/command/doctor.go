@@ -25,6 +25,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/credential"
+	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -159,10 +160,9 @@ func renderDoctor(out io.Writer, format string, report doctorReport) error {
 	if format == structuredFormatJSON {
 		return writeJSON(out, report)
 	}
-	t := newTable(out, "CHECK", "STATUS", "DETAILS")
+	t := output.NewTable("CHECK", "STATUS", "DETAILS")
 	for _, check := range report.Checks {
 		t.AppendRow(table.Row{check.Name, check.Status, check.Details})
 	}
-	t.Render()
-	return nil
+	return output.WriteTable(out, t)
 }

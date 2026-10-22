@@ -16,6 +16,8 @@ package command
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +27,31 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
 )
+
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+func TestCommandsReportTableWriteFailures(t *testing.T) {
+	for _, args := range []string{"workspace list", "workspace get", "api-key list", "auth status", "doctor"} {
+		t.Run(args, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+			fake.Details["ws-1"] = controlplane.WorkspaceDetails{Workspace: fake.Workspaces[0]}
+			fake.APIKeys = []controlplane.APIKey{{ID: "key-1", Name: "automation", Status: "active"}}
+			if args == "doctor" {
+				fake.User.Status = "pending"
+			}
+			saveStoredLogin(t, store, fake.URL, "ws-1")
+			writeErr := errors.New("output is full")
+			root := NewRoot(Dependencies{
+				Out: failingWriter{writeErr}, ErrOut: io.Discard, Getenv: func(string) string { return "" },
+			})
+			root.SetArgs(append([]string{"--control-url", fake.URL}, strings.Fields(args)...))
+			require.ErrorIs(t, root.ExecuteContext(t.Context()), writeErr)
+		})
+	}
+}
 
 func TestCommandJSONOutput(t *testing.T) {
 	fake, store := setupCLITest(t)

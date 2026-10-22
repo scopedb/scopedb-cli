@@ -231,23 +231,36 @@ func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
 			return "", err
 		}
 	}
+	value, err := readInput(ctx, func() (string, error) { return a.input.ReadString('\n') })
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", err
+	}
+	return strings.TrimSpace(value), nil
+}
+
+// readInput lets a command stop waiting without closing the caller's reader.
+// The underlying read may remain blocked until the caller closes it or the process exits.
+func readInput(ctx context.Context, read func() (string, error)) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	type input struct {
 		value string
 		err   error
 	}
 	done := make(chan input, 1)
 	go func() {
-		value, err := a.input.ReadString('\n')
+		value, err := read()
 		done <- input{value: value, err: err}
 	}()
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
 	case result := <-done:
-		if result.err != nil && !errors.Is(result.err, io.EOF) {
-			return "", result.err
+		if err := ctx.Err(); err != nil {
+			return "", err
 		}
-		return strings.TrimSpace(result.value), nil
+		return result.value, result.err
 	}
 }
 

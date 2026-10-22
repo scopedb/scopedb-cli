@@ -24,11 +24,12 @@ All significant changes to this project will be documented in this file.
 
 ### Bug fixes
 
+* Table output reports write failures instead of returning success when the destination cannot accept the result.
 * `scope console --open` reports browser-launch failures during startup instead of reporting that the browser opened successfully.
 * `scope query` preserves the `.0` suffix for whole-number floats in table and CSV output, so they remain distinguishable from integers.
 * `scope query --output` checks the destination and prepares a temporary file before submitting a statement. If writing the result fails after execution, the error reports that the query completed and includes its statement ID, so a file error does not prompt users to repeat a statement with side effects.
 * `scope doctor` now verifies query access for a logged-in workspace, reporting provisioning, token exchange, and query failures that previously went unchecked.
-* Query timeout and Ctrl+C errors retain the statement ID and report when server cancellation could not be confirmed, so users can check the outcome before retrying. Ctrl+C still exits with code 130 and stays quiet when no statement ID was received.
+* Query timeout and Ctrl+C errors retain the statement ID and report when server cancellation could not be confirmed, so users can check the outcome before retrying. Ctrl+C also stops waiting for query input from stdin, exits with code 130, and stays quiet when no statement ID was received.
 * `scope auth login` no longer saves endpoint and credential-store settings before authentication succeeds; if the final configuration write fails, it revokes the new login and restores the previous valid credentials.
 * `scope workspace list` no longer prints a "no workspace is selected" notice pointing back at itself when the account has workspaces to choose from; it now only reports setup guidance when there is nothing to list.
 

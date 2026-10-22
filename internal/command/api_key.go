@@ -21,6 +21,7 @@ import (
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
+	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -79,7 +80,7 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 				}
 				return writeJSON(a.out, items)
 			}
-			t := newTable(a.out, "NAME", "ID", "STATUS", "TAGS", "CREATED", "EXPIRES")
+			t := output.NewTable("NAME", "ID", "STATUS", "TAGS", "CREATED", "EXPIRES")
 			for _, key := range keys {
 				t.AppendRow(table.Row{
 					key.Name,
@@ -90,8 +91,7 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 					optionalTime(key.ExpiresAt),
 				})
 			}
-			t.Render()
-			return nil
+			return output.WriteTable(a.out, t)
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
