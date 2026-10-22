@@ -17,6 +17,7 @@ package command
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -28,6 +29,145 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/stretchr/testify/require"
 )
+
+func TestQueryChecksOutputBeforeSubmission(t *testing.T) {
+	for _, destination := range []string{"existing_file", "missing_parent", "directory_with_force", "dangling_symlink"} {
+		t.Run(destination, func(t *testing.T) {
+			directory := t.TempDir()
+			path := filepath.Join(directory, "result.json")
+			args := []string{"--output", path, "--format", "json"}
+			switch destination {
+			case "existing_file":
+				require.NoError(t, os.WriteFile(path, []byte("original"), 0o600))
+			case "missing_parent":
+				path = filepath.Join(directory, "missing", "result.json")
+				args[1] = path
+			case "directory_with_force":
+				require.NoError(t, os.Mkdir(path, 0o700))
+				args = append(args, "--force")
+			case "dangling_symlink":
+				if runtime.GOOS == "windows" {
+					t.Skip("creating symlinks requires elevated privileges on Windows")
+				}
+				require.NoError(t, os.Symlink(filepath.Join(directory, "missing"), path))
+			}
+			submissions := 0
+			out, err := runQueryWithTransport(t, func(r *http.Request) (*http.Response, error) {
+				submissions++
+				return finishedQueryResponse(r), nil
+			}, args...)
+			require.Error(t, err)
+			require.Zero(t, submissions, "invalid output must not execute a statement")
+			require.Empty(t, out)
+			if destination == "existing_file" {
+				data, readErr := os.ReadFile(path)
+				require.NoError(t, readErr)
+				require.Equal(t, "original", string(data))
+			}
+		})
+	}
+}
+
+func TestQueryReportsCompletionWhenOutputIsCreatedConcurrently(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "result.json")
+	submissions := 0
+	out, err := runQueryWithTransport(t, func(r *http.Request) (*http.Response, error) {
+		require.Equal(t, "POST /v1/statements", r.Method+" "+r.URL.Path)
+		submissions++
+		require.NoError(t, os.WriteFile(path, []byte("concurrent output"), 0o600))
+		return finishedQueryResponse(r), nil
+	}, "--output", path, "--format", "json")
+	require.Error(t, err)
+	require.Equal(t, 1, submissions)
+	require.Empty(t, out)
+	rendered := clierror.Render(err)
+	require.Contains(t, rendered, "query 01989a4e-4ee2-7e63-87a5-65ac3b5161dc completed")
+	require.Contains(t, rendered, "do not rerun a statement with side effects")
+	require.NotContains(t, rendered, "pass --force")
+	data, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, "concurrent output", string(data))
+	entries, readErr := os.ReadDir(directory)
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1, "temporary output must be removed")
+}
+
+func TestQueryWritesOutputAndAllowsExplicitOverwrite(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		directory := t.TempDir()
+		path := filepath.Join(directory, "result.json")
+		args := []string{"--output", path, "--format", "json"}
+		if force {
+			require.NoError(t, os.WriteFile(path, []byte("original"), 0o600))
+			args = append(args, "--force")
+		}
+		out, err := runQueryWithTransport(t, func(r *http.Request) (*http.Response, error) {
+			return finishedQueryResponse(r), nil
+		}, args...)
+		require.NoError(t, err)
+		require.Empty(t, out)
+		data, readErr := os.ReadFile(path)
+		require.NoError(t, readErr)
+		require.JSONEq(t, "[]", string(data))
+		entries, readErr := os.ReadDir(directory)
+		require.NoError(t, readErr)
+		require.Len(t, entries, 1, "temporary output must be removed")
+	}
+}
+
+func TestQueryFailurePreservesExistingOutput(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "result.json")
+	require.NoError(t, os.WriteFile(path, []byte("original"), 0o600))
+	_, err := runQueryWithTransport(t, func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("fixture query failure")
+	}, "--output", path, "--force")
+	require.ErrorContains(t, err, "fixture query failure")
+	require.NotContains(t, clierror.Render(err), "completed")
+	data, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, "original", string(data))
+	entries, readErr := os.ReadDir(directory)
+	require.NoError(t, readErr)
+	require.Len(t, entries, 1, "temporary output must be removed")
+}
+
+func runQueryWithTransport(t *testing.T, transport doctorTransport, args ...string) (string, error) {
+	t.Helper()
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CONTROL_URL", "")
+	t.Setenv("SCOPEDB_CONSOLE_URL", "")
+	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
+	var out, diagnostics bytes.Buffer
+	root := NewRoot(Dependencies{
+		Out: &out, ErrOut: &diagnostics,
+		Getenv: func(name string) string {
+			switch name {
+			case "SCOPEDB_ENDPOINT":
+				return "https://data.example.com"
+			case "SCOPEDB_API_KEY":
+				return "fixture-secret"
+			default:
+				return ""
+			}
+		},
+		HTTPClient: &http.Client{Transport: transport},
+	})
+	root.SetArgs(append([]string{"query", "SELECT 1 AS ready"}, args...))
+	err := root.ExecuteContext(t.Context())
+	require.NotContains(t, out.String()+diagnostics.String()+clierror.Render(err), "fixture-secret")
+	return out.String(), err
+}
+
+func finishedQueryResponse(r *http.Request) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"statement_id":"01989a4e-4ee2-7e63-87a5-65ac3b5161dc","status":"finished","created_at":"2026-09-09T00:00:00Z","progress":{},"result_set":{"metadata":{"fields":[],"num_rows":0},"format":"json","rows":[]}}`)),
+		Request:    r,
+	}
+}
 
 func TestQueryTimeoutReportsServerCancellation(t *testing.T) {
 	const statementID = "01989a4e-4ee2-7e63-87a5-65ac3b5161dc"

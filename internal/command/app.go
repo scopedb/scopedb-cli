@@ -300,7 +300,14 @@ func NormalizeError(err error) error {
 		return err
 	}
 	var interrupted *dataplane.InterruptedError
-	if errors.As(err, &interrupted) || errors.Is(err, context.Canceled) {
+	if errors.As(err, &interrupted) {
+		result := clierror.Wrap(clierror.ExitInterrupted, interrupted.Error(), err)
+		if interrupted.CancelErr != nil {
+			result.Hint = "verify the statement's outcome before retrying; it may have completed or still be running"
+		}
+		return result
+	}
+	if errors.Is(err, context.Canceled) {
 		return clierror.Wrap(clierror.ExitInterrupted, err.Error(), err)
 	}
 	var timedOut *dataplane.TimedOutError

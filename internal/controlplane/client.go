@@ -33,6 +33,8 @@ const (
 	maxErrorBody   = 64 << 10
 )
 
+var errResponseTooLarge = errors.New("response exceeds size limit")
+
 // Error represents a control-plane HTTP or transport failure.
 type Error struct {
 	Status     int
@@ -232,13 +234,10 @@ func decodeError(response *http.Response) error {
 
 func readBounded(reader io.Reader, limit int64) ([]byte, error) {
 	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
-	if err != nil {
-		return nil, err
-	}
 	if int64(len(data)) > limit {
-		return data[:limit], fmt.Errorf("response exceeds %d bytes", limit)
+		return data[:limit], fmt.Errorf("%w: %d bytes", errResponseTooLarge, limit)
 	}
-	return data, nil
+	return data, err
 }
 
 func parseRetryAfter(value string) time.Duration {

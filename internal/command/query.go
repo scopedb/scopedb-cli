@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
+	"github.com/scopedb/scopedb-cli/internal/dataplane"
 	"github.com/scopedb/scopedb-cli/internal/fileutil"
 	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
@@ -58,38 +59,43 @@ func (a *app) newQueryCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			runtime, err := a.runtime(cmd)
-			if err != nil {
-				return NormalizeError(err)
-			}
-			access, err := runtime.auth.ResolveDataAccess(cmd.Context())
-			if err != nil {
-				return NormalizeError(err)
-			}
-
-			queryContext := cmd.Context()
-			cancel := func() {}
-			if timeout > 0 {
-				queryContext, cancel = context.WithTimeout(queryContext, timeout)
-			}
-			defer cancel()
-			result, err := a.query.Execute(queryContext, access, statement)
-			if err != nil {
-				return NormalizeError(err)
+			var result *dataplane.QueryResult
+			execute := func(writer io.Writer) error {
+				runtime, err := a.runtime(cmd)
+				if err != nil {
+					return err
+				}
+				access, err := runtime.auth.ResolveDataAccess(cmd.Context())
+				if err != nil {
+					return err
+				}
+				queryContext := cmd.Context()
+				cancel := func() {}
+				if timeout > 0 {
+					queryContext, cancel = context.WithTimeout(queryContext, timeout)
+				}
+				defer cancel()
+				result, err = a.query.Execute(queryContext, access, statement)
+				if err != nil {
+					return err
+				}
+				return output.RenderResult(writer, result.ResultSet, format)
 			}
 
 			if outputPath == "" {
-				if err := output.RenderResult(a.out, result, format); err != nil {
-					return NormalizeError(err)
-				}
-				return nil
+				err = execute(a.out)
+			} else {
+				err = writeResultFile(outputPath, force, execute)
 			}
-			if err := writeResultFile(outputPath, force, func(writer io.Writer) error {
-				return output.RenderResult(writer, result, format)
-			}); err != nil {
+			if err != nil {
+				if result != nil {
+					return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, fmt.Sprintf("query %s completed, but its results could not be written", result.StatementID), err), "use the statement ID to retrieve its result; do not rerun a statement with side effects")
+				}
 				return NormalizeError(err)
 			}
-			_, err = fmt.Fprintf(a.errOut, "Wrote %d row(s) to %s.\n", result.TotalRows, outputPath)
+			if outputPath != "" {
+				_, err = fmt.Fprintf(a.errOut, "Wrote %d row(s) to %s.\n", result.TotalRows, outputPath)
+			}
 			return NormalizeError(err)
 		},
 	}
@@ -165,8 +171,13 @@ func writeResultFile(path string, force bool, render func(io.Writer) error) erro
 	if path == "" {
 		return errors.New("output path must not be empty")
 	}
-	if _, err := os.Stat(path); err == nil && !force {
-		return clierror.WithHint(clierror.New(clierror.ExitGeneral, fmt.Sprintf("output file %s already exists", path)), "pass --force to overwrite it")
+	if info, err := os.Lstat(path); err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("output path %s is a directory", path)
+		}
+		if !force {
+			return clierror.WithHint(clierror.New(clierror.ExitGeneral, fmt.Sprintf("output file %s already exists", path)), "pass --force to overwrite it")
+		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect output file: %w", err)
 	}

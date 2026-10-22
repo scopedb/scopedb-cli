@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -39,4 +41,28 @@ func TestOAuthTransportFailureIsRetryable(t *testing.T) {
 	var protocol *OAuthError
 	require.ErrorAs(t, err, &protocol)
 	require.True(t, protocol.Retryable)
+}
+
+func TestOAuthResponseValidationIsNotRetryable(t *testing.T) {
+	for _, response := range []struct {
+		name string
+		body string
+	}{
+		{"invalid_json", `{"access_token":`},
+		{"too_large", strings.Repeat(" ", maxSuccessBody) + `{}`},
+	} {
+		t.Run(response.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(response.body))
+			}))
+			t.Cleanup(server.Close)
+			client := newOAuth(AuthorizationServerMetadata{TokenEndpoint: server.URL}, "", server.Client())
+
+			_, err := client.RefreshToken(t.Context(), "ort_refresh")
+			var protocol *OAuthError
+			require.ErrorAs(t, err, &protocol)
+			require.Equal(t, http.StatusOK, protocol.Status)
+			require.False(t, protocol.Retryable)
+		})
+	}
 }

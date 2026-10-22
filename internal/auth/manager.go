@@ -30,6 +30,7 @@ import (
 
 var (
 	ErrNotLoggedIn           = errors.New("not logged in")
+	ErrAlreadyLoggedIn       = errors.New("a renewable login is already stored")
 	ErrInvalidMachineEnv     = errors.New("invalid machine credentials")
 	ErrApprovalRequired      = errors.New("account is awaiting approval")
 	ErrNoWorkspaces          = errors.New("account has no workspaces")
@@ -163,7 +164,7 @@ func (m *Manager) load() (credential.State, error) {
 }
 
 // The selection survives a login, because signing in again does not change which workspace the profile uses.
-// The lock makes the new login serialize with a refresh running in another process.
+// The lock serializes login with refresh and prevents replacing a concurrent login.
 func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (credential.State, bool, string, error) {
 	lock, err := filelock.Acquire(ctx, m.LockFile)
 	if err != nil {
@@ -178,6 +179,9 @@ func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (
 		previous = credential.State{}
 	case err != nil:
 		return credential.State{}, false, "", fmt.Errorf("%w: %w", ErrCredentialsUnreadable, err)
+	}
+	if previousFound && (previous.RefreshTokenExpiresAt.IsZero() || previous.RefreshTokenExpiresAt.After(m.now())) {
+		return credential.State{}, false, "", ErrAlreadyLoggedIn
 	}
 	state, err := m.tokenState(credential.State{}, tokens)
 	if err != nil {
@@ -574,5 +578,5 @@ func retryableRefresh(err error) bool {
 	if protocol.Status == 0 {
 		return true
 	}
-	return protocol.Status >= 500
+	return protocol.Status >= 500 || (protocol.Status >= 200 && protocol.Status < 300 && protocol.Retryable)
 }
