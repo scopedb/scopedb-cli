@@ -18,11 +18,7 @@ package fileutil
 
 import "os"
 
-// Commit installs a fully written temporary file. Without replace, linking
-// gives the operation no-clobber semantics even if another process races us.
-func Commit(source, target string, replace bool) error {
-	if replace {
-		return os.Rename(source, target)
-	}
-	return os.Link(source, target)
+// Commit installs a fully written temporary file, replacing target if it exists.
+func Commit(source, target string) error {
+	return os.Rename(source, target)
 }

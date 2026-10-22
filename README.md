@@ -72,14 +72,14 @@ The workspace selection is stored locally for the current login, so it does not 
 
 ## Query output
 
-Queries can be provided inline, from a file with `--file` or `-f`, or through stdin. Use `--format` to select the output format. Results can be rendered as a table, JSON, JSON Lines, or CSV.
+Queries can be provided inline, from a file with `--file` or `-f`, or through stdin. Results go to stdout; use `--format` to select a table, JSON, JSON Lines, or CSV. Use shell redirection to save results to a file.
 
 ```sh
 scope query -f report.scopeql --format json
-scope query 'FROM system.tables LIMIT 10' --format csv --output tables.csv
+scope query 'FROM system.tables LIMIT 10' --format csv > tables.csv
 ```
 
-Files created with `scope query --output` have permissions `0600` on Unix-like systems.
+The shell controls file replacement and permissions. Redirecting with `>` can truncate an existing file before the query runs; write to a temporary file and move it after success if you need to preserve the previous result on failure.
 
 ## JSON output
 
