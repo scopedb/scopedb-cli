@@ -21,7 +21,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -206,7 +208,11 @@ func displayValue(value any, null string) string {
 	case uint64:
 		return strconv.FormatUint(typed, 10)
 	case float64:
-		return strconv.FormatFloat(typed, 'g', -1, 64)
+		formatted := strconv.FormatFloat(typed, 'g', -1, 64)
+		if !math.IsNaN(typed) && !math.IsInf(typed, 0) && !strings.ContainsAny(formatted, ".e") {
+			formatted += ".0"
+		}
+		return formatted
 	default:
 		return fmt.Sprint(typed)
 	}
