@@ -38,7 +38,7 @@ func (e *InterruptedError) Error() string {
 	if e.CancelErr != nil {
 		return fmt.Sprintf("query %s interrupted; server cancellation could not be confirmed", e.StatementID)
 	}
-	return fmt.Sprintf("query %s interrupted", e.StatementID)
+	return fmt.Sprintf("query %s interrupted; server cancellation confirmed", e.StatementID)
 }
 
 func (e *InterruptedError) Unwrap() error { return context.Canceled }
@@ -66,9 +66,15 @@ type QueryService struct {
 	HTTPClient *http.Client
 }
 
+// QueryResult retains the statement ID so output failures can identify a completed query.
+type QueryResult struct {
+	*scopedb.ResultSet
+	StatementID string
+}
+
 // Execute submits a statement, waits for its result, and best-effort cancels
 // the server-side work if the caller interrupts the command.
-func (s *QueryService) Execute(ctx context.Context, access auth.Access, statement string) (*scopedb.ResultSet, error) {
+func (s *QueryService) Execute(ctx context.Context, access auth.Access, statement string) (*QueryResult, error) {
 	client, err := scopedb.NewClient(scopedb.Config{
 		Endpoint:   access.Endpoint,
 		APIKey:     access.APIKey,
@@ -85,7 +91,7 @@ func (s *QueryService) Execute(ctx context.Context, access auth.Access, statemen
 	}
 	result, err := handle.Wait(ctx)
 	if err == nil {
-		return result, nil
+		return &QueryResult{ResultSet: result, StatementID: handle.ID().String()}, nil
 	}
 	interrupted := errors.Is(err, context.Canceled)
 	timedOut := errors.Is(err, context.DeadlineExceeded)
