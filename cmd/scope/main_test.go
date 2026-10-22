@@ -21,11 +21,50 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/command"
 	"github.com/stretchr/testify/require"
 )
+
+func TestInterruptedInputExitsQuietly(t *testing.T) {
+	for _, args := range []string{"query", "query --file -", "api-key revoke automation"} {
+		t.Run(args, func(t *testing.T) {
+			reader, writer := io.Pipe()
+			defer func() { _ = reader.Close() }()
+			defer func() { _ = writer.Close() }()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			var out, diagnostics bytes.Buffer
+			done := make(chan int, 1)
+			go func() {
+				done <- execute(ctx, command.Dependencies{
+					In: reader, Out: &out, ErrOut: &diagnostics,
+					IsInputTerminal: func() bool { return strings.HasPrefix(args, "api-key") },
+				}, strings.Fields(args))
+			}()
+			// Write returns only after the command starts reading; keep the pipe open without a newline or EOF.
+			_, err := io.WriteString(writer, "SELECT 1 AS ready")
+			require.NoError(t, err)
+			cancel()
+			select {
+			case code := <-done:
+				require.Equal(t, clierror.ExitInterrupted, code)
+			case <-time.After(5 * time.Second):
+				_ = reader.Close()
+				<-done
+				t.Fatal("command did not stop reading input after cancellation")
+			}
+			require.Empty(t, out.String())
+			if strings.HasPrefix(args, "api-key") {
+				require.Equal(t, "Revoke API key automation? [y/N] \n", diagnostics.String())
+			} else {
+				require.Equal(t, "\n", diagnostics.String())
+			}
+		})
+	}
+}
 
 func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 	const statementID = "01989a4e-4ee2-7e63-87a5-65ac3b5161dc"

@@ -55,7 +55,9 @@ func (a *app) newQueryCommand() *cobra.Command {
 			if timeout < 0 {
 				return usageError("--timeout must not be negative")
 			}
-			statement, err := a.readStatement(args, statementFile)
+			statement, err := readInput(cmd.Context(), func() (string, error) {
+				return a.readStatement(args, statementFile)
+			})
 			if err != nil {
 				return err
 			}

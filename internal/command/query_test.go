@@ -109,7 +109,7 @@ func TestQueryWritesOutputAndAllowsExplicitOverwrite(t *testing.T) {
 		require.Empty(t, out)
 		data, readErr := os.ReadFile(path)
 		require.NoError(t, readErr)
-		require.JSONEq(t, "[]", string(data))
+		require.JSONEq(t, `[{"ready":1}]`, string(data))
 		entries, readErr := os.ReadDir(directory)
 		require.NoError(t, readErr)
 		require.Len(t, entries, 1, "temporary output must be removed")
@@ -135,13 +135,21 @@ func TestQueryFailurePreservesExistingOutput(t *testing.T) {
 
 func runQueryWithTransport(t *testing.T, transport doctorTransport, args ...string) (string, error) {
 	t.Helper()
+	var out bytes.Buffer
+	err := runQueryWithWriter(t, transport, &out, args...)
+	require.NotContains(t, out.String(), "fixture-secret")
+	return out.String(), err
+}
+
+func runQueryWithWriter(t *testing.T, transport doctorTransport, out io.Writer, args ...string) error {
+	t.Helper()
 	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 	t.Setenv("SCOPEDB_CONTROL_URL", "")
 	t.Setenv("SCOPEDB_CONSOLE_URL", "")
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
-	var out, diagnostics bytes.Buffer
+	var diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
-		Out: &out, ErrOut: &diagnostics,
+		Out: out, ErrOut: &diagnostics,
 		Getenv: func(name string) string {
 			switch name {
 			case "SCOPEDB_ENDPOINT":
@@ -156,16 +164,35 @@ func runQueryWithTransport(t *testing.T, transport doctorTransport, args ...stri
 	})
 	root.SetArgs(append([]string{"query", "SELECT 1 AS ready"}, args...))
 	err := root.ExecuteContext(t.Context())
-	require.NotContains(t, out.String()+diagnostics.String()+clierror.Render(err), "fixture-secret")
-	return out.String(), err
+	require.NotContains(t, diagnostics.String()+clierror.Render(err), "fixture-secret")
+	return err
 }
 
 func finishedQueryResponse(r *http.Request) *http.Response {
 	return &http.Response{
 		StatusCode: http.StatusOK,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       io.NopCloser(strings.NewReader(`{"statement_id":"01989a4e-4ee2-7e63-87a5-65ac3b5161dc","status":"finished","created_at":"2026-09-09T00:00:00Z","progress":{},"result_set":{"metadata":{"fields":[],"num_rows":0},"format":"json","rows":[]}}`)),
+		Body:       io.NopCloser(strings.NewReader(`{"statement_id":"01989a4e-4ee2-7e63-87a5-65ac3b5161dc","status":"finished","created_at":"2026-09-09T00:00:00Z","progress":{},"result_set":{"metadata":{"fields":[{"name":"ready","data_type":"int"}],"num_rows":1},"format":"json","rows":[["1"]]}}`)),
 		Request:    r,
+	}
+}
+
+func TestQueryReportsCompletionWhenStdoutFails(t *testing.T) {
+	for _, format := range []string{"table", "json", "jsonl", "csv"} {
+		t.Run(format, func(t *testing.T) {
+			writeErr := errors.New("output is full")
+			submissions := 0
+			err := runQueryWithWriter(t, func(r *http.Request) (*http.Response, error) {
+				require.Equal(t, "POST /v1/statements", r.Method+" "+r.URL.Path)
+				submissions++
+				return finishedQueryResponse(r), nil
+			}, failingWriter{writeErr}, "--format", format)
+			require.ErrorIs(t, err, writeErr)
+			require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
+			require.Equal(t, 1, submissions)
+			require.Contains(t, clierror.Render(err), "query 01989a4e-4ee2-7e63-87a5-65ac3b5161dc completed")
+			require.Contains(t, clierror.Render(err), "do not rerun a statement with side effects")
+		})
 	}
 }
 

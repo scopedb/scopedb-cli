@@ -24,6 +24,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
+	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -67,7 +68,6 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			workspaces := limitedResults(account.Workspaces, limit)
-			views := workspaceListItems(workspaces, account.SelectedWorkspaceID)
 			// Choosing a workspace is what this command enables, so a missing
 			// selection needs no notice; only an empty account cannot be listed.
 			if len(account.Workspaces) == 0 {
@@ -76,10 +76,9 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 				}
 			}
 			if format == structuredFormatJSON {
-				return writeJSON(a.out, views)
+				return writeJSON(a.out, workspaceListItems(workspaces, account.SelectedWorkspaceID))
 			}
-			writeWorkspaceListTable(a.out, workspaces, account.SelectedWorkspaceID)
-			return nil
+			return writeWorkspaceListTable(a.out, workspaces, account.SelectedWorkspaceID)
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
@@ -111,17 +110,16 @@ func workspaceListItems(workspaces []controlplane.Workspace, selectedID string) 
 	return views
 }
 
-func writeWorkspaceListTable(out io.Writer, workspaces []controlplane.Workspace, selectedID string) {
-	views := workspaceListItems(workspaces, selectedID)
-	t := newTable(out, "CURRENT", "NAME", "ID", "STATUS")
-	for index, workspace := range workspaces {
+func writeWorkspaceListTable(out io.Writer, workspaces []controlplane.Workspace, selectedID string) error {
+	t := output.NewTable("CURRENT", "NAME", "ID", "STATUS")
+	for _, workspace := range workspaces {
 		current := ""
-		if views[index].Current {
+		if workspace.ID == selectedID {
 			current = "*"
 		}
-		t.AppendRow(table.Row{current, workspace.Name(), workspace.ID, views[index].Status})
+		t.AppendRow(table.Row{current, workspace.Name(), workspace.ID, workspaceStatus(workspace)})
 	}
-	t.Render()
+	return output.WriteTable(out, t)
 }
 
 func workspaceStatus(workspace controlplane.Workspace) string {
@@ -260,7 +258,7 @@ func (a *app) newWorkspaceGetCommand() *cobra.Command {
 				view.Provisioning.UpdatedAt = details.Provisioning.UpdatedAt
 				return writeJSON(a.out, view)
 			}
-			t := newTable(a.out, "FIELD", "VALUE")
+			t := output.NewTable("FIELD", "VALUE")
 			t.AppendRows([]table.Row{
 				{"Name", details.Workspace.Name()},
 				{"ID", details.Workspace.ID},
@@ -270,8 +268,7 @@ func (a *app) newWorkspaceGetCommand() *cobra.Command {
 				{"Endpoint", emptyDash(details.Connection.APIBaseURL)},
 				{"Auth scheme", emptyDash(details.Connection.AuthScheme)},
 			})
-			t.Render()
-			return nil
+			return output.WriteTable(a.out, t)
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")

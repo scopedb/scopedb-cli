@@ -22,6 +22,7 @@ import (
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/scopedb/scopedb-cli/internal/auth"
+	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -116,7 +117,7 @@ func renderStatus(out io.Writer, format string, view statusView) error {
 	if format == structuredFormatJSON {
 		return writeJSON(out, view)
 	}
-	t := newTable(out, "FIELD", "VALUE")
+	t := output.NewTable("FIELD", "VALUE")
 	t.AppendRows([]table.Row{
 		{"Credential source", view.CredentialSource},
 		{"Email", emptyDash(view.Email)},
@@ -127,8 +128,7 @@ func renderStatus(out io.Writer, format string, view statusView) error {
 		{"Endpoint", emptyDash(view.Endpoint)},
 		{"Control URL", emptyDash(view.ControlURL)},
 	})
-	t.Render()
-	return nil
+	return output.WriteTable(out, t)
 }
 
 func emptyDash(value string) string {

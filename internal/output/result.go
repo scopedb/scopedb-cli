@@ -61,9 +61,6 @@ func RenderResult(writer io.Writer, result *scopedb.ResultSet, format string) er
 }
 
 func renderTable(writer io.Writer, schema scopedb.Schema, rows [][]scopedb.Value) error {
-	t := table.NewWriter()
-	t.SetOutputMirror(writer)
-	t.SetStyle(table.StyleLight)
 	header := make(table.Row, len(schema))
 	for index, field := range schema {
 		if field == nil {
@@ -71,7 +68,7 @@ func renderTable(writer io.Writer, schema scopedb.Schema, rows [][]scopedb.Value
 		}
 		header[index] = field.Name
 	}
-	t.AppendHeader(header)
+	t := NewTable(header...)
 	for _, values := range rows {
 		row := make(table.Row, len(values))
 		for index, value := range values {
@@ -79,8 +76,7 @@ func renderTable(writer io.Writer, schema scopedb.Schema, rows [][]scopedb.Value
 		}
 		t.AppendRow(row)
 	}
-	t.Render()
-	return nil
+	return WriteTable(writer, t)
 }
 
 type namedValue struct {

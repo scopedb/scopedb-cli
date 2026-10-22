@@ -20,8 +20,6 @@ import (
 	"io"
 	"strings"
 	"time"
-
-	"github.com/jedib0t/go-pretty/v6/table"
 )
 
 const (
@@ -63,16 +61,6 @@ func writeJSON(writer io.Writer, value any) error {
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(value)
-}
-
-func newTable(writer io.Writer, header ...any) table.Writer {
-	result := table.NewWriter()
-	result.SetOutputMirror(writer)
-	result.SetStyle(table.StyleLight)
-	if len(header) > 0 {
-		result.AppendHeader(table.Row(header))
-	}
-	return result
 }
 
 func optionalTime(value *time.Time) string {
