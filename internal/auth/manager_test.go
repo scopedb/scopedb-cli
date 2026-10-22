@@ -316,7 +316,7 @@ func TestLoadAccessRetriesServerFailures(t *testing.T) {
 func TestLoadAccessDoesNotRetryRateLimits(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Second))}
-	rateLimited := &controlplane.OAuthError{Code: "slow_down", Status: http.StatusTooManyRequests}
+	rateLimited := &controlplane.OAuthError{Code: "slow_down", Status: http.StatusTooManyRequests, Retryable: true}
 	oauth := &fakeOAuth{results: []tokenOutcome{{err: rateLimited}}}
 	manager := newManager(t, store, &fakeControl{}, oauth, now)
 	manager.LockFile = filepath.Join(t.TempDir(), "credentials.lock")
@@ -645,9 +645,10 @@ func TestSaveLoginStoresBothTokens(t *testing.T) {
 	require.Empty(t, store.saved().WorkspaceID)
 }
 
-func TestSaveLoginKeepsStoredSelectionAndClearsDataToken(t *testing.T) {
+func TestSaveLoginReplacesExpiredLoginAndKeepsSelection(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	state := loginState(now, now.Add(time.Hour))
+	state.RefreshTokenExpiresAt = now.Add(-time.Minute)
 	state.DataToken = "data-token"
 	state.DataTokenWorkspaceID = "ws-1"
 	state.DataTokenExpiresAt = now.Add(time.Hour)

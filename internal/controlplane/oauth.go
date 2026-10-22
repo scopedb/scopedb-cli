@@ -17,6 +17,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -249,7 +250,11 @@ func (o *OAuth) postForm(ctx context.Context, endpoint string, form url.Values, 
 	}
 	data, err := readBounded(response.Body, maxSuccessBody)
 	if err != nil {
-		return &OAuthError{Status: response.StatusCode, Err: err}
+		return &OAuthError{
+			Status:    response.StatusCode,
+			Retryable: !errors.Is(err, errResponseTooLarge),
+			Err:       err,
+		}
 	}
 	if err := json.Unmarshal(data, output); err != nil {
 		return &OAuthError{Status: response.StatusCode, Code: "server_error", Description: "received an invalid response from ScopeDB", Err: err}
