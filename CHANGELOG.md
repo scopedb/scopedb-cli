@@ -24,6 +24,7 @@ All significant changes to this project will be documented in this file.
 
 ### Bug fixes
 
+* On Windows, `scope query --output` preserves a destination created by another process while the query runs, unless `--force` explicitly allows replacing it.
 * Table output reports write failures instead of returning success when the destination cannot accept the result.
 * `scope console --open` reports browser-launch failures during startup instead of reporting that the browser opened successfully.
 * `scope query` preserves the `.0` suffix for whole-number floats in table and CSV output, so they remain distinguishable from integers.

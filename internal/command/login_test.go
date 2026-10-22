@@ -921,11 +921,12 @@ func TestLoginReportsUnreachableControlPlane(t *testing.T) {
 	require.NoError(t, listener.Close())
 
 	_, _, err = runInteractiveCommand(t, "auth", "login", "--insecure-storage", "--control-url", controlURL)
-	require.Error(t, err)
+	var connectionError *net.OpError
+	require.ErrorAs(t, err, &connectionError)
 	rendered := clierror.Render(NormalizeError(err))
 	require.Contains(t, rendered, "cannot reach ScopeDB control plane")
 	require.Contains(t, rendered, "Caused by: ")
-	require.Contains(t, rendered, "connection refused")
+	require.Contains(t, rendered, connectionError.Error())
 }
 
 func TestLoginWithoutAnInteractiveTerminalSelectsFirstWorkspace(t *testing.T) {
