@@ -220,26 +220,21 @@ func (m *Manager) RestoreLogin(ctx context.Context, state credential.State, foun
 	return m.deleteIgnoringMissing()
 }
 
-type WorkspaceSession struct {
-	SessionToken string
-	WorkspaceID  string
+type WorkspaceAccess struct {
+	AccessToken string
+	WorkspaceID string
 }
 
-// LoadWorkspaceSession exposes the OAuth access token and selected workspace to workspace-scoped
-// control-plane commands that predate the OAuth login.
-func (m *Manager) LoadWorkspaceSession(ctx context.Context) (WorkspaceSession, error) {
-	account, err := m.Account(ctx)
+// LoadWorkspaceAccess resolves the account credential and workspace together for control-plane commands.
+func (m *Manager) LoadWorkspaceAccess(ctx context.Context) (WorkspaceAccess, error) {
+	account, state, err := m.account(ctx)
 	if err != nil {
-		return WorkspaceSession{}, err
+		return WorkspaceAccess{}, err
 	}
 	if err := RequireWorkspace(account); err != nil {
-		return WorkspaceSession{}, err
+		return WorkspaceAccess{}, err
 	}
-	state, err := m.LoadAccess(ctx)
-	if err != nil {
-		return WorkspaceSession{}, err
-	}
-	return WorkspaceSession{SessionToken: state.AccessToken, WorkspaceID: account.SelectedWorkspaceID}, nil
+	return WorkspaceAccess{AccessToken: state.AccessToken, WorkspaceID: account.SelectedWorkspaceID}, nil
 }
 
 func (m *Manager) Account(ctx context.Context) (Account, error) {
@@ -398,33 +393,35 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	if err := RequireWorkspace(account); err != nil {
 		return Access{}, err
 	}
-	details, err := m.Control.GetWorkspace(ctx, state.AccessToken, state.WorkspaceID)
+	// Refresh may load a newer workspace selection; this command keeps its resolved target.
+	workspaceID := account.SelectedWorkspaceID
+	details, err := m.Control.GetWorkspace(ctx, state.AccessToken, workspaceID)
 	if err != nil {
 		return Access{}, err
 	}
 	if details.Provisioning.Status != "ready" {
-		return Access{}, fmt.Errorf("workspace %s is %s", state.WorkspaceID, details.Provisioning.Status)
+		return Access{}, fmt.Errorf("workspace %s is %s", workspaceID, details.Provisioning.Status)
 	}
 	if details.Connection.APIBaseURL == "" {
-		return Access{}, fmt.Errorf("workspace %s has no data-plane endpoint", state.WorkspaceID)
+		return Access{}, fmt.Errorf("workspace %s has no data-plane endpoint", workspaceID)
 	}
 
-	if state.DataToken != "" && state.DataTokenWorkspaceID == state.WorkspaceID && state.DataTokenExpiresAt.After(m.now().Add(30*time.Second)) {
+	if state.DataToken != "" && state.DataTokenWorkspaceID == workspaceID && state.DataTokenExpiresAt.After(m.now().Add(30*time.Second)) {
 		return Access{
 			Endpoint:    details.Connection.APIBaseURL,
 			APIKey:      state.DataToken,
-			WorkspaceID: state.WorkspaceID,
+			WorkspaceID: workspaceID,
 			Mode:        "oauth",
 		}, nil
 	}
 
-	exchanged, err := m.Control.ExchangeToken(ctx, state.AccessToken, state.WorkspaceID)
+	exchanged, err := m.Control.ExchangeToken(ctx, state.AccessToken, workspaceID)
 	if isControlUnauthorized(err) {
 		state, err = m.refresh(ctx, state)
 		if err != nil {
 			return Access{}, err
 		}
-		exchanged, err = m.Control.ExchangeToken(ctx, state.AccessToken, state.WorkspaceID)
+		exchanged, err = m.Control.ExchangeToken(ctx, state.AccessToken, workspaceID)
 	}
 	if err != nil {
 		return Access{}, err
@@ -432,13 +429,13 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	if !strings.EqualFold(exchanged.TokenType, "Bearer") || exchanged.AccessToken == "" || exchanged.ExpiresAt.IsZero() {
 		return Access{}, fmt.Errorf("token exchange returned an invalid credential")
 	}
-	if err := m.saveDataToken(ctx, state.AccessToken, state.WorkspaceID, exchanged); err != nil {
+	if err := m.saveDataToken(ctx, state.AccessToken, workspaceID, exchanged); err != nil {
 		return Access{}, err
 	}
 	return Access{
 		Endpoint:    details.Connection.APIBaseURL,
 		APIKey:      exchanged.AccessToken,
-		WorkspaceID: state.WorkspaceID,
+		WorkspaceID: workspaceID,
 		Mode:        "oauth",
 	}, nil
 }

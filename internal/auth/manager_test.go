@@ -93,7 +93,7 @@ type fakeControl struct {
 	workspaces     []controlplane.Workspace
 	details        controlplane.WorkspaceDetails
 	exchange       controlplane.TokenExchangeResponse
-	onExchange     func()
+	exchangeToken  func(string, string) (controlplane.TokenExchangeResponse, error)
 	getUser        func(string) (controlplane.User, error)
 	listWorkspaces func(string) ([]controlplane.Workspace, error)
 	exchangeCalls  int
@@ -117,11 +117,11 @@ func (f *fakeControl) GetWorkspace(context.Context, string, string) (controlplan
 	return f.details, nil
 }
 
-func (f *fakeControl) ExchangeToken(context.Context, string, string) (controlplane.TokenExchangeResponse, error) {
-	if f.onExchange != nil {
-		f.onExchange()
-	}
+func (f *fakeControl) ExchangeToken(_ context.Context, token, workspaceID string) (controlplane.TokenExchangeResponse, error) {
 	f.exchangeCalls++
+	if f.exchangeToken != nil {
+		return f.exchangeToken(token, workspaceID)
+	}
 	return f.exchange, nil
 }
 
@@ -489,10 +489,11 @@ func TestSaveDataTokenPreservesConcurrentSelection(t *testing.T) {
 			TokenType:   "Bearer",
 			ExpiresAt:   now.Add(time.Hour),
 		},
-		onExchange: func() {
-			close(entered)
-			<-release
-		},
+	}
+	control.exchangeToken = func(string, string) (controlplane.TokenExchangeResponse, error) {
+		close(entered)
+		<-release
+		return control.exchange, nil
 	}
 	manager := newManager(t, store, control, &fakeOAuth{}, now)
 
@@ -508,6 +509,84 @@ func TestSaveDataTokenPreservesConcurrentSelection(t *testing.T) {
 	require.Equal(t, "ws-2", store.saved().WorkspaceID)
 	require.Equal(t, "data-token", store.saved().DataToken)
 	require.Equal(t, "ws-1", store.saved().DataTokenWorkspaceID)
+}
+
+func TestResolveDataAccessKeepsWorkspaceDuringRefresh(t *testing.T) {
+	for _, selection := range []string{"ws-2", ""} {
+		t.Run("selection="+selection, func(t *testing.T) {
+			now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+			store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour))}
+			entered, release := make(chan struct{}), make(chan struct{})
+			control := &fakeControl{
+				user:       controlplane.User{Status: "active"},
+				workspaces: []controlplane.Workspace{{ID: "ws-1"}, {ID: "ws-2"}},
+				details: controlplane.WorkspaceDetails{
+					Connection:   controlplane.Connection{APIBaseURL: "https://ws-1.example.com"},
+					Provisioning: controlplane.Provisioning{Status: "ready"},
+				},
+			}
+			var workspaces, tokens []string
+			control.exchangeToken = func(token, workspaceID string) (controlplane.TokenExchangeResponse, error) {
+				workspaces = append(workspaces, workspaceID)
+				tokens = append(tokens, token)
+				if len(workspaces) == 1 {
+					close(entered)
+					<-release
+					return controlplane.TokenExchangeResponse{}, &controlplane.Error{Status: http.StatusUnauthorized}
+				}
+				return controlplane.TokenExchangeResponse{
+					AccessToken: "data-token-for-" + workspaceID, TokenType: "Bearer", ExpiresAt: now.Add(time.Hour),
+				}, nil
+			}
+			oauth := &fakeOAuth{results: []tokenOutcome{{tokens: accessTokens("oat_new", "ort_new")}}}
+			manager := newManager(t, store, control, oauth, now)
+			var access Access
+			done := make(chan error, 1)
+			go func() {
+				var err error
+				access, err = manager.ResolveDataAccess(t.Context())
+				done <- err
+			}()
+			<-entered
+			if selection == "" {
+				require.NoError(t, manager.ClearWorkspace(t.Context()))
+			} else {
+				require.NoError(t, manager.SelectWorkspace(t.Context(), selection))
+			}
+			close(release)
+			require.NoError(t, <-done)
+			require.Equal(t, []string{"ws-1", "ws-1"}, workspaces)
+			require.Equal(t, []string{"oat_old", "oat_new"}, tokens)
+			require.Equal(t, Access{
+				Endpoint: "https://ws-1.example.com", APIKey: "data-token-for-ws-1", WorkspaceID: "ws-1", Mode: "oauth",
+			}, access)
+			saved := store.saved()
+			require.Equal(t, selection, saved.WorkspaceID)
+			require.Equal(t, "oat_new", saved.AccessToken)
+			require.Equal(t, "ws-1", saved.DataTokenWorkspaceID)
+			require.Equal(t, access.APIKey, saved.DataToken)
+		})
+	}
+}
+
+func TestLoadWorkspaceAccessKeepsAccountCredentials(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour))}
+	control := &fakeControl{
+		user: controlplane.User{Status: "active"},
+		listWorkspaces: func(string) ([]controlplane.Workspace, error) {
+			state := loginState(now, now.Add(time.Hour))
+			state.AccessToken = "oat_other_account"
+			state.WorkspaceID = "ws-2"
+			require.NoError(t, store.Save("https://control.example.com", state))
+			return []controlplane.Workspace{{ID: "ws-1"}}, nil
+		},
+	}
+	manager := newManager(t, store, control, &fakeOAuth{}, now)
+
+	access, err := manager.LoadWorkspaceAccess(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, WorkspaceAccess{AccessToken: "oat_old", WorkspaceID: "ws-1"}, access)
 }
 
 func TestResolveDataAccessUsesCachedToken(t *testing.T) {
