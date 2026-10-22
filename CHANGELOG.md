@@ -30,6 +30,7 @@ All significant changes to this project will be documented in this file.
 * `scope query` preserves the `.0` suffix for whole-number floats in table and CSV output, so they remain distinguishable from integers.
 * If `scope query` cannot write its results to stdout after execution, the error reports that the query completed and includes its statement ID, so an output error does not prompt users to repeat a statement with side effects.
 * `scope doctor` now verifies query access for a logged-in workspace, reporting provisioning, token exchange, and query failures that previously went unchecked.
+* `scope doctor` uses `/livez` for the control-plane check, so it continues to work after the legacy `/healthz` endpoint is removed.
 * Query timeout and Ctrl+C errors retain the statement ID and report when server cancellation could not be confirmed, so users can check the outcome before retrying. Ctrl+C also stops waiting for query input from stdin, exits with code 130, and stays quiet when no statement ID was received.
 * `scope auth login` no longer saves endpoint and credential-store settings before authentication succeeds; if the final configuration write fails, it revokes the new login and restores the previous valid credentials.
 * `scope workspace list` no longer prints a "no workspace is selected" notice pointing back at itself when the account has workspaces to choose from; it now only reports setup guidance when there is nothing to list.

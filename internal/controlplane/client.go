@@ -129,7 +129,7 @@ func (c *Client) RevokeAPIKey(ctx context.Context, token, workspaceID, name stri
 }
 
 func (c *Client) Health(ctx context.Context) error {
-	return c.doJSON(ctx, http.MethodGet, "/healthz", "", nil, nil)
+	return c.doJSON(ctx, http.MethodGet, "/livez", "", nil, nil)
 }
 
 func workspacePath(workspaceID string) string {
