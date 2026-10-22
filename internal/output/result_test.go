@@ -16,6 +16,7 @@ package output
 
 import (
 	"bytes"
+	"math"
 	"testing"
 	"time"
 
@@ -56,6 +57,44 @@ func TestRenderCSVAndTableNulls(t *testing.T) {
 	require.NoError(t, renderTable(&tableOutput, schema, rows))
 	require.Contains(t, tableOutput.String(), "NULL")
 	require.Contains(t, tableOutput.String(), "alpha")
+}
+
+func TestRenderCSVAndTablePreserveNumericTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		dataType scopedb.DataType
+		value    scopedb.Value
+		want     string
+	}{
+		{"p50", scopedb.FloatDataType, float64(132), "132.0"},
+		{"p90", scopedb.FloatDataType, float64(850), "850.0"},
+		{"p99", scopedb.FloatDataType, float64(1600), "1600.0"},
+		{"negative", scopedb.FloatDataType, float64(-132), "-132.0"},
+		{"zero", scopedb.FloatDataType, float64(0), "0.0"},
+		{"negative zero", scopedb.FloatDataType, math.Copysign(0, -1), "-0.0"},
+		{"fraction", scopedb.FloatDataType, 132.5, "132.5"},
+		{"precision", scopedb.FloatDataType, 1.2345678901234567, "1.2345678901234567"},
+		{"large exponent", scopedb.FloatDataType, 1e20, "1e+20"},
+		{"small exponent", scopedb.FloatDataType, 1e-9, "1e-09"},
+		{"NaN", scopedb.FloatDataType, math.NaN(), "NaN"},
+		{"positive infinity", scopedb.FloatDataType, math.Inf(1), "+Inf"},
+		{"negative infinity", scopedb.FloatDataType, math.Inf(-1), "-Inf"},
+		{"int", scopedb.IntDataType, int64(132), "132"},
+		{"uint", scopedb.UIntDataType, uint64(132), "132"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			schema := scopedb.Schema{&scopedb.FieldSchema{Name: "value", Type: tc.dataType}}
+			rows := [][]scopedb.Value{{tc.value}}
+
+			var csvOutput bytes.Buffer
+			require.NoError(t, renderCSV(&csvOutput, schema, rows))
+			require.Equal(t, "value\n"+tc.want+"\n", csvOutput.String())
+
+			var tableOutput bytes.Buffer
+			require.NoError(t, renderTable(&tableOutput, schema, rows))
+			require.Contains(t, tableOutput.String(), "│ "+tc.want+" ")
+		})
+	}
 }
 
 func TestRenderJSONRejectsDuplicateColumns(t *testing.T) {
