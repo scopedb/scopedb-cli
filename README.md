@@ -116,7 +116,7 @@ For SDK setup, get the endpoint with `scope workspace get` and create an applica
 
 ## Development
 
-Development tools are managed with [mise](https://mise.jdx.dev/):
+Development tools are managed with [mise](https://mise.jdx.dev/). Tasks use Bash (Git Bash on Windows):
 
 ```sh
 mise install

@@ -27,6 +27,7 @@ The global working agreements apply. Keep this file limited to constraints speci
 - Keep domain and transport errors structured until the process boundary in `cmd/scope`.
 - Add tests at observable boundaries: HTTP contracts, credential safety, auth resolution, cancellation, and rendered output. Avoid tests that merely mirror command registration or static literals.
 - Run `mise run check` and `mise run test:race` before merging behavior changes.
+- Run the same mise check, build, and test tasks on Linux, macOS, and Windows in CI; keep tool versions and commands in mise rather than duplicating them in platform-specific jobs.
 
 ## Documentation
 
