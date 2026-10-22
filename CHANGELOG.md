@@ -10,6 +10,7 @@ All significant changes to this project will be documented in this file.
 * `scope workspace use` stores the workspace locally for the current login instead of rotating a credential, so it no longer changes the workspace of another machine or a Console session. `scope auth status` still reports the selected workspace.
 * Authentication commands are grouped under `scope auth`: replace `scope login`, `scope logout`, and `scope status` with `scope auth login`, `scope auth logout`, and `scope auth status`. Replace `scope workspace show` with `scope workspace get`. The old command paths are not aliases.
 * `-f` selects query input files. Replace every `-f <format>` with `--format <format>`; use `scope query -f <file>` as shorthand for `--file <file>`. In particular, `scope query -f json` reads a file named `json`.
+* `scope query` writes results only to stdout; `--output` (`-o`) and `--force` are removed. Replace `--output results.csv` with shell redirection, such as `scope query -f report.scopeql --format csv > results.csv`. The shell controls overwriting and file permissions; use a temporary file and move it after success if an existing result must survive query failure.
 * `scope auth status --format json` no longer reports `auth_mode`; `credential_source` identifies environment credentials or the login store. It adds `refresh_token_expires_at` and uses `email` instead of `user`, and omits deployment state. Read `provisioning.status` from `scope workspace get --format json` instead of `provisioning_state` from status. Workspace JSON uses `connection.endpoint` instead of `connection.api_base_url`.
 * `scope console` replaces `scope open` and prints the Console URL by default. Replace `scope open [page]` with `scope console [page] --open` to launch the browser, or replace `scope open [page] --print` with `scope console [page]` to print the URL. Both modes print the URL to stdout.
 
@@ -27,7 +28,7 @@ All significant changes to this project will be documented in this file.
 * Table output reports write failures instead of returning success when the destination cannot accept the result.
 * `scope console --open` reports browser-launch failures during startup instead of reporting that the browser opened successfully.
 * `scope query` preserves the `.0` suffix for whole-number floats in table and CSV output, so they remain distinguishable from integers.
-* `scope query --output` checks the destination and prepares a temporary file before submitting a statement. If writing the result fails after execution, the error reports that the query completed and includes its statement ID, so a file error does not prompt users to repeat a statement with side effects.
+* If `scope query` cannot write its results to stdout after execution, the error reports that the query completed and includes its statement ID, so an output error does not prompt users to repeat a statement with side effects.
 * `scope doctor` now verifies query access for a logged-in workspace, reporting provisioning, token exchange, and query failures that previously went unchecked.
 * Query timeout and Ctrl+C errors retain the statement ID and report when server cancellation could not be confirmed, so users can check the outcome before retrying. Ctrl+C also stops waiting for query input from stdin, exits with code 130, and stays quiet when no statement ID was received.
 * `scope auth login` no longer saves endpoint and credential-store settings before authentication succeeds; if the final configuration write fails, it revokes the new login and restores the previous valid credentials.
@@ -40,7 +41,6 @@ All significant changes to this project will be documented in this file.
 * `scope workspace use` identifies the selected login workspace and warns when environment credentials override data commands or form an incomplete pair.
 * `scope doctor` supports `--timeout` for slower connections and `--timeout 0` to disable per-check limits (individual control-plane requests retain a 15-second limit), includes recovery hints and request IDs in failed checks, and preserves exit code 130 when interrupted.
 * `scope api-key list --format json` excludes one-time key material from its output.
-* `scope query --output` creates result files with permissions `0600` on Unix-like systems.
 
 ## v0.1.0-rc.3 (2026-09-16)
 

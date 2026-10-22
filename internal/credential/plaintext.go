@@ -137,7 +137,7 @@ func (s *PlaintextStore) write(document plaintextDocument) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary credential file: %w", err)
 	}
-	if err := fileutil.Commit(temporaryPath, s.path, true); err != nil {
+	if err := fileutil.Commit(temporaryPath, s.path); err != nil {
 		return fmt.Errorf("replace plaintext credential file: %w", err)
 	}
 	return nil

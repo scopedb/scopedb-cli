@@ -16,17 +16,10 @@
 
 package fileutil
 
-import (
-	"os"
+import "golang.org/x/sys/windows"
 
-	"golang.org/x/sys/windows"
-)
-
-// Commit installs a fully written temporary file with Windows replacement semantics.
-func Commit(source, target string, replace bool) error {
-	if !replace {
-		return os.Rename(source, target)
-	}
+// Commit installs a fully written temporary file, replacing target if it exists.
+func Commit(source, target string) error {
 	from, err := windows.UTF16PtrFromString(source)
 	if err != nil {
 		return err

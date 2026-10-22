@@ -190,7 +190,7 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary config file: %w", err)
 	}
-	if err := fileutil.Commit(temporaryPath, path, true); err != nil {
+	if err := fileutil.Commit(temporaryPath, path); err != nil {
 		return fmt.Errorf("replace config file: %w", err)
 	}
 	return nil
