@@ -59,11 +59,11 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
+			state, err := runtime.auth.LoadWorkspaceAccess(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			keys, err := runtime.control.ListAPIKeys(cmd.Context(), state.SessionToken, state.WorkspaceID)
+			keys, err := runtime.control.ListAPIKeys(cmd.Context(), state.AccessToken, state.WorkspaceID)
 			if err != nil {
 				return NormalizeError(err)
 			}
@@ -136,11 +136,11 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
+			state, err := runtime.auth.LoadWorkspaceAccess(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			created, err := runtime.control.CreateAPIKey(cmd.Context(), state.SessionToken, state.WorkspaceID, controlplane.CreateAPIKeyRequest{
+			created, err := runtime.control.CreateAPIKey(cmd.Context(), state.AccessToken, state.WorkspaceID, controlplane.CreateAPIKeyRequest{
 				Name:      name,
 				Tags:      tags,
 				ExpiresAt: expiresAt,
@@ -232,11 +232,11 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			state, err := runtime.auth.LoadWorkspaceSession(cmd.Context())
+			state, err := runtime.auth.LoadWorkspaceAccess(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
-			if err := runtime.control.RevokeAPIKey(cmd.Context(), state.SessionToken, state.WorkspaceID, name); err != nil {
+			if err := runtime.control.RevokeAPIKey(cmd.Context(), state.AccessToken, state.WorkspaceID, name); err != nil {
 				return NormalizeError(err)
 			}
 			if format == structuredFormatJSON {
