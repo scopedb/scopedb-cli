@@ -24,8 +24,8 @@ github.com/pelletier/go-toml/v2 v2.4.3/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
-github.com/scopedb/goscopedb v0.6.4-0.20261023094206-657b274fd55c h1:6wR3oCAW+RnTQUjEgpPdL49ux+n+DBg6uaFgzes2rGA=
-github.com/scopedb/goscopedb v0.6.4-0.20261023094206-657b274fd55c/go.mod h1:EyHbL6cOmcNARbgArh79B76V+yYKi6n8M5fJ5UZ/tQQ=
+github.com/scopedb/goscopedb v0.6.4-0.20261023094905-9f4e7a961daa h1:nf2RWQi5S1Iz5Ja+TeGze/3j0aN4v5L5Y0wdFW9/BBk=
+github.com/scopedb/goscopedb v0.6.4-0.20261023094905-9f4e7a961daa/go.mod h1:99pp2BfOopxWjOlnXQktukVlnOJMgc++7fkW111g4Kc=
 github.com/spf13/cobra v1.10.2 h1:DMTTonx5m65Ic0GOoRY2c16WCbHxOOw6xxezuLaBpcU=
 github.com/spf13/cobra v1.10.2/go.mod h1:7C1pvHqHw5A4vrJfjNwvOdzYu0Gml16OCs2GRiTUUS4=
 github.com/spf13/pflag v1.0.9/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
