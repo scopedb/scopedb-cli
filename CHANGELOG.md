@@ -4,6 +4,8 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+## v0.1.0 (2026-10-23)
+
 ### Breaking changes
 
 * `credential_store` in `config.toml` and `SCOPEDB_CREDENTIAL_STORE` no longer select a storage backend. Existing credentials are discovered automatically; use `scope auth login --insecure-storage` to choose plaintext for a new login only.
