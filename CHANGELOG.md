@@ -4,6 +4,10 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Improvements
+
+* `scope auth login` shows a branded browser callback page with distinct authorization and failure states, light and dark appearances, and clear guidance to continue in the terminal.
+
 ## v0.1.0 (2026-10-23)
 
 ### Breaking changes
