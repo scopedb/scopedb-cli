@@ -24,8 +24,8 @@ type User struct {
 	CreatedAt    string `json:"created_at"`
 }
 
-// Workspace summarises an owned workspace. Workspaces scheduled for deletion stay in the list and
-// keep their routes unavailable until they are restored.
+// Workspace summarises a workspace the account can access. Workspaces scheduled for deletion stay
+// in the list and keep their routes unavailable until they are restored.
 type Workspace struct {
 	ID                     string     `json:"id"`
 	DisplayName            *string    `json:"display_name"`

@@ -25,7 +25,7 @@ scope auth login --use-device-code --no-browser
 
 Open the printed verification link on any device and approve the request. `--use-device-code` selects device authorization; `--no-browser` independently disables automatic browser opening. Omit `--no-browser` to also open the verification link in a local browser. Neither flow requires an interactive terminal.
 
-Login keeps a valid workspace selection or automatically selects the first workspace that is not scheduled for deletion, and prints its name and ID. Use `scope workspace use <id-or-name>` to switch.
+Login keeps a valid workspace selection or automatically selects the first workspace that is not scheduled for deletion, and prints its name and ID. Workspaces shared with you are listed and selected the same way as workspaces you own. Use `scope workspace use <id-or-name>` to switch.
 
 If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id-or-name>`.
 
@@ -72,7 +72,9 @@ scope workspace get
 scope api-key create my-app --expires-in 720h
 ```
 
-The key is shown only once on stdout. Store it in your application's secret manager. The command requires a CLI login; an existing API key cannot manage keys through the CLI. Use separate keys for development, staging, and production.
+The key is shown only once on stdout. Store it in your application's secret manager. The command requires a CLI login; an existing API key cannot manage keys through the CLI. The workspace owner sees every key in the workspace, while a member sees and manages only keys they created. Use separate keys for development, staging, and production.
+
+Revoke a key by ID or unique name with `scope api-key revoke <id-or-name>`. When several keys share a name, use the ID from `scope api-key list`.
 
 Copy the workspace's data-plane endpoint, without appending `/v1/statements`. Set both values in your application environment or local shell:
 

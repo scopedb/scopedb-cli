@@ -124,8 +124,8 @@ func (c *Client) CreateAPIKey(ctx context.Context, token, workspaceID string, re
 	return response, err
 }
 
-func (c *Client) RevokeAPIKey(ctx context.Context, token, workspaceID, name string) error {
-	return c.doJSON(ctx, http.MethodDelete, workspacePath(workspaceID)+"/api-keys/"+url.PathEscape(name), token, nil, nil)
+func (c *Client) RevokeAPIKey(ctx context.Context, token, workspaceID, id string) error {
+	return c.doJSON(ctx, http.MethodDelete, workspacePath(workspaceID)+"/api-keys/"+url.PathEscape(id), token, nil, nil)
 }
 
 func (c *Client) Health(ctx context.Context) error {

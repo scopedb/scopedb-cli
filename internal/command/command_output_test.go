@@ -56,6 +56,7 @@ func TestCommandsReportTableWriteFailures(t *testing.T) {
 func TestCommandJSONOutput(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+	fake.APIKeys = []controlplane.APIKey{{ID: "key-1", Name: "automation", Status: "active"}}
 	saveStoredLogin(t, store, fake.URL, "ws-1")
 
 	for _, step := range []struct {
@@ -65,7 +66,7 @@ func TestCommandJSONOutput(t *testing.T) {
 		{"workspace list --limit 1", `[{"id":"ws-1","display_name":"Alpha","status":"ready","current":true}]`},
 		{"workspace use Beta", `{"id":"ws-2","display_name":"Beta","changed":true}`},
 		{"workspace use ws-2", `{"id":"ws-2","display_name":"Beta","changed":false}`},
-		{"api-key revoke automation --yes", `{"name":"automation","revoked":true}`},
+		{"api-key revoke automation --yes", `{"id":"key-1","name":"automation","revoked":true}`},
 		{"auth logout", `{"changed":true}`},
 	} {
 		args := append([]string{"--control-url", fake.URL}, strings.Fields(step.args)...)
@@ -75,7 +76,7 @@ func TestCommandJSONOutput(t *testing.T) {
 		require.Empty(t, diagnostics, step.args)
 		require.JSONEq(t, step.json, out, step.args)
 	}
-	require.Equal(t, []string{"automation"}, fake.RevokedAPIKeys)
+	require.Equal(t, []string{"key-1"}, fake.RevokedAPIKeys)
 	_, err := store.Load(fake.URL)
 	require.ErrorIs(t, err, credential.ErrNotFound)
 }

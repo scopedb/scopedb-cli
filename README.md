@@ -62,7 +62,7 @@ Login does not require an interactive terminal. Authorization instructions and p
 
 Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves credentials unencrypted in a file (`0600` on Unix); `scope auth status` shows its location. `--insecure-storage` selects plaintext for that login only. For servers and CI, set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or use device authorization for a CLI login. See [headless Linux setup](docs/connect.md#use-headless-linux).
 
-Pass `--workspace <id-or-name>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account still owns it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. The text and JSON results report the selected workspace name and ID. Use `scope workspace use <id-or-name>` to switch afterwards.
+Pass `--workspace <id-or-name>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account can still access it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. The text and JSON results report the selected workspace name and ID. Use `scope workspace use <id-or-name>` to switch afterwards.
 
 A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status and create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
@@ -72,7 +72,7 @@ scope workspace use <id-or-name>
 scope auth status
 ```
 
-The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
+The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. Workspaces shared with you appear in `scope workspace list` alongside the ones you own; select either with `scope workspace use <id-or-name>`. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
 
 `scope console [page]` provides shortcuts to Console pages: `home` (default), `query`, `data`, `keys`, and `connect`. For example, `scope console query` prints the query page URL; add `--open` to also open it in your browser.
 
@@ -141,11 +141,13 @@ Business commands support `--format json` for scripts while keeping their usual 
 ```sh
 scope auth status --format json
 scope workspace use <id-or-name> --format json
-scope api-key revoke <name> --yes --format json
+scope api-key revoke <id-or-name> --yes --format json
 scope console --format json
 ```
 
 Results go to stdout; prompts, warnings, and errors go to stderr. `scope doctor --format json` prints its report and exits nonzero if checks fail. `scope version --format json` prints machine-readable version information; `--json` is also supported.
+
+`scope api-key revoke` accepts an API key ID or a unique name. When several keys share a name, pass the ID shown by `scope api-key list`.
 
 `scope workspace list` and `scope api-key list` accept `--limit N` to show at most N items. The default and `--limit 0` show all items. This limits displayed results without reducing the amount fetched.
 

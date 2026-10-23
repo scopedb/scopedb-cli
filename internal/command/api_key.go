@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
@@ -201,28 +202,28 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 	var yes bool
 	var format string
 	command := &cobra.Command{
-		Use:   "revoke <name>",
-		Short: "Revoke an API key",
+		Use:   "revoke <id-or-name>",
+		Short: "Revoke an API key by ID or unique name",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTextFormat(format); err != nil {
 				return err
 			}
-			name := strings.TrimSpace(args[0])
-			if name == "" {
-				return usageError("API key name must not be empty")
+			value := strings.TrimSpace(args[0])
+			if value == "" {
+				return usageError("API key ID or name must not be empty")
 			}
 			if !yes {
 				if !a.isInputTerminal() {
 					return usageError("--yes is required when input is not interactive")
 				}
-				answer, err := a.readLine(cmd.Context(), fmt.Sprintf("Revoke API key %s? [y/N] ", name))
+				answer, err := a.readLine(cmd.Context(), fmt.Sprintf("Revoke API key %s? [y/N] ", value))
 				if err != nil {
 					return NormalizeError(err)
 				}
 				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
 					if format == structuredFormatJSON {
-						return writeJSON(a.out, apiKeyRevokeResult{Name: name, Revoked: false})
+						return writeJSON(a.out, apiKeyRevokeResult{Name: value, Revoked: false})
 					}
 					_, err := fmt.Fprintln(a.out, "Cancelled.")
 					return NormalizeError(err)
@@ -236,13 +237,21 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			if err := runtime.control.RevokeAPIKey(cmd.Context(), state.AccessToken, state.WorkspaceID, name); err != nil {
+			keys, err := runtime.control.ListAPIKeys(cmd.Context(), state.AccessToken, state.WorkspaceID)
+			if err != nil {
+				return NormalizeError(err)
+			}
+			key, err := resolveAPIKey(keys, value)
+			if err != nil {
+				return err
+			}
+			if err := runtime.control.RevokeAPIKey(cmd.Context(), state.AccessToken, state.WorkspaceID, key.ID); err != nil {
 				return NormalizeError(err)
 			}
 			if format == structuredFormatJSON {
-				return writeJSON(a.out, apiKeyRevokeResult{Name: name, Revoked: true})
+				return writeJSON(a.out, apiKeyRevokeResult{ID: key.ID, Name: key.Name, Revoked: true})
 			}
-			_, err = fmt.Fprintf(a.out, "Revoked API key %s.\n", name)
+			_, err = fmt.Fprintf(a.out, "Revoked API key %s (%s).\n", key.Name, key.ID)
 			return NormalizeError(err)
 		},
 	}
@@ -251,7 +260,30 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 	return command
 }
 
+func resolveAPIKey(keys []controlplane.APIKey, value string) (controlplane.APIKey, error) {
+	for _, key := range keys {
+		if key.ID == value {
+			return key, nil
+		}
+	}
+	var matches []controlplane.APIKey
+	for _, key := range keys {
+		if key.Name == value {
+			matches = append(matches, key)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return controlplane.APIKey{}, clierror.New(clierror.ExitNotFound, fmt.Sprintf("API key %q was not found", value))
+	default:
+		return controlplane.APIKey{}, usageError(fmt.Sprintf("API key name %q is ambiguous; use its ID", value))
+	}
+}
+
 type apiKeyRevokeResult struct {
+	ID      string `json:"id,omitempty"`
 	Name    string `json:"name"`
 	Revoked bool   `json:"revoked"`
 }

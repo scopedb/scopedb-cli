@@ -4,6 +4,10 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Bug fixes
+
+* `scope api-key revoke` works with ScopeDB Control Plane 0.25.0 or newer, which identifies API keys by ID. It accepts an ID or a unique name, reports an ambiguous name instead of revoking multiple keys, and includes the revoked key's ID in text and JSON output.
+
 ### Improvements
 
 * `scope auth login` shows a branded browser callback page with distinct authorization and failure states, light and dark appearances, and clear guidance to continue in the terminal.
