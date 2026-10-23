@@ -28,24 +28,43 @@ func TestKeyringStoreReplacesInvalidEntry(t *testing.T) {
 	store := NewKeyringStore()
 	const controlURL = "https://control.example.com"
 	for _, encoded := range []string{
-		`{"session_token":"private-secret"`,
+		`{"access_token":"private-secret"`,
 		`{"data_token_expires_at":"private-secret"}`,
 	} {
 		require.NoError(t, keyring.Set(keyringService, profileKey(controlURL), encoded))
 		_, err := store.Load(controlURL)
 		require.ErrorIs(t, err, ErrInvalidState)
 		require.NotContains(t, err.Error(), "private-secret")
-		require.NoError(t, store.Save(controlURL, State{SessionToken: "new-session"}))
+		require.NoError(t, store.Save(controlURL, State{AccessToken: "oat_new", RefreshToken: "ort_new"}))
 		state, err := store.Load(controlURL)
 		require.NoError(t, err)
-		require.Equal(t, "new-session", state.SessionToken)
+		require.Equal(t, "oat_new", state.AccessToken)
 	}
 }
 
 func TestKeyringStorePreservesAccessErrors(t *testing.T) {
 	keyring.MockInitWithError(os.ErrPermission)
 	t.Cleanup(keyring.MockInit)
-	_, err := NewKeyringStore().Load("https://control.example.com")
-	require.ErrorIs(t, err, os.ErrPermission)
-	require.NotErrorIs(t, err, ErrInvalidState)
+	store := NewKeyringStore()
+	const controlURL = "https://control.example.com"
+	for _, operation := range []struct {
+		name string
+		run  func() error
+	}{
+		{"read", func() error {
+			_, err := store.Load(controlURL)
+			return err
+		}},
+		{"write", func() error { return store.Save(controlURL, State{}) }},
+		{"delete", func() error { return store.Delete(controlURL) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			err := operation.run()
+			var keyringErr *KeyringError
+			require.ErrorAs(t, err, &keyringErr)
+			require.ErrorIs(t, err, os.ErrPermission)
+			require.NotErrorIs(t, err, ErrNotFound)
+			require.NotErrorIs(t, err, ErrInvalidState)
+		})
+	}
 }

@@ -12,12 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !darwin && !linux && !windows
+package output
 
-package command
+import (
+	"fmt"
+	"io"
 
-import "errors"
+	"github.com/jedib0t/go-pretty/v6/table"
+)
 
-func hideTerminalInput(int) (func() error, error) {
-	return nil, errors.New("terminal echo control is unavailable on this platform")
+func NewTable(header ...any) table.Writer {
+	result := table.NewWriter()
+	result.SetStyle(table.StyleLight)
+	if len(header) > 0 {
+		result.AppendHeader(table.Row(header))
+	}
+	return result
+}
+
+func WriteTable(writer io.Writer, t table.Writer) error {
+	text := t.Render()
+	if text == "" {
+		return nil
+	}
+	// SetOutputMirror discards write errors, so write the rendered table explicitly.
+	_, err := fmt.Fprintln(writer, text)
+	return err
 }

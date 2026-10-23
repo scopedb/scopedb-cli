@@ -12,19 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package command
+// Package filelock serializes credential refresh across CLI processes.
+package filelock
 
-import "golang.org/x/sys/unix"
+import (
+	"context"
+	"time"
+)
 
-func hideTerminalInput(fd int) (func() error, error) {
-	previous, err := unix.IoctlGetTermios(fd, unix.TCGETS)
-	if err != nil {
-		return nil, err
-	}
-	hidden := *previous
-	hidden.Lflag &^= unix.ECHO
-	if err := unix.IoctlSetTermios(fd, unix.TCSETS, &hidden); err != nil {
-		return nil, err
-	}
-	return func() error { return unix.IoctlSetTermios(fd, unix.TCSETS, previous) }, nil
+type Lock interface {
+	Close() error
+}
+
+const lockRetryInterval = 50 * time.Millisecond
+
+func Acquire(ctx context.Context, path string) (Lock, error) {
+	return acquire(ctx, path)
 }

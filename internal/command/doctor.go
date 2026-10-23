@@ -25,6 +25,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/credential"
+	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -65,7 +66,6 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			}
 			report := doctorReport{OK: true, Checks: []doctorCheck{
 				{Name: "configuration", Status: "pass", Details: runtime.paths.Config},
-				{Name: "credential store", Status: "pass", Details: runtime.config.CredentialStore},
 			}}
 
 			access, machine, machineErr := runtime.auth.MachineAccess()
@@ -74,10 +74,11 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				report.OK = false
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: machineErr.Error()})
 			case machine:
+				report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: "environment"})
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "API key from environment for " + access.Endpoint})
 				a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 			default:
-				healthCtx, cancel := checkContext(cmd.Context(), timeout)
+				healthCtx, cancel := timeoutContext(cmd.Context(), timeout)
 				healthErr := runtime.control.Health(healthCtx)
 				cancel()
 				if healthErr != nil {
@@ -88,24 +89,29 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				}
 
 				state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
-				if errors.Is(loadErr, credential.ErrNotFound) {
+				if errors.Is(loadErr, credential.ErrNotFound) || errors.Is(loadErr, credential.ErrInvalidState) {
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login' or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY"})
 				} else if loadErr != nil {
 					report.OK = false
-					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: loadErr.Error()})
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(loadErr))})
 				} else {
-					sessionCtx, sessionCancel := checkContext(cmd.Context(), timeout)
-					session, sessionErr := runtime.control.GetSession(sessionCtx, state.SessionToken)
-					sessionCancel()
-					if sessionErr != nil {
+					source := state.Source
+					if source == credential.SourcePlaintext {
+						source += " (" + runtime.paths.CredentialsFile + ")"
+					}
+					report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: source})
+					accountCtx, accountCancel := timeoutContext(cmd.Context(), timeout)
+					account, accountErr := runtime.auth.Account(accountCtx)
+					accountCancel()
+					if accountErr != nil {
 						report.OK = false
-						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(sessionErr))})
+						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(accountErr))})
 					} else {
-						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: session.User.Email})
-						if setupErr := workspaceSetupError(auth.RequireWorkspace(session)); setupErr != nil {
+						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: account.User.Email})
+						if setupErr := workspaceSetupError(auth.RequireWorkspace(account)); setupErr != nil {
 							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "warn", Details: fmt.Sprintf("%s; %s", setupErr.Message, setupErr.Hint)})
 						} else {
-							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "pass", Details: session.CurrentWorkspaceID})
+							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "pass", Details: account.SelectedWorkspaceID})
 							a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 						}
 					}
@@ -130,7 +136,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 }
 
 func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext, timeout time.Duration, report *doctorReport) {
-	ctx, cancel := checkContext(ctx, timeout)
+	ctx, cancel := timeoutContext(ctx, timeout)
 	defer cancel()
 	access, err := runtime.auth.ResolveDataAccess(ctx)
 	if err == nil {
@@ -148,21 +154,13 @@ func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext,
 	report.Checks = append(report.Checks, check)
 }
 
-func checkContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout == 0 {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, timeout)
-}
-
 func renderDoctor(out io.Writer, format string, report doctorReport) error {
 	if format == structuredFormatJSON {
 		return writeJSON(out, report)
 	}
-	t := newTable(out, "CHECK", "STATUS", "DETAILS")
+	t := output.NewTable("CHECK", "STATUS", "DETAILS")
 	for _, check := range report.Checks {
 		t.AppendRow(table.Row{check.Name, check.Status, check.Details})
 	}
-	t.Render()
-	return nil
+	return output.WriteTable(out, t)
 }

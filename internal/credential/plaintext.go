@@ -30,7 +30,7 @@ type plaintextDocument struct {
 	Profiles map[string]State `json:"profiles"`
 }
 
-// PlaintextStore is an explicit fallback for hosts without a usable keyring.
+// PlaintextStore is a fallback for hosts without a usable keyring.
 // The file is permission-restricted but is not encrypted.
 type PlaintextStore struct {
 	path string
@@ -137,7 +137,7 @@ func (s *PlaintextStore) write(document plaintextDocument) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary credential file: %w", err)
 	}
-	if err := fileutil.Commit(temporaryPath, s.path, true); err != nil {
+	if err := fileutil.Commit(temporaryPath, s.path); err != nil {
 		return fmt.Errorf("replace plaintext credential file: %w", err)
 	}
 	return nil

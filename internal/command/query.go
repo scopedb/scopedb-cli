@@ -15,17 +15,13 @@
 package command
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
-	"github.com/scopedb/scopedb-cli/internal/fileutil"
 	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -35,8 +31,6 @@ const maxStatementBytes = 8 << 20
 func (a *app) newQueryCommand() *cobra.Command {
 	var statementFile string
 	var format string
-	var outputPath string
-	var force bool
 	var timeout time.Duration
 	command := &cobra.Command{
 		Use:   "query [scopeql]",
@@ -54,7 +48,9 @@ func (a *app) newQueryCommand() *cobra.Command {
 			if timeout < 0 {
 				return usageError("--timeout must not be negative")
 			}
-			statement, err := a.readStatement(args, statementFile)
+			statement, err := readInput(cmd.Context(), func() (string, error) {
+				return a.readStatement(args, statementFile)
+			})
 			if err != nil {
 				return err
 			}
@@ -67,37 +63,21 @@ func (a *app) newQueryCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 
-			queryContext := cmd.Context()
-			cancel := func() {}
-			if timeout > 0 {
-				queryContext, cancel = context.WithTimeout(queryContext, timeout)
-			}
+			queryContext, cancel := timeoutContext(cmd.Context(), timeout)
 			defer cancel()
 			result, err := a.query.Execute(queryContext, access, statement)
 			if err != nil {
 				return NormalizeError(err)
 			}
-
-			if outputPath == "" {
-				if err := output.RenderResult(a.out, result, format); err != nil {
-					return NormalizeError(err)
-				}
-				return nil
+			if err := output.RenderResult(a.out, result.ResultSet, format); err != nil {
+				return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, fmt.Sprintf("query %s completed, but its results could not be written", result.StatementID), err), "use the statement ID to retrieve its result; do not rerun a statement with side effects")
 			}
-			if err := writeResultFile(outputPath, force, func(writer io.Writer) error {
-				return output.RenderResult(writer, result, format)
-			}); err != nil {
-				return NormalizeError(err)
-			}
-			_, err = fmt.Fprintf(a.errOut, "Wrote %d row(s) to %s.\n", result.TotalRows, outputPath)
-			return NormalizeError(err)
+			return nil
 		},
 	}
 	command.Flags().StringVarP(&statementFile, "file", "f", "", "read ScopeQL from a file; use - for stdin")
 	command.Flags().StringVar(&format, "format", output.FormatTable, "output format: table, json, jsonl, or csv")
-	command.Flags().StringVarP(&outputPath, "output", "o", "", "write results to a file")
-	command.Flags().BoolVar(&force, "force", false, "overwrite an existing output file")
-	command.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "maximum time to wait before cancelling the statement; 0 disables the limit")
+	command.Flags().DurationVar(&timeout, "timeout", 0, "client-side wait limit before cancelling the statement; 0 disables the client limit (default)")
 	return command
 }
 
@@ -159,45 +139,4 @@ func readLimited(reader io.Reader, limit int64) ([]byte, error) {
 		return nil, usageError(fmt.Sprintf("ScopeQL statement exceeds %d bytes", limit))
 	}
 	return data, nil
-}
-
-func writeResultFile(path string, force bool, render func(io.Writer) error) error {
-	if path == "" {
-		return errors.New("output path must not be empty")
-	}
-	if _, err := os.Stat(path); err == nil && !force {
-		return clierror.WithHint(clierror.New(clierror.ExitGeneral, fmt.Sprintf("output file %s already exists", path)), "pass --force to overwrite it")
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect output file: %w", err)
-	}
-
-	directory := filepath.Dir(path)
-	temporary, err := os.CreateTemp(directory, ".scope-result-*")
-	if err != nil {
-		return fmt.Errorf("create temporary output file: %w", err)
-	}
-	temporaryPath := temporary.Name()
-	defer func() { _ = os.Remove(temporaryPath) }()
-	if err := temporary.Chmod(0o600); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("set output file permissions: %w", err)
-	}
-	if err := render(temporary); err != nil {
-		_ = temporary.Close()
-		return err
-	}
-	if err := temporary.Sync(); err != nil {
-		_ = temporary.Close()
-		return fmt.Errorf("sync output file: %w", err)
-	}
-	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close output file: %w", err)
-	}
-	if err := fileutil.Commit(temporaryPath, path, force); err != nil {
-		if !force && errors.Is(err, os.ErrExist) {
-			return clierror.WithHint(clierror.New(clierror.ExitGeneral, fmt.Sprintf("output file %s was created concurrently", path)), "choose another path or pass --force")
-		}
-		return fmt.Errorf("replace output file: %w", err)
-	}
-	return nil
 }

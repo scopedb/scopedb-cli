@@ -31,20 +31,17 @@ func TestLoadPrecedence(t *testing.T) {
 		CredentialsFile: filepath.Join(directory, "credentials.json"),
 	}
 	fileConfig := Config{
-		ControlURL:      "https://file-control.example.com/",
-		ConsoleURL:      "https://file-console.example.com/",
-		CredentialStore: CredentialStorePlaintext,
+		ControlURL: "https://file-control.example.com/",
+		ConsoleURL: "https://file-console.example.com/",
 	}
 	require.NoError(t, Save(paths, fileConfig))
 
 	t.Setenv("SCOPEDB_CONTROL_URL", "https://env-control.example.com/")
 	t.Setenv("SCOPEDB_CONSOLE_URL", "https://env-console.example.com/")
-	t.Setenv("SCOPEDB_CREDENTIAL_STORE", CredentialStoreKeyring)
 	cfg, err := Load(paths, Overrides{ControlURL: "https://flag-control.example.com/"})
 	require.NoError(t, err)
 	require.Equal(t, "https://flag-control.example.com", cfg.ControlURL)
 	require.Equal(t, "https://env-console.example.com", cfg.ConsoleURL)
-	require.Equal(t, CredentialStoreKeyring, cfg.CredentialStore)
 }
 
 func TestLoadExistingConfig(t *testing.T) {
@@ -57,12 +54,14 @@ credential_store = "plaintext"
 	require.NoError(t, os.WriteFile(path, contents, 0o600))
 	t.Setenv("SCOPEDB_CONTROL_URL", "")
 	t.Setenv("SCOPEDB_CONSOLE_URL", "")
-	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
 	cfg, err := Load(Paths{Directory: directory, Config: path}, Overrides{})
 	require.NoError(t, err)
 	require.Equal(t, "https://control.example.com", cfg.ControlURL)
 	require.Equal(t, "https://console.example.com", cfg.ConsoleURL)
-	require.Equal(t, CredentialStorePlaintext, cfg.CredentialStore)
+	require.NoError(t, Save(Paths{Directory: directory, Config: path}, cfg))
+	saved, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(saved), "credential_store")
 }
 
 func TestResolvePathsUsesOverride(t *testing.T) {
@@ -87,9 +86,8 @@ func TestSaveRestrictsPermissions(t *testing.T) {
 	directory := t.TempDir()
 	paths := Paths{Directory: directory, Config: filepath.Join(directory, "config.toml")}
 	require.NoError(t, Save(paths, Config{
-		ControlURL:      DefaultControlURL,
-		ConsoleURL:      DefaultConsoleURL,
-		CredentialStore: CredentialStoreKeyring,
+		ControlURL: DefaultControlURL,
+		ConsoleURL: DefaultConsoleURL,
 	}))
 	if runtime.GOOS == "windows" {
 		return

@@ -24,7 +24,14 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/config"
 )
 
-const currentStateVersion = 1
+// Version 1 held a browser session token that an OAuth login can never use, so an older document is
+// invalid rather than migrated.
+const currentStateVersion = 2
+
+const (
+	SourceKeyring   = "keyring"
+	SourcePlaintext = "plaintext"
+)
 
 var ErrNotFound = errors.New("credentials not found")
 
@@ -32,16 +39,23 @@ var ErrNotFound = errors.New("credentials not found")
 // not cover storage access failures or unreadable multi-profile documents.
 var ErrInvalidState = errors.New("stored credential state is invalid")
 
-// State contains secrets and their workspace binding. It must never be written
-// to the regular TOML configuration file.
 type State struct {
-	Version              int       `json:"version"`
-	ControlURL           string    `json:"control_url"`
-	SessionToken         string    `json:"session_token"`
-	WorkspaceID          string    `json:"workspace_id"`
-	DataToken            string    `json:"data_token,omitempty"`
-	DataTokenWorkspaceID string    `json:"data_token_workspace_id,omitempty"`
-	DataTokenExpiresAt   time.Time `json:"data_token_expires_at,omitempty"`
+	// Source is resolved on load, never persisted. Updates keep this destination;
+	// a new login has no source and chooses its destination independently.
+	Source string `json:"-"`
+	// Cleared suppresses an inaccessible keyring entry after local logout. A
+	// plaintext tombstone contains no tokens and is replaced by the next login.
+	Cleared               bool      `json:"cleared,omitempty"`
+	Version               int       `json:"version"`
+	ControlURL            string    `json:"control_url"`
+	AccessToken           string    `json:"access_token"`
+	AccessTokenExpiresAt  time.Time `json:"access_token_expires_at"`
+	RefreshToken          string    `json:"refresh_token"`
+	RefreshTokenExpiresAt time.Time `json:"refresh_token_expires_at"`
+	WorkspaceID           string    `json:"workspace_id,omitempty"`
+	DataToken             string    `json:"data_token,omitempty"`
+	DataTokenWorkspaceID  string    `json:"data_token_workspace_id,omitempty"`
+	DataTokenExpiresAt    time.Time `json:"data_token_expires_at,omitempty"`
 }
 
 // Store persists credentials for one or more control-plane origins.
@@ -51,13 +65,12 @@ type Store interface {
 	Delete(controlURL string) error
 }
 
-// New returns the configured credential backend. Plaintext storage must be an
-// explicit user choice; there is no automatic downgrade from the OS keyring.
+// New returns one credential backend without accessing it.
 func New(kind string, paths config.Paths) (Store, error) {
 	switch kind {
-	case config.CredentialStoreKeyring:
+	case SourceKeyring:
 		return NewKeyringStore(), nil
-	case config.CredentialStorePlaintext:
+	case SourcePlaintext:
 		return NewPlaintextStore(paths.CredentialsFile), nil
 	default:
 		return nil, fmt.Errorf("unsupported credential store %q", kind)
@@ -72,13 +85,19 @@ func prepare(controlURL string, state State) State {
 
 func validate(controlURL string, state State) error {
 	if state.Version != currentStateVersion {
-		return fmt.Errorf("%w: unsupported version %d", ErrInvalidState, state.Version)
+		return fmt.Errorf("%w: unsupported version %d; log in again", ErrInvalidState, state.Version)
 	}
 	if state.ControlURL != controlURL {
 		return fmt.Errorf("%w: credential origin mismatch", ErrInvalidState)
 	}
-	if state.SessionToken == "" {
-		return fmt.Errorf("%w: session token is missing", ErrInvalidState)
+	if state.Cleared && state.AccessToken == "" && state.RefreshToken == "" && state.DataToken == "" {
+		return nil
+	}
+	if state.AccessToken == "" {
+		return fmt.Errorf("%w: access token is missing", ErrInvalidState)
+	}
+	if state.RefreshToken == "" {
+		return fmt.Errorf("%w: refresh token is missing", ErrInvalidState)
 	}
 	return nil
 }

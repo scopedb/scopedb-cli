@@ -15,6 +15,7 @@
 package credential
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,11 +30,14 @@ func TestPlaintextStoreRoundTripAndDelete(t *testing.T) {
 	store := NewPlaintextStore(path)
 	now := time.Date(2026, 9, 9, 1, 2, 3, 0, time.UTC)
 	want := State{
-		SessionToken:         "session-secret",
-		WorkspaceID:          "ws-1",
-		DataToken:            "data-secret",
-		DataTokenWorkspaceID: "ws-1",
-		DataTokenExpiresAt:   now,
+		AccessToken:           "oat_access",
+		AccessTokenExpiresAt:  now,
+		RefreshToken:          "ort_refresh",
+		RefreshTokenExpiresAt: now.Add(time.Hour),
+		WorkspaceID:           "ws-1",
+		DataToken:             "data-secret",
+		DataTokenWorkspaceID:  "ws-1",
+		DataTokenExpiresAt:    now,
 	}
 	const controlURL = "https://control.example.com"
 	require.NoError(t, store.Save(controlURL, want))
@@ -55,13 +59,27 @@ func TestPlaintextStoreRoundTripAndDelete(t *testing.T) {
 func TestPlaintextStoreSeparatesOrigins(t *testing.T) {
 	store := NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
 	for _, origin := range []string{"https://one.example.com", "https://two.example.com"} {
-		require.NoError(t, store.Save(origin, State{SessionToken: origin, WorkspaceID: "ws"}))
+		require.NoError(t, store.Save(origin, State{AccessToken: origin, RefreshToken: "ort_" + origin}))
 	}
 	for _, origin := range []string{"https://one.example.com", "https://two.example.com"} {
 		state, err := store.Load(origin)
 		require.NoError(t, err)
-		require.Equal(t, origin, state.SessionToken)
+		require.Equal(t, origin, state.AccessToken)
 	}
+}
+
+func TestPlaintextStoreRejectsOlderState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.json")
+	const controlURL = "https://control.example.com"
+	document := fmt.Sprintf(
+		`{"version":1,"profiles":{%q:{"version":1,"control_url":%q,"access_token":"oat","refresh_token":"ort"}}}`,
+		profileKey(controlURL), controlURL,
+	)
+	require.NoError(t, os.WriteFile(path, []byte(document), 0o600))
+
+	_, err := NewPlaintextStore(path).Load(controlURL)
+	require.ErrorIs(t, err, ErrInvalidState)
+	require.Contains(t, err.Error(), "log in again")
 }
 
 func TestPlaintextStoreRejectsBroadPermissions(t *testing.T) {
