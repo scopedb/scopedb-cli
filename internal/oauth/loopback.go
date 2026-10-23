@@ -16,8 +16,10 @@ package oauth
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
+	"html/template"
 	"net"
 	"net/http"
 	"sync"
@@ -113,19 +115,16 @@ func (l *Loopback) handle(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writer.Header().Set("Cache-Control", "no-store")
 	writer.Header().Set("Referrer-Policy", "no-referrer")
-	if callback.Error != "" {
-		_, _ = writer.Write([]byte(callbackErrorPage))
-	} else {
-		_, _ = writer.Write([]byte(callbackSuccessPage))
-	}
+	writer.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
+	// The page acknowledges the redirect; validation, token exchange, and storage finish in the CLI.
+	_ = callbackPage.Execute(writer, callback.Error == "" && callback.Code != "")
 	select {
 	case l.results <- callback:
 	default:
 	}
 }
 
-const callbackSuccessPage = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-	`<title>Scope CLI</title></head><body><p>You can close this window and return to your terminal.</p></body></html>`
+//go:embed callback.html
+var callbackPageHTML string
 
-const callbackErrorPage = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-	`<title>Scope CLI</title></head><body><p>This login was not completed. Return to your terminal for details.</p></body></html>`
+var callbackPage = template.Must(template.New("callback").Parse(callbackPageHTML))

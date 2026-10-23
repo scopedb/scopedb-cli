@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -101,29 +102,62 @@ func TestLoopbackAcceptsOneCallback(t *testing.T) {
 	}
 }
 
-func TestLoopbackReportsAuthorizationErrors(t *testing.T) {
-	listener, err := NewLoopback()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
+func TestLoopbackRendersCallbackOutcome(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		callback Callback
+		received bool
+	}{
+		{name: "authorization", callback: Callback{Code: "private-code"}, received: true},
+		{name: "denied", callback: Callback{Error: "access_denied"}},
+		{name: "error with code", callback: Callback{Code: "private-code", Error: "server_error"}},
+		{name: "missing code"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			listener, err := NewLoopback()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = listener.Close() })
 
-	parsed, err := url.Parse(listener.RedirectURI())
-	require.NoError(t, err)
-	query := parsed.Query()
-	query.Set("error", "access_denied")
-	query.Set("error_description", "the user denied the request")
-	query.Set("state", "state-1")
-	parsed.RawQuery = query.Encode()
-	response, err := http.Get(parsed.String())
-	require.NoError(t, err)
-	_ = response.Body.Close()
+			tt.callback.State = "private-state"
+			tt.callback.Issuer = "https://private-issuer.example.com"
+			tt.callback.ErrorDescription = "<script>alert('private-description')</script>"
+			query := url.Values{
+				"code":              {tt.callback.Code},
+				"state":             {tt.callback.State},
+				"iss":               {tt.callback.Issuer},
+				"error":             {tt.callback.Error},
+				"error_description": {tt.callback.ErrorDescription},
+			}
+			response, err := http.Get(listener.RedirectURI() + "?" + query.Encode())
+			require.NoError(t, err)
+			defer func() { _ = response.Body.Close() }()
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, err)
+			page := string(body)
+			assert.Equal(t, http.StatusOK, response.StatusCode)
+			assert.Equal(t, "text/html; charset=utf-8", response.Header.Get("Content-Type"))
+			assert.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+			assert.Equal(t, "no-referrer", response.Header.Get("Referrer-Policy"))
+			assert.Contains(t, response.Header.Get("Content-Security-Policy"), "default-src 'none'")
+			if tt.received {
+				assert.Contains(t, page, "Authorization received")
+				assert.NotContains(t, page, "Sign-in not completed")
+			} else {
+				assert.Contains(t, page, "Sign-in not completed")
+				assert.Contains(t, page, "scope auth login")
+				assert.NotContains(t, page, "Authorization received")
+			}
+			for _, sensitive := range []string{"private-code", "private-state", "private-issuer", "private-description"} {
+				assert.NotContains(t, page, sensitive)
+			}
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	callback, err := listener.Wait(ctx)
-	require.NoError(t, err)
-	assert.Equal(t, "access_denied", callback.Error)
-	assert.Equal(t, "the user denied the request", callback.ErrorDescription)
-	assert.Empty(t, callback.Code)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			callback, err := listener.Wait(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, tt.callback, callback)
+		})
+	}
 }
 
 func TestLoopbackIgnoresOtherPaths(t *testing.T) {
