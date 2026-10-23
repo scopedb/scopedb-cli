@@ -3,22 +3,22 @@
 `scope` is the command-line interface for [ScopeDB](https://www.scopedb.io/).
 
 > [!IMPORTANT]
-> ScopeDB CLI is in public preview. Current releases are release candidates intended for evaluation and may change before the first stable release.
+> ScopeDB CLI is in public preview. Review the release notes before upgrading.
 
 ## Install
 
 ### Prebuilt binaries
 
-Download the release archive for your platform from [GitHub Releases](https://github.com/scopedb/scopedb-cli/releases):
+Download the most recently published release, including release candidates, from [GitHub Releases](https://github.com/scopedb/scopedb-cli/releases). GitHub's `/releases/latest` shortcut excludes prereleases. Choose your platform's archive under **Assets**; `<version>` is the release tag without its leading `v`:
 
-| Platform               | Archive pattern                                  |
-| ---------------------- | ------------------------------------------------ |
-| macOS on Apple silicon | `scope_<version>_darwin_arm64.tar.gz`            |
-| macOS on Intel         | `scope_<version>_darwin_amd64.tar.gz`            |
-| Linux on x86-64        | `scope_<version>_linux_amd64.tar.gz`             |
-| Linux on ARM64         | `scope_<version>_linux_arm64.tar.gz`             |
-| Windows on x86-64      | `scope_<version>_windows_amd64.zip`              |
-| Windows on ARM64       | `scope_<version>_windows_arm64.zip`              |
+| Platform               | Archive pattern                       |
+| ---------------------- | ------------------------------------- |
+| macOS on Apple silicon | `scope_<version>_darwin_arm64.tar.gz`   |
+| macOS on Intel         | `scope_<version>_darwin_amd64.tar.gz`   |
+| Linux on x86-64         | `scope_<version>_linux_amd64.tar.gz`    |
+| Linux on ARM64          | `scope_<version>_linux_arm64.tar.gz`    |
+| Windows on x86-64       | `scope_<version>_windows_amd64.zip`     |
+| Windows on ARM64        | `scope_<version>_windows_arm64.zip`     |
 
 Compare the archive's SHA-256 digest with its entry in `checksums.txt`, extract it, and place `scope` (`scope.exe` on Windows) in a directory on your `PATH`.
 
@@ -40,7 +40,11 @@ With Go 1.27 or newer:
 go install github.com/scopedb/scopedb-cli/cmd/scope@latest
 ```
 
+Go's `@latest` selects the highest release version, or the highest prerelease when no release version exists; it does not follow `main`. To opt into a newer prerelease, download its archive from GitHub Releases or replace `@latest` with its exact tag. Run the same command again to update, and ensure Go's binary directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) is on your `PATH`.
+
 ## Get started
+
+This README and [connection guide](docs/connect.md) follow the selected repository revision; `main` can include unreleased changes. For an installed release, read the README included in its archive or browse the documentation at its matching [release tag](https://github.com/scopedb/scopedb-cli/tags). Run `scope version` to identify your version and `scope --help` to check its commands. Review the [changelog](CHANGELOG.md) for migration steps when upgrading.
 
 Sign in to ScopeDB Cloud and run a query:
 
