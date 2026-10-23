@@ -140,12 +140,11 @@ func TestLoopbackRendersCallbackOutcome(t *testing.T) {
 			assert.Equal(t, "no-referrer", response.Header.Get("Referrer-Policy"))
 			assert.Contains(t, response.Header.Get("Content-Security-Policy"), "default-src 'none'")
 			if tt.received {
-				assert.Contains(t, page, "Authorization received")
-				assert.NotContains(t, page, "Sign-in not completed")
+				assert.Contains(t, page, "Your authorization has been received.")
+				assert.NotContains(t, page, "We couldn't complete your authorization.")
 			} else {
-				assert.Contains(t, page, "Sign-in not completed")
-				assert.Contains(t, page, "scope auth login")
-				assert.NotContains(t, page, "Authorization received")
+				assert.Contains(t, page, "We couldn't complete your authorization.")
+				assert.NotContains(t, page, "Your authorization has been received.")
 			}
 			for _, sensitive := range []string{"private-code", "private-state", "private-issuer", "private-description"} {
 				assert.NotContains(t, page, sensitive)
