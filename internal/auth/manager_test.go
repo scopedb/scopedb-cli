@@ -552,11 +552,7 @@ func TestResolveDataAccessKeepsWorkspaceDuringRefresh(t *testing.T) {
 				done <- err
 			}()
 			<-entered
-			if selection == "" {
-				require.NoError(t, manager.ClearWorkspace(t.Context()))
-			} else {
-				require.NoError(t, manager.SelectWorkspace(t.Context(), selection))
-			}
+			require.NoError(t, manager.SelectWorkspace(t.Context(), selection))
 			close(release)
 			require.NoError(t, <-done)
 			require.Equal(t, []string{"ws-1", "ws-1"}, workspaces)
@@ -787,7 +783,7 @@ func TestRestoreLoginDoesNotReplaceANewerLogin(t *testing.T) {
 	require.Equal(t, "oat_newer", store.saved().AccessToken)
 }
 
-func TestClearWorkspaceDropsSelectionAndDataToken(t *testing.T) {
+func TestSelectWorkspaceClearsSelectionAndDataToken(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	state := loginState(now, now.Add(time.Hour))
 	state.DataToken = "data-token"
@@ -796,7 +792,7 @@ func TestClearWorkspaceDropsSelectionAndDataToken(t *testing.T) {
 	store := &memoryStore{present: true, state: state}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	require.NoError(t, manager.ClearWorkspace(t.Context()))
+	require.NoError(t, manager.SelectWorkspace(t.Context(), ""))
 	require.Empty(t, store.saved().WorkspaceID)
 	require.Empty(t, store.saved().DataToken)
 	require.Empty(t, store.saved().DataTokenWorkspaceID)
@@ -805,28 +801,28 @@ func TestClearWorkspaceDropsSelectionAndDataToken(t *testing.T) {
 	require.Equal(t, 1, store.saves)
 }
 
-func TestClearWorkspaceWithoutSelectionKeepsCredentials(t *testing.T) {
+func TestSelectWorkspaceKeepsEmptySelection(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	state := loginState(now, now.Add(time.Hour))
 	state.WorkspaceID = ""
 	store := &memoryStore{present: true, state: state}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	require.NoError(t, manager.ClearWorkspace(t.Context()))
+	require.NoError(t, manager.SelectWorkspace(t.Context(), ""))
 	require.Zero(t, store.saves)
 }
 
-func TestClearWorkspaceWithoutLogin(t *testing.T) {
+func TestSelectWorkspaceRequiresLogin(t *testing.T) {
 	manager := newManager(t, &memoryStore{}, &fakeControl{}, &fakeOAuth{}, time.Now())
-	require.ErrorIs(t, manager.ClearWorkspace(t.Context()), ErrNotLoggedIn)
+	require.ErrorIs(t, manager.SelectWorkspace(t.Context(), ""), ErrNotLoggedIn)
 }
 
-func TestClearWorkspaceReportsSaveFailure(t *testing.T) {
+func TestSelectWorkspaceReportsSaveFailure(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour)), saveErr: errors.New("disk full")}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	err := manager.ClearWorkspace(t.Context())
-	require.ErrorContains(t, err, "workspace selection could not be cleared")
+	err := manager.SelectWorkspace(t.Context(), "")
+	require.ErrorContains(t, err, "save workspace selection")
 	require.ErrorContains(t, err, "disk full")
 }

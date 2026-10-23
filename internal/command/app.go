@@ -100,20 +100,16 @@ func (r *runtimeContext) oauthClient(ctx context.Context) (*controlplane.OAuth, 
 	return client, nil
 }
 
-type runtimeOAuth struct {
-	runtime *runtimeContext
-}
-
-func (o *runtimeOAuth) RefreshToken(ctx context.Context, refreshToken string) (controlplane.TokenSet, error) {
-	client, err := o.runtime.oauthClient(ctx)
+func (r *runtimeContext) RefreshToken(ctx context.Context, refreshToken string) (controlplane.TokenSet, error) {
+	client, err := r.oauthClient(ctx)
 	if err != nil {
 		return controlplane.TokenSet{}, err
 	}
 	return client.RefreshToken(ctx, refreshToken)
 }
 
-func (o *runtimeOAuth) RevokeToken(ctx context.Context, token string) error {
-	client, err := o.runtime.oauthClient(ctx)
+func (r *runtimeContext) RevokeToken(ctx context.Context, token string) error {
+	client, err := r.oauthClient(ctx)
 	if err != nil {
 		return err
 	}
@@ -224,7 +220,7 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 	runtime.auth = &auth.Manager{
 		ControlURL:  cfg.ControlURL,
 		Control:     control,
-		OAuth:       &runtimeOAuth{runtime: runtime},
+		OAuth:       runtime,
 		Credentials: credentials,
 		LockFile:    paths.LockFile,
 		Now:         a.now,

@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -190,7 +189,7 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 		return loginSelection{}, nil
 	}
 	if workspace, owned := workspaceByID(account.Workspaces, account.SelectedWorkspaceID); account.SelectedWorkspaceID != "" && (!owned || workspace.ScheduledForDeletion()) {
-		if err := runtime.auth.ClearWorkspace(ctx); err != nil {
+		if err := runtime.auth.SelectWorkspace(ctx, ""); err != nil {
 			return loginSelection{}, err
 		}
 		account.SelectedWorkspaceID = ""
@@ -218,13 +217,18 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 		selection.workspace = &workspace
 		selection.kept = true
 	default:
-		available := availableWorkspaces(account.Workspaces)
-		if len(available) > 0 {
-			workspace := available[0]
-			if err := runtime.auth.SelectWorkspace(ctx, workspace.ID); err != nil {
+		for _, workspace := range account.Workspaces {
+			if workspace.ScheduledForDeletion() {
+				continue
+			}
+			if selection.workspace == nil || workspace.ID < selection.workspace.ID {
+				selection.workspace = &workspace
+			}
+		}
+		if selection.workspace != nil {
+			if err := runtime.auth.SelectWorkspace(ctx, selection.workspace.ID); err != nil {
 				return loginSelection{}, err
 			}
-			selection.workspace = &workspace
 		}
 	}
 	if selection.workspace == nil {
@@ -243,17 +247,6 @@ func workspaceSelectionError(err error, requested string) error {
 		cliErr.Hint = fmt.Sprintf("run 'scope workspace use %s'", requested)
 	}
 	return result
-}
-
-func availableWorkspaces(workspaces []controlplane.Workspace) []controlplane.Workspace {
-	available := make([]controlplane.Workspace, 0, len(workspaces))
-	for _, workspace := range workspaces {
-		if !workspace.ScheduledForDeletion() {
-			available = append(available, workspace)
-		}
-	}
-	sort.Slice(available, func(i, j int) bool { return available[i].ID < available[j].ID })
-	return available
 }
 
 func (a *app) renderLoginSelection(selection loginSelection) error {
@@ -532,11 +525,7 @@ func (r *runtimeContext) revokeIssuedLogin(tokens controlplane.TokenSet) {
 	}
 	revokeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client, err := r.oauthClient(revokeCtx)
-	if err != nil {
-		return
-	}
-	_ = client.RevokeToken(revokeCtx, token)
+	_ = r.RevokeToken(revokeCtx, token)
 }
 
 func (a *app) newLogoutCommand() *cobra.Command {
