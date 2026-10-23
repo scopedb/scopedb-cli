@@ -45,7 +45,26 @@ func TestKeyringStoreReplacesInvalidEntry(t *testing.T) {
 func TestKeyringStorePreservesAccessErrors(t *testing.T) {
 	keyring.MockInitWithError(os.ErrPermission)
 	t.Cleanup(keyring.MockInit)
-	_, err := NewKeyringStore().Load("https://control.example.com")
-	require.ErrorIs(t, err, os.ErrPermission)
-	require.NotErrorIs(t, err, ErrInvalidState)
+	store := NewKeyringStore()
+	const controlURL = "https://control.example.com"
+	for _, operation := range []struct {
+		name string
+		run  func() error
+	}{
+		{"read", func() error {
+			_, err := store.Load(controlURL)
+			return err
+		}},
+		{"write", func() error { return store.Save(controlURL, State{}) }},
+		{"delete", func() error { return store.Delete(controlURL) }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			err := operation.run()
+			var keyringErr *KeyringError
+			require.ErrorAs(t, err, &keyringErr)
+			require.ErrorIs(t, err, os.ErrPermission)
+			require.NotErrorIs(t, err, ErrNotFound)
+			require.NotErrorIs(t, err, ErrInvalidState)
+		})
+	}
 }

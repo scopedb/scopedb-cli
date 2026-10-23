@@ -29,6 +29,34 @@ If your account is awaiting approval or has no workspace, follow the instruction
 
 `scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
 
+## Use headless Linux
+
+On Linux, the OS keyring requires a working D-Bus session and a Secret Service provider, such as GNOME Keyring, with an accessible login collection. Servers, SSH sessions, and containers may not have these services available. Device code login lets you approve access from another device, but still needs somewhere to store the login; it does not remove the keyring requirement.
+
+For servers and CI, use a workspace endpoint and API key:
+
+```sh
+export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
+export SCOPEDB_API_KEY="your-api-key"
+scope doctor
+scope query --format json 'SELECT 1 AS ready'
+```
+
+With both variables set, `scope query`, `scope auth status`, and `scope doctor` skip the keyring and do not require `scope auth login`. Setting only one variable fails. Workspace and API key management still require a CLI login.
+
+If you need a CLI login on a host without a usable keyring, explicitly opt in to plaintext storage:
+
+```sh
+unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
+scope auth login --use-device-code --no-browser --insecure-storage
+scope auth status
+scope query 'SELECT 1 AS ready'
+```
+
+Approve the printed device code in a browser on another device. `--use-device-code` selects that authorization flow, and `--no-browser` skips opening a browser on the host. The login credentials are stored unencrypted in `credentials.json` with permissions `0600`. A successful login saves the storage choice in `config.toml` for subsequent commands. On Linux these files default to `$XDG_CONFIG_HOME/scopedb` or `~/.config/scopedb`; `SCOPEDB_CONFIG_DIR` overrides their directory.
+
+The CLI never switches to plaintext storage automatically. To keep using the OS keyring, restore access to the D-Bus session and Secret Service instead.
+
 ## Get application credentials
 
 Show the selected workspace's endpoint and create a key for your application:
@@ -50,7 +78,7 @@ scope doctor --timeout 15s
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-`scope auth status` shows `api_key` mode when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login session and warns when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
+`scope auth status` reports `environment` as the credential source when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login session and warns when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
 
 ```sh
 unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
@@ -84,6 +112,7 @@ If a timed-out query reports that server cancellation could not be confirmed, re
 | -------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Only one connection variable set | Set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or unset both to use your login.                       |
 | Not logged in                    | Run `scope auth login`, or configure both connection variables.                                           |
+| OS keyring unavailable           | See [headless Linux setup](#use-headless-linux) for API key access or explicit plaintext login.           |
 | No workspace selected            | Run `scope workspace list`, then `scope workspace use <id-or-name>`.                                      |
 | Workspace is still provisioning  | Check `scope workspace get` or the Console and retry when the workspace is ready.                         |
 | API key rejected                 | Check that the endpoint and key belong to the same workspace and the key has not expired or been revoked. |
