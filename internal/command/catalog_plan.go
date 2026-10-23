@@ -105,7 +105,7 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 	}
 	client, err := scopedb.NewClient(scopedb.Config{
 		Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient,
-		// requestContext owns the deadline, including when the CLI limit is disabled.
+		// Use the CLI request budget instead of the SDK's default write timeout.
 		WriteTimeout: new(time.Duration),
 	})
 	if err != nil {
@@ -124,7 +124,7 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 			return usageError("plan targets a different connection, workspace, or machine credential; select its connection or generate a new plan")
 		}
 	} else {
-		ctx, cancel := options.requestContext(cmd.Context())
+		ctx, cancel := timeoutContext(cmd.Context(), options.requestTimeout)
 		change, err := mutate(ctx, scopedb.CatalogOptions{DryRun: true})
 		cancel()
 		if err != nil {
@@ -162,7 +162,8 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 	if plan.Destructive && !options.allowDestructive {
 		return usageError("changes may permanently lose data; review the plan and pass --allow-destructive")
 	}
-	ctx, cancel := options.requestContext(cmd.Context())
+	// Time spent reviewing the diff does not consume the commit timeout.
+	ctx, cancel := timeoutContext(cmd.Context(), options.requestTimeout)
 	defer cancel()
 	result, err := mutate(ctx, scopedb.CatalogOptions{
 		AllowDestructive: options.allowDestructive, IfMatch: plan.ETag,

@@ -183,7 +183,7 @@ func (a *app) readCatalogResource(cmd *cobra.Command, list string, options catal
 	}
 	defer client.Close()
 	catalog := resource.resolve(client, names)
-	ctx, cancel := options.requestContext(cmd.Context())
+	ctx, cancel := timeoutContext(cmd.Context(), options.requestTimeout)
 	defer cancel()
 	snapshot, err := catalog.Get(ctx)
 	if err != nil {
@@ -197,14 +197,6 @@ func (a *app) readCatalogResource(cmd *cobra.Command, list string, options catal
 		return writeCatalog(a.out, names, options.format)
 	}
 	return writeCatalog(a.out, snapshot.Definition, options.format)
-}
-
-// Time spent reviewing a diff does not consume either request's timeout.
-func (o catalogOptions) requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	if o.requestTimeout == 0 {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, o.requestTimeout)
 }
 
 func normalizeCatalogError(catalogErr *scopedb.Error) error {

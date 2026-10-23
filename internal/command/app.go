@@ -225,6 +225,14 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	return a.newRuntime(paths, cfg)
 }
 
+// A zero timeout preserves parent cancellation without adding a deadline.
+func timeoutContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout == 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
 func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
 	if prompt != "" {
 		if _, err := fmt.Fprint(a.errOut, prompt); err != nil {

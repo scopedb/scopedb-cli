@@ -15,7 +15,6 @@
 package command
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -64,11 +63,7 @@ func (a *app) newQueryCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 
-			queryContext := cmd.Context()
-			cancel := func() {}
-			if timeout > 0 {
-				queryContext, cancel = context.WithTimeout(queryContext, timeout)
-			}
+			queryContext, cancel := timeoutContext(cmd.Context(), timeout)
 			defer cancel()
 			result, err := a.query.Execute(queryContext, access, statement)
 			if err != nil {
