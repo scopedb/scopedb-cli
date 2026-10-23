@@ -54,7 +54,10 @@ func (a *app) newLoginCommand() *cobra.Command {
 			"from another device, or --no-browser to skip opening a browser automatically in either flow.\n\n" +
 			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
 			"name and ID. Use 'scope workspace use <id-or-name>' to switch afterwards.\n" +
-			"Login does not require an interactive terminal.",
+			"Login does not require an interactive terminal.\n\n" +
+			"Stores credentials in the OS keyring. On Linux this requires a D-Bus session and Secret Service.\n" +
+			"If no keyring is available, use --insecure-storage to explicitly allow an unencrypted 0600 file.\n" +
+			"For queries without a login, set both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY.",
 		Example: "  scope auth login\n  scope auth login --use-device-code --no-browser",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -78,7 +81,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			if _, stored, err := runtime.auth.RenewableLogin(); err != nil {
-				return NormalizeError(clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "existing credentials could not be read", err), "fix credential store access, then retry"))
+				return NormalizeError(clierror.Wrap(clierror.ExitGeneral, "existing credentials could not be read", err))
 			} else if stored {
 				if err := refuseSecondLogin(cmd.Context(), runtime); err != nil {
 					return NormalizeError(err)
@@ -106,7 +109,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			if err := runtime.persistLogin(cmd.Context(), tokens); err != nil {
-				return err
+				return NormalizeError(err)
 			}
 
 			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, workspace)
@@ -506,11 +509,7 @@ func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.T
 		if errors.Is(saveErr, auth.ErrCredentialsUnreadable) {
 			return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but existing credentials could not be read", saveErr)
 		}
-		result := clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", saveErr)
-		if r.config.CredentialStore == config.CredentialStoreKeyring {
-			result.Hint = "fix OS keyring access or rerun with 'scope auth login --insecure-storage'"
-		}
-		return result
+		return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", saveErr)
 	}
 	if err := config.Save(r.paths, r.config); err == nil {
 		return nil
