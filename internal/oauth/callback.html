@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>{{if .}}Authorization received{{else}}Sign-in not completed{{end}} · ScopeDB CLI</title>
+  <title>{{if .}}Authorization received successfully{{else}}Authorization failed{{end}} · ScopeDB CLI</title>
   <link rel="icon" href="data:,">
   <style>
     :root {
@@ -14,6 +14,8 @@
       --text: #181818;
       --muted: #666666;
       --border: #e5e5e5;
+      --success: #18794e;
+      --error: #b42318;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -23,6 +25,8 @@
         --text: #f0f0f0;
         --muted: #a3a3a3;
         --border: #333333;
+        --success: #75d6a1;
+        --error: #ffb4ab;
       }
     }
 
@@ -71,6 +75,9 @@
       line-height: 1.25;
     }
 
+    .success { color: var(--success); }
+    .error { color: var(--error); }
+
     p {
       margin: 0;
       color: var(--muted);
@@ -89,8 +96,8 @@
       <span>ScopeDB</span>
     </div>
     <section class="card" aria-labelledby="title">
-      <h1 id="title">{{if .}}Authorization received{{else}}Sign-in not completed{{end}}</h1>
-      <p>You can close this window and return to your terminal.</p>
+      <h1 id="title" class="{{if .}}success{{else}}error{{end}}">{{if .}}Authorization received successfully{{else}}Authorization failed{{end}}</h1>
+      <p>{{if .}}You can now close this window and return to your terminal.{{else}}Return to your terminal for error details and try again. You can close this window.{{end}}</p>
     </section>
   </main>
 </body>

@@ -6,7 +6,7 @@ All significant changes to this project will be documented in this file.
 
 ### Improvements
 
-* `scope auth login` shows a compact browser callback page with the ScopeDB logo, an authorization or failure message, and guidance to return to the terminal, in light and dark appearances.
+* `scope auth login` shows a compact browser callback page with the ScopeDB logo, explicit success or failure messages distinguished by color, and guidance to return to the terminal, in light and dark appearances.
 
 ## v0.1.0 (2026-10-23)
 
