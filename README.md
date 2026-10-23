@@ -52,7 +52,13 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-`scope auth login` prompts for an email address and verification code, then stores the session in the operating system keyring. A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status or create your first workspace in the Console. Once a workspace is available, select it without logging in again:
+`scope auth login` opens your browser, asks you to approve the request in the ScopeDB Console, and stores the login in the operating system keyring. Upgrading from an older CLI asks you to log in again. If the browser does not open, open the printed URL on the same device. For approval from another device, such as when using SSH or a container, run `scope auth login --use-device-code`. Add `--no-browser` to either flow to skip opening the browser automatically. A browser-launch failure leaves the selected flow waiting for approval.
+
+Login does not require an interactive terminal. Authorization instructions and progress go to stderr; `--format text|json` selects the result format on stdout. For unattended access, use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; `scope auth status --format json` and `scope workspace list --format json` report machine-readable state.
+
+Pass `--workspace <id-or-name>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account still owns it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. The text and JSON results report the selected workspace name and ID. Use `scope workspace use <id-or-name>` to switch afterwards.
+
+A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status and create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
 ```sh
 scope workspace list
@@ -60,22 +66,20 @@ scope workspace use <id-or-name>
 scope auth status
 ```
 
-`scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
-
-The verification code is hidden when entered at a terminal. For piped input, provide `--email` and send the code on stdin; passing `--code` exposes it in process arguments.
+The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
 
 `scope console [page]` provides shortcuts to Console pages: `home` (default), `query`, `data`, `keys`, and `connect`. For example, `scope console query` prints the query page URL; add `--open` to also open it in your browser.
 
 ## Query output
 
-Queries can be provided inline, from a file with `--file` or `-f`, or through stdin. Use `--format` to select the output format. Results can be rendered as a table, JSON, JSON Lines, or CSV.
+Queries can be provided inline, from a file with `--file` or `-f`, or through stdin. Results go to stdout; use `--format` to select a table, JSON, JSON Lines, or CSV. Use shell redirection to save results to a file.
 
 ```sh
 scope query -f report.scopeql --format json
-scope query 'FROM system.tables LIMIT 10' --format csv --output tables.csv
+scope query 'FROM system.tables LIMIT 10' --format csv > tables.csv
 ```
 
-Files created with `scope query --output` have permissions `0600` on Unix-like systems.
+The shell controls file replacement and permissions. Redirecting with `>` can truncate an existing file before the query runs; write to a temporary file and move it after success if you need to preserve the previous result on failure.
 
 Queries use the ScopeDB 0.6 statement protocol. `--timeout` limits client-side waiting (default: five minutes) and attempts server cancellation when it expires. `--timeout 0` disables this client limit; the server's default one-hour elapsed-time limit still applies.
 
@@ -114,7 +118,7 @@ For SDK setup, get the endpoint with `scope workspace get` and create an applica
 
 ## Development
 
-Development tools are managed with [mise](https://mise.jdx.dev/):
+Development tools are managed with [mise](https://mise.jdx.dev/). Tasks use Bash (Git Bash on Windows):
 
 ```sh
 mise install

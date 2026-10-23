@@ -28,17 +28,17 @@ func TestKeyringStoreReplacesInvalidEntry(t *testing.T) {
 	store := NewKeyringStore()
 	const controlURL = "https://control.example.com"
 	for _, encoded := range []string{
-		`{"session_token":"private-secret"`,
+		`{"access_token":"private-secret"`,
 		`{"data_token_expires_at":"private-secret"}`,
 	} {
 		require.NoError(t, keyring.Set(keyringService, profileKey(controlURL), encoded))
 		_, err := store.Load(controlURL)
 		require.ErrorIs(t, err, ErrInvalidState)
 		require.NotContains(t, err.Error(), "private-secret")
-		require.NoError(t, store.Save(controlURL, State{SessionToken: "new-session"}))
+		require.NoError(t, store.Save(controlURL, State{AccessToken: "oat_new", RefreshToken: "ort_new"}))
 		state, err := store.Load(controlURL)
 		require.NoError(t, err)
-		require.Equal(t, "new-session", state.SessionToken)
+		require.Equal(t, "oat_new", state.AccessToken)
 	}
 }
 

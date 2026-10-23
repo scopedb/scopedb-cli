@@ -16,30 +16,23 @@ package controlplane
 
 import "time"
 
-type LoginBeginResponse struct {
-	LoginChallenge string `json:"login_challenge"`
-}
-
-type LoginResponse struct {
-	Token       string `json:"token"`
-	WorkspaceID string `json:"workspace_id"`
-}
-
-type Session struct {
-	User               User        `json:"user"`
-	Workspaces         []Workspace `json:"workspaces"`
-	CurrentWorkspaceID string      `json:"current_workspace_id"`
-}
-
 type User struct {
-	Email     string `json:"email"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"created_at"`
+	ID           string `json:"id"`
+	Email        string `json:"email"`
+	Status       string `json:"status"`
+	Introduction string `json:"introduction"`
+	CreatedAt    string `json:"created_at"`
 }
 
+// Workspace summarises an owned workspace. Workspaces scheduled for deletion stay in the list and
+// keep their routes unavailable until they are restored.
 type Workspace struct {
-	ID          string  `json:"id"`
-	DisplayName *string `json:"display_name"`
+	ID                     string     `json:"id"`
+	DisplayName            *string    `json:"display_name"`
+	Provider               string     `json:"provider"`
+	Region                 string     `json:"region"`
+	ProvisioningStatus     string     `json:"provisioning_status"`
+	ScheduledForDeletionAt *time.Time `json:"scheduled_for_deletion_at"`
 }
 
 func (w Workspace) Name() string {
@@ -47,6 +40,14 @@ func (w Workspace) Name() string {
 		return *w.DisplayName
 	}
 	return w.ID
+}
+
+func (w Workspace) ScheduledForDeletion() bool {
+	return w.ScheduledForDeletionAt != nil
+}
+
+type WorkspacesResponse struct {
+	Workspaces []Workspace `json:"workspaces"`
 }
 
 type WorkspaceDetails struct {
