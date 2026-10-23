@@ -144,7 +144,6 @@ func TestLoopbackRendersCallbackOutcome(t *testing.T) {
 				assert.NotContains(t, page, "Sign-in not completed")
 			} else {
 				assert.Contains(t, page, "Sign-in not completed")
-				assert.Contains(t, page, "scope auth login")
 				assert.NotContains(t, page, "Authorization received")
 			}
 			for _, sensitive := range []string{"private-code", "private-state", "private-issuer", "private-description"} {

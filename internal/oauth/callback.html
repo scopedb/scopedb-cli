@@ -14,10 +14,6 @@
       --text: #181818;
       --muted: #666666;
       --border: #e5e5e5;
-      --success: #18794e;
-      --success-background: #edf8f1;
-      --danger: #b42318;
-      --danger-background: #fff1ef;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -27,10 +23,6 @@
         --text: #f0f0f0;
         --muted: #a3a3a3;
         --border: #333333;
-        --success: #75d6a1;
-        --success-background: #18372a;
-        --danger: #ffb4ab;
-        --danger-background: #3d2321;
       }
     }
 
@@ -56,81 +48,33 @@
       justify-content: center;
       align-items: center;
       gap: 10px;
-      margin-bottom: 28px;
+      margin-bottom: 24px;
       font-size: 22px;
       font-weight: 650;
       letter-spacing: -0.6px;
     }
 
     .card {
+      padding: 24px;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      box-shadow: 0 4px 24px rgb(0 0 0 / 3%);
-    }
-
-    .message {
-      padding: 36px 32px 32px;
+      border-radius: 6px;
+      box-shadow: 0 2px 4px rgb(0 0 0 / 3%);
       text-align: center;
-    }
-
-    .eyebrow {
-      margin: 0 0 24px;
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 600;
-      letter-spacing: 1.2px;
-      text-transform: uppercase;
-    }
-
-    .status-icon {
-      display: grid;
-      place-items: center;
-      width: 56px;
-      height: 56px;
-      margin: 0 auto 20px;
-      border-radius: 50%;
-      color: var(--success);
-      background: var(--success-background);
-    }
-
-    .status-icon.error {
-      color: var(--danger);
-      background: var(--danger-background);
     }
 
     h1 {
       margin: 0 0 12px;
-      font-size: clamp(24px, 5vw, 28px);
+      font-size: 20px;
       font-weight: 600;
-      letter-spacing: -0.7px;
+      letter-spacing: -0.3px;
       line-height: 1.25;
     }
 
-    .description {
-      max-width: 24rem;
-      margin: 0 auto;
+    p {
+      margin: 0;
       color: var(--muted);
       font-size: 15px;
-      line-height: 1.65;
-      text-wrap: pretty;
-    }
-
-    .next-step {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-      padding: 22px 32px;
-      border-top: 1px solid var(--border);
-    }
-
-    .next-step svg { flex-shrink: 0; color: var(--muted); }
-    .next-step h2 { margin: 0 0 3px; font-size: 14px; font-weight: 600; }
-    .next-step p { margin: 0; color: var(--muted); font-size: 13px; }
-
-    @media (max-width: 400px) {
-      .message { padding: 28px 20px; }
-      .next-step { padding: 20px; }
     }
   </style>
 </head>
@@ -145,26 +89,8 @@
       <span>ScopeDB</span>
     </div>
     <section class="card" aria-labelledby="title">
-      <div class="message">
-        <p class="eyebrow">CLI sign-in</p>
-        <div class="status-icon{{if not .}} error{{end}}">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-            {{if .}}<path d="m5 12 4 4L19 6"/>{{else}}<path d="m7 7 10 10M17 7 7 17"/>{{end}}
-          </svg>
-        </div>
-        <h1 id="title">{{if .}}Authorization received{{else}}Sign-in not completed{{end}}</h1>
-        <p class="description">{{if .}}Scope CLI will finish signing you in and show the result in your terminal.{{else}}Return to your terminal for details. To try again, run <code>scope auth login</code>.{{end}}</p>
-      </div>
-      <div class="next-step">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-          <rect x="2" y="4" width="20" height="16" rx="3"/>
-          <path d="m6 9 3 3-3 3m7 0h4"/>
-        </svg>
-        <div>
-          <h2>Continue in your terminal</h2>
-          <p>You can close this window.</p>
-        </div>
-      </div>
+      <h1 id="title">{{if .}}Authorization received{{else}}Sign-in not completed{{end}}</h1>
+      <p>You can close this window and return to your terminal.</p>
     </section>
   </main>
 </body>
