@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,7 +44,7 @@ func installBrowserLauncher(t *testing.T, script string) {
 }
 
 func TestLoginContinuesWhenBrowserLauncherExitsUnsuccessfully(t *testing.T) {
-	fake, store := setupCLITest(t)
+	fake, _ := setupCLITest(t)
 	installBrowserLauncher(t, "exit 17\n")
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
@@ -70,7 +71,7 @@ func TestLoginContinuesWhenBrowserLauncherExitsUnsuccessfully(t *testing.T) {
 	require.Len(t, fake.TokenForms, 1)
 	require.Equal(t, "authorization_code", fake.TokenForms[0].Get("grant_type"))
 	require.Zero(t, fake.DevicePolls)
-	state, err := store.Load(fake.URL)
+	state, err := credential.NewKeyringStore().Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, fake.RefreshToken, state.RefreshToken)
 }

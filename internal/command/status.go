@@ -22,6 +22,7 @@ import (
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/scopedb/scopedb-cli/internal/auth"
+	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -30,6 +31,7 @@ type statusView struct {
 	ControlURL            string `json:"control_url,omitempty"`
 	Email                 string `json:"email,omitempty"`
 	CredentialSource      string `json:"credential_source"`
+	CredentialFile        string `json:"credential_file,omitempty"`
 	UserStatus            string `json:"user_status,omitempty"`
 	RefreshTokenExpiresAt string `json:"refresh_token_expires_at,omitempty"`
 	WorkspaceID           string `json:"workspace_id,omitempty"`
@@ -83,10 +85,13 @@ func (a *app) newStatusCommand() *cobra.Command {
 			view := statusView{
 				ControlURL:            runtime.config.ControlURL,
 				Email:                 account.User.Email,
-				CredentialSource:      runtime.config.CredentialStore,
+				CredentialSource:      state.Source,
 				UserStatus:            account.User.Status,
 				RefreshTokenExpiresAt: refreshTokenExpiry(state.RefreshTokenExpiresAt),
 				WorkspaceID:           account.SelectedWorkspaceID,
+			}
+			if state.Source == credential.SourcePlaintext {
+				view.CredentialFile = runtime.paths.CredentialsFile
 			}
 			if account.SelectedWorkspaceID != "" {
 				details, err := runtime.control.GetWorkspace(cmd.Context(), state.AccessToken, account.SelectedWorkspaceID)
@@ -118,8 +123,11 @@ func renderStatus(out io.Writer, format string, view statusView) error {
 		return writeJSON(out, view)
 	}
 	t := output.NewTable("FIELD", "VALUE")
+	t.AppendRow(table.Row{"Credential source", view.CredentialSource})
+	if view.CredentialFile != "" {
+		t.AppendRow(table.Row{"Credential file", view.CredentialFile})
+	}
 	t.AppendRows([]table.Row{
-		{"Credential source", view.CredentialSource},
 		{"Email", emptyDash(view.Email)},
 		{"User status", emptyDash(view.UserStatus)},
 		{"Refresh token expires", emptyDash(view.RefreshTokenExpiresAt)},

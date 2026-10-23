@@ -55,8 +55,9 @@ func (a *app) newLoginCommand() *cobra.Command {
 			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
 			"name and ID. Use 'scope workspace use <id-or-name>' to switch afterwards.\n" +
 			"Login does not require an interactive terminal.\n\n" +
-			"Stores credentials in the OS keyring. On Linux this requires a D-Bus session and Secret Service.\n" +
-			"If no keyring is available, use --insecure-storage to explicitly allow an unencrypted 0600 file.\n" +
+			"Prefers the OS keyring, with a warning and plaintext fallback if storage fails.\n" +
+			"On Linux, keyring access requires a D-Bus session and Secret Service.\n" +
+			"--insecure-storage chooses an unencrypted file for this login only.\n" +
 			"For queries without a login, set both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY.",
 		Example: "  scope auth login\n  scope auth login --use-device-code --no-browser",
 		Args:    cobra.NoArgs,
@@ -68,18 +69,11 @@ func (a *app) newLoginCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-			if insecureStorage {
-				cfg.CredentialStore = config.CredentialStorePlaintext
-			}
-			if cfg.CredentialStore == config.CredentialStorePlaintext {
-				if _, err := fmt.Fprintln(a.errOut, "Warning: credentials will be stored unencrypted in a permission-restricted file."); err != nil {
-					return NormalizeError(err)
-				}
-			}
 			runtime, err := a.newRuntime(paths, cfg)
 			if err != nil {
 				return NormalizeError(err)
 			}
+			runtime.credentials.InsecureStorage = insecureStorage
 			if _, stored, err := runtime.auth.RenewableLogin(); err != nil {
 				return NormalizeError(clierror.Wrap(clierror.ExitGeneral, "existing credentials could not be read", err))
 			} else if stored {
@@ -134,7 +128,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace; defaults to the first available workspace by ID")
 	command.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open the browser automatically")
 	command.Flags().BoolVar(&useDeviceCode, "use-device-code", false, "use a device code to approve login from any device")
-	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a 0600 file")
+	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store this login's credentials unencrypted in a file")
 	return command
 }
 

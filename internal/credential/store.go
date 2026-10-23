@@ -28,6 +28,11 @@ import (
 // invalid rather than migrated.
 const currentStateVersion = 2
 
+const (
+	SourceKeyring   = "keyring"
+	SourcePlaintext = "plaintext"
+)
+
 var ErrNotFound = errors.New("credentials not found")
 
 // ErrInvalidState identifies an unusable profile that Save can replace. It does
@@ -35,6 +40,12 @@ var ErrNotFound = errors.New("credentials not found")
 var ErrInvalidState = errors.New("stored credential state is invalid")
 
 type State struct {
+	// Source is resolved on load, never persisted. Updates keep this destination;
+	// a new login has no source and chooses its destination independently.
+	Source string `json:"-"`
+	// Cleared suppresses an inaccessible keyring entry after local logout. A
+	// plaintext tombstone contains no tokens and is replaced by the next login.
+	Cleared               bool      `json:"cleared,omitempty"`
 	Version               int       `json:"version"`
 	ControlURL            string    `json:"control_url"`
 	AccessToken           string    `json:"access_token"`
@@ -54,13 +65,12 @@ type Store interface {
 	Delete(controlURL string) error
 }
 
-// New returns the configured credential backend. Plaintext storage must be an
-// explicit user choice; there is no automatic downgrade from the OS keyring.
+// New returns one credential backend without accessing it.
 func New(kind string, paths config.Paths) (Store, error) {
 	switch kind {
-	case config.CredentialStoreKeyring:
+	case SourceKeyring:
 		return NewKeyringStore(), nil
-	case config.CredentialStorePlaintext:
+	case SourcePlaintext:
 		return NewPlaintextStore(paths.CredentialsFile), nil
 	default:
 		return nil, fmt.Errorf("unsupported credential store %q", kind)
@@ -79,6 +89,9 @@ func validate(controlURL string, state State) error {
 	}
 	if state.ControlURL != controlURL {
 		return fmt.Errorf("%w: credential origin mismatch", ErrInvalidState)
+	}
+	if state.Cleared && state.AccessToken == "" && state.RefreshToken == "" && state.DataToken == "" {
+		return nil
 	}
 	if state.AccessToken == "" {
 		return fmt.Errorf("%w: access token is missing", ErrInvalidState)

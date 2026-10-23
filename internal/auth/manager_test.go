@@ -66,6 +66,10 @@ func (s *memoryStore) Save(_ string, state credential.State) error {
 	return nil
 }
 
+func (s *memoryStore) Replace(origin string, state credential.State) error {
+	return s.Save(origin, state)
+}
+
 func (s *memoryStore) Delete(string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -189,7 +193,7 @@ func loginState(now time.Time, accessExpiry time.Time) credential.State {
 	}
 }
 
-func newManager(t *testing.T, store credential.Store, control ControlPlane, oauth OAuthClient, now time.Time) *Manager {
+func newManager(t *testing.T, store CredentialStore, control ControlPlane, oauth OAuthClient, now time.Time) *Manager {
 	return &Manager{
 		ControlURL:  "https://control.example.com",
 		Control:     control,

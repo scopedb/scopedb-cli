@@ -6,6 +6,7 @@ All significant changes to this project will be documented in this file.
 
 ### Breaking changes
 
+* `credential_store` in `config.toml` and `SCOPEDB_CREDENTIAL_STORE` no longer select a storage backend. Existing credentials are discovered automatically; use `scope auth login --insecure-storage` to choose plaintext for a new login only.
 * `scope query` and the query check in `scope doctor` require ScopeDB 0.6.0 or later. Upgrade the server before using these commands with this CLI version.
 * `scope auth login` approves a login in the ScopeDB Console instead of requesting an email verification code. `--email`, `--code`, and the interactive code prompt are gone, and the login no longer stores a browser session. For unattended access use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; `scope auth login --format json` reports the signed-in account and selected workspace.
 * `scope workspace use` stores the workspace locally for the current login instead of rotating a credential, so it no longer changes the workspace of another machine or a Console session. `scope auth status` still reports the selected workspace.
@@ -36,13 +37,13 @@ All significant changes to this project will be documented in this file.
 * `scope doctor` now verifies query access for a logged-in workspace, reporting provisioning, token exchange, and query failures that previously went unchecked.
 * `scope doctor` uses `/livez` for the control-plane check, so it continues to work after the legacy `/healthz` endpoint is removed.
 * Query timeout and Ctrl+C errors retain the statement ID and distinguish confirmed cancellation, completed statements, server failures, and unconfirmed outcomes. Completed statements include guidance to retrieve the result instead of repeating side effects; server failures preserve their original reason. Timeout still exits with code 5 and Ctrl+C with code 130. Ctrl+C also stops waiting for query input from stdin and stays quiet when no statement ID was received.
-* `scope auth login` no longer saves endpoint and credential-store settings before authentication succeeds; if the final configuration write fails, it revokes the new login and restores the previous valid credentials.
+* `scope auth login` no longer saves endpoint settings before authentication succeeds; if the final configuration write fails, it revokes the new login and restores the previous valid credentials.
 * `scope workspace list` no longer prints a "no workspace is selected" notice pointing back at itself when the account has workspaces to choose from; it now only reports setup guidance when there is nothing to list.
 
 ### Improvements
 
 * `scope query` waits without an additional client-side time limit by default. Use `--timeout 5m` to retain the previous limit, or `--timeout 0` to disable it; server and network timeouts still apply.
-* When the OS keyring is unavailable, CLI login, queries, and `scope doctor` explain how to use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` for queries or explicitly opt in to plaintext login storage with `scope auth login --insecure-storage`.
+* New logins prefer the OS keyring and automatically fall back to plaintext with a warning when keyring storage fails. Queries, refresh, and logout discover the existing login; refresh keeps its storage location. Switching stores clears old copies, and logout prevents inaccessible stale keyring entries from reappearing. `scope auth status` shows the actual credential source and, for plaintext, its file path.
 * Report the underlying cause when the CLI renders an error, in the terminal output and in `scope doctor` details, so a failure such as a credential store problem explains itself.
 * A login that ScopeDB rejects, expires, or revokes is removed from the credential store after a failed refresh, and the next command asks you to run `scope auth login` instead of failing with an opaque credential error.
 * `scope workspace use` identifies the selected login workspace and warns when environment credentials override data commands or form an incomplete pair.

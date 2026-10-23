@@ -29,9 +29,6 @@ import (
 const (
 	DefaultControlURL = "https://control.scopedb.cloud"
 	DefaultConsoleURL = "https://console.scopedb.cloud"
-
-	CredentialStoreKeyring   = "keyring"
-	CredentialStorePlaintext = "plaintext"
 )
 
 // Paths contains all local files owned by the CLI.
@@ -44,9 +41,8 @@ type Paths struct {
 
 // Config contains non-secret user configuration.
 type Config struct {
-	ControlURL      string `toml:"control_url,omitempty"`
-	ConsoleURL      string `toml:"console_url,omitempty"`
-	CredentialStore string `toml:"credential_store,omitempty"`
+	ControlURL string `toml:"control_url,omitempty"`
+	ConsoleURL string `toml:"console_url,omitempty"`
 }
 
 // Overrides contains explicit command-line overrides. Empty fields are ignored.
@@ -81,9 +77,8 @@ func ResolvePaths() (Paths, error) {
 // environment, and explicit command-line overrides.
 func Load(paths Paths, overrides Overrides) (Config, error) {
 	cfg := Config{
-		ControlURL:      DefaultControlURL,
-		ConsoleURL:      DefaultConsoleURL,
-		CredentialStore: CredentialStoreKeyring,
+		ControlURL: DefaultControlURL,
+		ConsoleURL: DefaultConsoleURL,
 	}
 
 	data, err := os.ReadFile(paths.Config)
@@ -114,9 +109,6 @@ func applyEnv(cfg *Config) {
 	if value := strings.TrimSpace(os.Getenv("SCOPEDB_CONSOLE_URL")); value != "" {
 		cfg.ConsoleURL = value
 	}
-	if value := strings.TrimSpace(os.Getenv("SCOPEDB_CREDENTIAL_STORE")); value != "" {
-		cfg.CredentialStore = value
-	}
 }
 
 func validate(cfg *Config) error {
@@ -126,11 +118,6 @@ func validate(cfg *Config) error {
 	}
 	if cfg.ConsoleURL, err = normalizeBaseURL(cfg.ConsoleURL); err != nil {
 		return fmt.Errorf("invalid console URL: %w", err)
-	}
-	switch cfg.CredentialStore {
-	case CredentialStoreKeyring, CredentialStorePlaintext:
-	default:
-		return fmt.Errorf("unsupported credential store %q", cfg.CredentialStore)
 	}
 	return nil
 }

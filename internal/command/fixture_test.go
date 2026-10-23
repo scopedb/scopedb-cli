@@ -33,6 +33,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	keyring "github.com/zalando/go-keyring"
 )
 
 type fakeControlPlane struct {
@@ -347,7 +348,8 @@ func setupCLITest(t *testing.T) (*fakeControlPlane, *credential.PlaintextStore) 
 	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 	t.Setenv("SCOPEDB_CONTROL_URL", fake.URL)
 	t.Setenv("SCOPEDB_CONSOLE_URL", "")
-	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "plaintext")
+	keyring.MockInit()
+	t.Cleanup(keyring.MockInit)
 	paths, err := config.ResolvePaths()
 	require.NoError(t, err)
 	return fake, credential.NewPlaintextStore(paths.CredentialsFile)

@@ -30,7 +30,7 @@ type plaintextDocument struct {
 	Profiles map[string]State `json:"profiles"`
 }
 
-// PlaintextStore is an explicit fallback for hosts without a usable keyring.
+// PlaintextStore is a fallback for hosts without a usable keyring.
 // The file is permission-restricted but is not encrypted.
 type PlaintextStore struct {
 	path string
