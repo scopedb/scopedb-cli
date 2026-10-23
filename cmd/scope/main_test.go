@@ -29,7 +29,7 @@ import (
 )
 
 func TestInterruptedInputExitsQuietly(t *testing.T) {
-	for _, args := range []string{"query", "query --file -", "api-key revoke automation"} {
+	for _, args := range []string{"query", "query --file -", "api-key revoke automation", "catalog plan -f -", "catalog apply -f -", "catalog apply --plan -"} {
 		t.Run(args, func(t *testing.T) {
 			reader, writer := io.Pipe()
 			defer func() { _ = reader.Close() }()
@@ -160,3 +160,31 @@ func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestInterruptedCatalogWriteReportsUnknownOutcome(t *testing.T) {
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var out, diagnostics bytes.Buffer
+	writes := 0
+	code := execute(ctx, command.Dependencies{
+		In: strings.NewReader("databases: []\n"), Out: &out, ErrOut: &diagnostics,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Query().Get("dry_run") == "true" {
+				return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}},
+					Body: io.NopCloser(strings.NewReader(`{"before":{"databases":[]},"after":{"databases":[]},"destructive":false}`)), Request: r}, nil
+			}
+			writes++
+			cancel()
+			return nil, ctx.Err()
+		})},
+	}, []string{"catalog", "apply", "-f", "-", "--yes"})
+	require.Equal(t, clierror.ExitInterrupted, code)
+	require.Equal(t, 1, writes)
+	require.Empty(t, out.String())
+	require.Contains(t, diagnostics.String(), "catalog_commit_outcome_unknown")
+	require.Contains(t, diagnostics.String(), "read the catalog and plan again before retrying")
+	require.NotContains(t, diagnostics.String(), "fixture-secret")
+}

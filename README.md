@@ -85,6 +85,49 @@ The shell controls file replacement and permissions. Redirecting with `>` can tr
 
 Once a statement ID has been received, timeout and Ctrl+C diagnostics include it and distinguish confirmed cancellation, an already completed statement, a server failure, and an unconfirmed outcome. The command keeps its timeout or interrupt exit code and writes no query results. If the statement already completed, retrieve its result using the ID instead of rerunning a statement with side effects.
 
+## Catalog
+
+Catalog commands require ScopeDB 0.6.0 or later. `get`, `plan`, and `apply` default to the entire tenant. Select one resource with `--database DB`, `--schema DB.SCHEMA`, `--table DB.SCHEMA.TABLE`, or `--view DB.SCHEMA.VIEW`. These scope flags are mutually exclusive and require fully qualified names. Bare names are case insensitive; use backticks to preserve case or include special characters, for example ``'scopedb.public.`Events.Daily`'``.
+
+Browse resource names, then export the definition to edit:
+
+```sh
+scope catalog list databases
+scope catalog list schemas --database scopedb
+scope catalog list tables --schema scopedb.public
+scope catalog get --table scopedb.public.events > events.yaml
+# Edit events.yaml.
+scope catalog apply --table scopedb.public.events -f events.yaml
+```
+
+`list` supports databases, schemas, tables, and views. Limit schemas with `--database`; limit tables or views with `--database` or `--schema`. Returned names are fully qualified and can be passed to `get`.
+
+A definition replaces the complete selected resource: omitted objects and fields are cleared. Start from `get` when editing an existing resource. `apply -f` displays a YAML diff on stderr and asks for confirmation, defaulting to no. Confirm with `y` or `yes`; changes that may permanently lose data display a warning first. Automation requires `--yes` and additionally `--allow-destructive` to permit data loss. Input files accept YAML or JSON, and `-f -` reads stdin; when stdin carries the definition, pass `--yes` or use a saved plan.
+
+Save a plan for review and apply it later:
+
+```sh
+scope catalog plan --table scopedb.public.events -f events.yaml > plan.yaml
+scope catalog apply --plan plan.yaml
+scope catalog apply --table scopedb.public.events -f events.yaml --yes --format json > applied.json
+```
+
+`plan` writes the plan to stdout and the diff to stderr. A plan contains the original request, normalized before/after definitions, a `destructive` risk flag, connection identity, and catalog version. Machine-authenticated plans bind to the API key through a hash without including the key itself. Plans can contain custom storage credentials from the source definition; protect them like the source configuration.
+
+`apply --plan` submits the saved request without another preview or prompt; destructive plans require `--allow-destructive`. If the catalog or connection has changed, apply fails. Regenerate and review the plan after editing its source or changing the target. `--plan -` reads a saved plan from stdin.
+
+```sh
+scope catalog drop --table scopedb.public.events
+scope catalog drop --table scopedb.public.events --yes --allow-destructive
+scope catalog drop --all --yes --allow-destructive
+```
+
+`drop` requires a resource scope or `--all` to clear the tenant's complete user catalog. It previews the deletion and uses the same confirmation rules as apply. Data loss risks include removing tables or physical columns, shortening retention, and changing deduplication on existing tables; the server checks each request independently.
+
+All commands write structured results to stdout, using YAML by default or JSON with `--format json`. Apply and drop return the actual before/after definitions and `destructive` flag. Diffs, warnings, prompts, and progress go to stderr. Use shell redirection to save results; the shell controls file replacement and permissions.
+
+`--timeout` sets a positive per-request duration, defaulting to five minutes. Preview and commit each receive the full budget; time spent reviewing a diff does not consume it. A timeout or interrupted connection during commit can leave the outcome unknown. The CLI never automatically retries a Catalog write. If a write succeeds but reporting its result fails, the error says it was applied. Read the catalog before deciding whether to submit another change.
+
 ## JSON output
 
 Business commands support `--format json` for scripts while keeping their usual human-readable output by default. Action commands return an object describing the result; `scope auth logout` reports `changed: true` when it clears an existing login and `changed: false` when already logged out.

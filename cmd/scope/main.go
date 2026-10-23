@@ -51,7 +51,9 @@ func execute(ctx context.Context, deps command.Dependencies, args []string) int 
 	}
 	code := clierror.ExitCode(err)
 	var interrupted *dataplane.InterruptedError
-	if code == clierror.ExitInterrupted && (!errors.As(err, &interrupted) || interrupted.StatementID == "") {
+	var failure *clierror.Error
+	hasHint := errors.As(err, &failure) && failure.Hint != ""
+	if code == clierror.ExitInterrupted && !hasHint && (!errors.As(err, &interrupted) || interrupted.StatementID == "") {
 		_, _ = fmt.Fprintln(root.ErrOrStderr())
 	} else {
 		_, _ = fmt.Fprint(root.ErrOrStderr(), clierror.Render(err))

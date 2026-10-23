@@ -312,6 +312,10 @@ func NormalizeError(err error) error {
 	if errors.As(err, &ready) {
 		return err
 	}
+	var catalogErr *scopedb.Error
+	if errors.As(err, &catalogErr) && catalogErr.Kind == scopedb.ErrorKindCatalogFailed {
+		return normalizeCatalogError(catalogErr)
+	}
 	var interrupted *dataplane.InterruptedError
 	if errors.As(err, &interrupted) {
 		code := clierror.ExitInterrupted
