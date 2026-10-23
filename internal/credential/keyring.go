@@ -24,6 +24,18 @@ import (
 
 const keyringService = "io.scopedb.scope"
 
+// KeyringError reports an OS keyring access failure, excluding missing or invalid entries.
+type KeyringError struct {
+	Op  string
+	Err error
+}
+
+func (e *KeyringError) Error() string {
+	return fmt.Sprintf("cannot %s OS keyring credentials: %s", e.Op, e.Err)
+}
+
+func (e *KeyringError) Unwrap() error { return e.Err }
+
 // KeyringStore persists credentials in the operating system's secret store.
 type KeyringStore struct{}
 
@@ -35,7 +47,7 @@ func (s *KeyringStore) Load(controlURL string) (State, error) {
 		return State{}, ErrNotFound
 	}
 	if err != nil {
-		return State{}, fmt.Errorf("read credentials from OS keyring: %w", err)
+		return State{}, &KeyringError{Op: "read", Err: err}
 	}
 	var state State
 	if err := json.Unmarshal([]byte(encoded), &state); err != nil {
@@ -54,7 +66,7 @@ func (s *KeyringStore) Save(controlURL string, state State) error {
 		return fmt.Errorf("encode credentials: %w", err)
 	}
 	if err := keyring.Set(keyringService, profileKey(controlURL), string(encoded)); err != nil {
-		return fmt.Errorf("write credentials to OS keyring: %w", err)
+		return &KeyringError{Op: "write", Err: err}
 	}
 	return nil
 }
@@ -65,7 +77,7 @@ func (s *KeyringStore) Delete(controlURL string) error {
 		return ErrNotFound
 	}
 	if err != nil {
-		return fmt.Errorf("delete credentials from OS keyring: %w", err)
+		return &KeyringError{Op: "delete", Err: err}
 	}
 	return nil
 }

@@ -93,7 +93,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login' or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY"})
 				} else if loadErr != nil {
 					report.OK = false
-					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: loadErr.Error()})
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(loadErr))})
 				} else {
 					accountCtx, accountCancel := checkContext(cmd.Context(), timeout)
 					account, accountErr := runtime.auth.Account(accountCtx)

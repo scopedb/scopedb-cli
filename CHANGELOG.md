@@ -42,6 +42,7 @@ All significant changes to this project will be documented in this file.
 ### Improvements
 
 * `scope query` waits without an additional client-side time limit by default. Use `--timeout 5m` to retain the previous limit, or `--timeout 0` to disable it; server and network timeouts still apply.
+* When the OS keyring is unavailable, CLI login, queries, and `scope doctor` explain how to use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` for queries or explicitly opt in to plaintext login storage with `scope auth login --insecure-storage`.
 * Report the underlying cause when the CLI renders an error, in the terminal output and in `scope doctor` details, so a failure such as a credential store problem explains itself.
 * A login that ScopeDB rejects, expires, or revokes is removed from the credential store after a failed refresh, and the next command asks you to run `scope auth login` instead of failing with an opaque credential error.
 * `scope workspace use` identifies the selected login workspace and warns when environment credentials override data commands or form an incomplete pair.

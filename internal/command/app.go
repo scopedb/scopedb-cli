@@ -303,13 +303,24 @@ func openURL(target string, getenv func(string) string) error {
 	}
 }
 
+const keyringAccessHint = "restore OS keyring access; for queries without a keyring, set both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY; " +
+	"or explicitly use 'scope auth login --insecure-storage' to store login credentials unencrypted in a 0600 file " +
+	"(add --use-device-code --no-browser on headless hosts)"
+
 // NormalizeError maps domain and HTTP errors to the public CLI exit contract.
 func NormalizeError(err error) error {
 	if err == nil {
 		return nil
 	}
 	var ready *clierror.Error
+	var keyringErr *credential.KeyringError
 	if errors.As(err, &ready) {
+		if errors.As(err, &keyringErr) && !strings.Contains(ready.Hint, keyringAccessHint) {
+			if ready.Hint != "" {
+				ready.Hint += "; "
+			}
+			ready.Hint += keyringAccessHint
+		}
 		return err
 	}
 	var catalogErr *scopedb.Error
@@ -342,6 +353,9 @@ func NormalizeError(err error) error {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return clierror.Wrap(clierror.ExitTemporary, "operation timed out", err)
+	}
+	if errors.As(err, &keyringErr) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, err.Error(), err), keyringAccessHint)
 	}
 	if errors.Is(err, auth.ErrNotLoggedIn) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "not logged in", err), "run 'scope auth login'")
