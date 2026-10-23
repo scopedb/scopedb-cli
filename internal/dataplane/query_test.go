@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	scopedb "github.com/scopedb/goscopedb"
 	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,7 +43,8 @@ func TestExecuteCancelsSubmittedStatementOnInterrupt(t *testing.T) {
 			<-request.Context().Done()
 		case http.MethodPost + " /v1/statements/" + statementID + "/cancel":
 			cancelCalled.Store(true)
-			_, _ = writer.Write([]byte(`{"statement_id":"` + statementID + `","status":"cancelled","created_at":"2026-09-09T00:00:00Z","message":"cancelled by client"}`))
+			assert.Equal(t, "json", request.URL.Query().Get("format"))
+			_, _ = writer.Write([]byte(`{"statement_id":"` + statementID + `","status":"cancelled","created_at":"2026-09-09T00:00:00Z","progress":{}}`))
 		default:
 			assert.Failf(t, "unexpected request", "%s %s", request.Method, request.URL.Path)
 			writer.WriteHeader(http.StatusNotFound)
@@ -60,6 +62,8 @@ func TestExecuteCancelsSubmittedStatementOnInterrupt(t *testing.T) {
 	var interrupted *InterruptedError
 	require.ErrorAs(t, err, &interrupted)
 	require.Equal(t, statementID, interrupted.StatementID)
+	require.ErrorIs(t, interrupted, context.Canceled)
+	require.Equal(t, scopedb.StatementStatusCancelled, interrupted.CancelResult.Status)
 	require.NoError(t, interrupted.CancelErr)
 	require.True(t, cancelCalled.Load(), "server-side cancel endpoint was not called")
 }

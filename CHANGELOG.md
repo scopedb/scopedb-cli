@@ -6,6 +6,7 @@ All significant changes to this project will be documented in this file.
 
 ### Breaking changes
 
+* `scope query` and the query check in `scope doctor` require ScopeDB 0.6.0 or later. Upgrade the server before using these commands with this CLI version.
 * `scope auth login` approves a login in the ScopeDB Console instead of requesting an email verification code. `--email`, `--code`, and the interactive code prompt are gone, and the login no longer stores a browser session. For unattended access use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; `scope auth login --format json` reports the signed-in account and selected workspace.
 * `scope workspace use` stores the workspace locally for the current login instead of rotating a credential, so it no longer changes the workspace of another machine or a Console session. `scope auth status` still reports the selected workspace.
 * Authentication commands are grouped under `scope auth`: replace `scope login`, `scope logout`, and `scope status` with `scope auth login`, `scope auth logout`, and `scope auth status`. Replace `scope workspace show` with `scope workspace get`. The old command paths are not aliases.
@@ -25,13 +26,14 @@ All significant changes to this project will be documented in this file.
 
 ### Bug fixes
 
+* `scope query` displays the server's failure reason on ScopeDB 0.6 and includes the statement ID when the server cancels execution.
 * Table output reports write failures instead of returning success when the destination cannot accept the result.
 * `scope console --open` reports browser-launch failures during startup instead of reporting that the browser opened successfully.
 * `scope query` preserves the `.0` suffix for whole-number floats in table and CSV output, so they remain distinguishable from integers.
 * If `scope query` cannot write its results to stdout after execution, the error reports that the query completed and includes its statement ID, so an output error does not prompt users to repeat a statement with side effects.
 * `scope doctor` now verifies query access for a logged-in workspace, reporting provisioning, token exchange, and query failures that previously went unchecked.
 * `scope doctor` uses `/livez` for the control-plane check, so it continues to work after the legacy `/healthz` endpoint is removed.
-* Query timeout and Ctrl+C errors retain the statement ID and report when server cancellation could not be confirmed, so users can check the outcome before retrying. Ctrl+C also stops waiting for query input from stdin, exits with code 130, and stays quiet when no statement ID was received.
+* Query timeout and Ctrl+C errors retain the statement ID and distinguish confirmed cancellation, completed statements, server failures, and unconfirmed outcomes. Completed statements include guidance to retrieve the result instead of repeating side effects; server failures preserve their original reason. Timeout still exits with code 5 and Ctrl+C with code 130. Ctrl+C also stops waiting for query input from stdin and stays quiet when no statement ID was received.
 * `scope auth login` no longer saves endpoint and credential-store settings before authentication succeeds; if the final configuration write fails, it revokes the new login and restores the previous valid credentials.
 * `scope workspace list` no longer prints a "no workspace is selected" notice pointing back at itself when the account has workspaces to choose from; it now only reports setup guidance when there is nothing to list.
 

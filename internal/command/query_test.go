@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	scopedb "github.com/scopedb/goscopedb"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/stretchr/testify/require"
 )
@@ -111,62 +112,111 @@ func TestQueryReportsCompletionWhenStdoutFails(t *testing.T) {
 	}
 }
 
+func TestQueryReportsStatementFailure(t *testing.T) {
+	const statementID = "01989a4e-4ee2-7e63-87a5-65ac3b5161dc"
+	for _, status := range []string{"failed", "cancelled"} {
+		for _, phase := range []string{"submit", "poll"} {
+			t.Run(status+"/"+phase, func(t *testing.T) {
+				requests := 0
+				out, err := runQueryWithTransport(t, func(r *http.Request) (*http.Response, error) {
+					requests++
+					responseStatus := status
+					if requests == 1 {
+						require.Equal(t, "POST /v1/statements", r.Method+" "+r.URL.Path)
+						if phase == "poll" {
+							responseStatus = "running"
+						}
+					} else {
+						require.Equal(t, "GET /v1/statements/"+statementID, r.Method+" "+r.URL.Path)
+					}
+					body := `{"statement_id":"` + statementID + `","status":"` + responseStatus + `","created_at":"2026-09-09T00:00:00Z","progress":{}`
+					if responseStatus == "failed" {
+						body += `,"error":{"code":"statement_failed","message":"unknown function UNKNOWN_FUNCTION","details":{"line":1}}`
+					}
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body + `}`)), Request: r}, nil
+				}, "--format", "json")
+				require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
+				require.Empty(t, out)
+				if phase == "submit" {
+					require.Equal(t, 1, requests)
+				} else {
+					require.Equal(t, 2, requests)
+				}
+				rendered := clierror.Render(err)
+				if status == "failed" {
+					require.Contains(t, rendered, "unknown function UNKNOWN_FUNCTION")
+					var failure *scopedb.Error
+					require.ErrorAs(t, err, &failure)
+					require.Equal(t, "statement_failed", failure.Code)
+					require.JSONEq(t, `{"line":1}`, string(failure.Details))
+				} else {
+					require.Contains(t, rendered, statementID)
+					require.Contains(t, rendered, "cancelled")
+					require.NotErrorIs(t, err, context.Canceled)
+				}
+			})
+		}
+	}
+}
+
 func TestQueryTimeoutReportsServerCancellation(t *testing.T) {
 	const statementID = "01989a4e-4ee2-7e63-87a5-65ac3b5161dc"
-	for _, cancelStatus := range []string{"cancelled", "finished", "failed", "running", "unavailable"} {
+	for _, cancelStatus := range []string{"cancelled", "finished", "failed", "pending", "running", "unavailable", "malformed"} {
 		t.Run(cancelStatus, func(t *testing.T) {
-			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-			t.Setenv("SCOPEDB_CONTROL_URL", "")
-			t.Setenv("SCOPEDB_CONSOLE_URL", "")
-			t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
-			cancelCalls := 0
-			var out, diagnostics bytes.Buffer
-			root := NewRoot(Dependencies{
-				Out: &out, ErrOut: &diagnostics,
-				Getenv: func(name string) string {
-					if name == "SCOPEDB_ENDPOINT" {
-						return "https://data.example.com"
+			cancelCalls, fetchCalls := 0, 0
+			out, err := runQueryWithTransport(t, func(r *http.Request) (*http.Response, error) {
+				status := http.StatusOK
+				body := `{"statement_id":"` + statementID + `","status":"running","created_at":"2026-09-09T00:00:00Z","progress":{}}`
+				switch r.Method + " " + r.URL.Path {
+				case "POST /v1/statements":
+				case "GET /v1/statements/" + statementID:
+					fetchCalls++
+					return nil, context.DeadlineExceeded
+				case "POST /v1/statements/" + statementID + "/cancel":
+					cancelCalls++
+					require.NoError(t, r.Context().Err(), "server cancellation must have a fresh context")
+					require.Equal(t, "json", r.URL.Query().Get("format"))
+					body = `{"statement_id":"` + statementID + `","status":"` + cancelStatus + `","created_at":"2026-09-09T00:00:00Z","progress":{}`
+					switch cancelStatus {
+					case "finished":
+						body += `,"result_set":{"metadata":{"fields":[{"name":"ready","data_type":"int"}],"num_rows":1},"format":"json","rows":[["1"]]}`
+					case "failed":
+						body += `,"error":{"code":"statement_failed","message":"unknown function UNKNOWN_FUNCTION"}`
 					}
-					if name == "SCOPEDB_API_KEY" {
-						return "fixture-secret"
+					body += `}`
+					switch cancelStatus {
+					case "unavailable":
+						status = http.StatusServiceUnavailable
+						body = `{"code":"unavailable","message":"unavailable"}`
+					case "malformed":
+						body = `{"status":"cancelled"}`
 					}
-					return ""
-				},
-				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
-					status := http.StatusOK
-					body := `{"statement_id":"` + statementID + `","status":"running","created_at":"2026-09-09T00:00:00Z","progress":{}}`
-					switch r.Method + " " + r.URL.Path {
-					case "POST /v1/statements":
-					case "GET /v1/statements/" + statementID:
-						return nil, context.DeadlineExceeded
-					case "POST /v1/statements/" + statementID + "/cancel":
-						cancelCalls++
-						require.NoError(t, r.Context().Err(), "server cancellation must have a fresh context")
-						if cancelStatus != "unavailable" {
-							body = `{"statement_id":"` + statementID + `","status":"` + cancelStatus + `","created_at":"2026-09-09T00:00:00Z","message":"fixture cancellation result"}`
-						} else {
-							status = http.StatusServiceUnavailable
-							body = `{"message":"unavailable"}`
-						}
-					default:
-						t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-						status = http.StatusNotFound
-					}
-					return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
-				})},
-			})
-			root.SetArgs([]string{"query", "SELECT 1 AS ready"})
-			err := root.ExecuteContext(t.Context())
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			}, "--format", "json")
 			require.Equal(t, clierror.ExitTemporary, clierror.ExitCode(err))
+			require.ErrorIs(t, err, context.DeadlineExceeded)
 			require.Equal(t, 1, cancelCalls)
-			require.Empty(t, out.String())
+			require.Equal(t, 1, fetchCalls, "cancellation already returns the complete outcome")
+			require.Empty(t, out)
 			rendered := clierror.Render(err)
 			require.Contains(t, rendered, statementID)
-			require.NotContains(t, rendered+diagnostics.String(), "fixture-secret")
-			if cancelStatus == "cancelled" {
+			switch cancelStatus {
+			case "cancelled":
+				require.Contains(t, rendered, "server cancellation confirmed")
 				require.Contains(t, rendered, "increase --timeout")
 				require.NotContains(t, rendered, "could not be confirmed")
-			} else {
+			case "finished":
+				require.Contains(t, rendered, "statement already completed")
+				require.Contains(t, rendered, "do not rerun a statement with side effects")
+				require.NotContains(t, rendered, "could not be confirmed")
+			case "failed":
+				require.Contains(t, rendered, "statement failed: unknown function UNKNOWN_FUNCTION")
+				require.NotContains(t, rendered, "could not be confirmed")
+				require.NotContains(t, rendered, "retry")
+			default:
 				require.Contains(t, rendered, "server cancellation could not be confirmed")
 				require.Contains(t, rendered, "verify the statement's outcome before retrying")
 				require.NotContains(t, rendered, "increase --timeout and retry")

@@ -68,7 +68,7 @@ func TestInterruptedInputExitsQuietly(t *testing.T) {
 
 func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 	const statementID = "01989a4e-4ee2-7e63-87a5-65ac3b5161dc"
-	for _, outcome := range []string{"before_submit", "cancelled", "finished", "unavailable"} {
+	for _, outcome := range []string{"before_submit", "cancelled", "finished", "failed", "running", "unavailable", "malformed"} {
 		t.Run(outcome, func(t *testing.T) {
 			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 			t.Setenv("SCOPEDB_CONTROL_URL", "")
@@ -105,11 +105,22 @@ func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 					case "POST /v1/statements/" + statementID + "/cancel":
 						cancelCalls++
 						require.NoError(t, r.Context().Err(), "cancellation must use a fresh context")
-						if outcome == "unavailable" {
+						require.Equal(t, "json", r.URL.Query().Get("format"))
+						switch outcome {
+						case "unavailable":
 							status = http.StatusServiceUnavailable
-							body = `{"message":"unavailable"}`
-						} else {
-							body = `{"statement_id":"` + statementID + `","status":"` + outcome + `","created_at":"2026-09-09T00:00:00Z","message":"fixture cancellation result"}`
+							body = `{"code":"unavailable","message":"unavailable"}`
+						case "malformed":
+							body = `{"status":"cancelled"}`
+						default:
+							body = `{"statement_id":"` + statementID + `","status":"` + outcome + `","created_at":"2026-09-09T00:00:00Z","progress":{}`
+							switch outcome {
+							case "finished":
+								body += `,"result_set":{"metadata":{"fields":[{"name":"ready","data_type":"int"}],"num_rows":1},"format":"json","rows":[["1"]]}`
+							case "failed":
+								body += `,"error":{"code":"statement_failed","message":"unknown function UNKNOWN_FUNCTION"}`
+							}
+							body += `}`
 						}
 					default:
 						t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -127,9 +138,18 @@ func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 			require.Equal(t, 1, cancelCalls)
 			require.Contains(t, diagnostics.String(), statementID)
 			require.NotContains(t, diagnostics.String(), "fixture-secret")
-			if outcome == "cancelled" {
+			switch outcome {
+			case "cancelled":
 				require.Contains(t, diagnostics.String(), "server cancellation confirmed")
-			} else {
+			case "finished":
+				require.Contains(t, diagnostics.String(), "statement already completed")
+				require.Contains(t, diagnostics.String(), "do not rerun a statement with side effects")
+				require.NotContains(t, diagnostics.String(), "could not be confirmed")
+			case "failed":
+				require.Contains(t, diagnostics.String(), "statement failed: unknown function UNKNOWN_FUNCTION")
+				require.NotContains(t, diagnostics.String(), "could not be confirmed")
+				require.NotContains(t, diagnostics.String(), "retry")
+			default:
 				require.Contains(t, diagnostics.String(), "server cancellation could not be confirmed")
 				require.Contains(t, diagnostics.String(), "verify the statement's outcome before retrying")
 			}
