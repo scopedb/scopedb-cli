@@ -78,7 +78,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "API key from environment for " + access.Endpoint})
 				a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 			default:
-				healthCtx, cancel := checkContext(cmd.Context(), timeout)
+				healthCtx, cancel := timeoutContext(cmd.Context(), timeout)
 				healthErr := runtime.control.Health(healthCtx)
 				cancel()
 				if healthErr != nil {
@@ -95,7 +95,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					report.OK = false
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(loadErr))})
 				} else {
-					accountCtx, accountCancel := checkContext(cmd.Context(), timeout)
+					accountCtx, accountCancel := timeoutContext(cmd.Context(), timeout)
 					account, accountErr := runtime.auth.Account(accountCtx)
 					accountCancel()
 					if accountErr != nil {
@@ -131,7 +131,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 }
 
 func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext, timeout time.Duration, report *doctorReport) {
-	ctx, cancel := checkContext(ctx, timeout)
+	ctx, cancel := timeoutContext(ctx, timeout)
 	defer cancel()
 	access, err := runtime.auth.ResolveDataAccess(ctx)
 	if err == nil {
@@ -147,13 +147,6 @@ func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext,
 		}
 	}
 	report.Checks = append(report.Checks, check)
-}
-
-func checkContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout == 0 {
-		return context.WithCancel(ctx)
-	}
-	return context.WithTimeout(ctx, timeout)
 }
 
 func renderDoctor(out io.Writer, format string, report doctorReport) error {

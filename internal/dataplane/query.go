@@ -30,7 +30,7 @@ import (
 type InterruptedError struct {
 	StatementID  string
 	Cause        error
-	CancelResult scopedb.StatementCancelResult
+	CancelResult *scopedb.StatementSnapshot
 	CancelErr    error
 }
 
@@ -52,7 +52,7 @@ func (e *InterruptedError) Error() string {
 	case scopedb.StatementStatusFinished:
 		return message + "; statement already completed"
 	case scopedb.StatementStatusFailed:
-		return message + "; statement failed: " + e.CancelResult.Message
+		return message + "; statement failed: " + e.CancelResult.Error.Message
 	default:
 		return fmt.Sprintf("%s; server cancellation could not be confirmed (status %s)", message, e.CancelResult.Status)
 	}

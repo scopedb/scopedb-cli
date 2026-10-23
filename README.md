@@ -83,7 +83,7 @@ scope query 'FROM system.tables LIMIT 10' --format csv > tables.csv
 
 The shell controls file replacement and permissions. Redirecting with `>` can truncate an existing file before the query runs; write to a temporary file and move it after success if you need to preserve the previous result on failure.
 
-`scope query` and the query check in `scope doctor` require ScopeDB 0.6.0 or later. `--timeout` limits client-side waiting (default: five minutes) and attempts server cancellation when it expires. `--timeout 0` disables this client limit; the server's default one-hour elapsed-time limit still applies.
+`scope query` and the query check in `scope doctor` require ScopeDB 0.6.0 or later. Queries have no client-side wait limit by default. Use `scope query --timeout 5m` to limit waiting and attempt server cancellation when the limit expires. `--timeout 0` disables this client limit; it does not change the server's default one-hour elapsed-time limit or network timeouts. The limit covers submitting and waiting for the statement, excluding input, authentication, and output. Cancellation may take an additional five seconds.
 
 Once a statement ID has been received, timeout and Ctrl+C diagnostics include it and distinguish confirmed cancellation, an already completed statement, a server failure, and an unconfirmed outcome. The command keeps its timeout or interrupt exit code and writes no query results. If the statement already completed, retrieve its result using the ID instead of rerunning a statement with side effects.
 
@@ -128,7 +128,7 @@ scope catalog drop --all --yes --allow-destructive
 
 All commands write structured results to stdout, using YAML by default or JSON with `--format json`. Apply and drop return the actual before/after definitions and `destructive` flag. Diffs, warnings, prompts, and progress go to stderr. Use shell redirection to save results; the shell controls file replacement and permissions.
 
-`--timeout` sets a positive per-request duration, defaulting to five minutes. Preview and commit each receive the full budget; time spent reviewing a diff does not consume it. A timeout or interrupted connection during commit can leave the outcome unknown. The CLI never automatically retries a Catalog write. If a write succeeds but reporting its result fails, the error says it was applied. Read the catalog before deciding whether to submit another change.
+`--request-timeout` limits each Catalog request, defaulting to five minutes; `0` disables this limit. Preview and commit each receive the full budget; input, authentication, and time spent reviewing a diff do not consume it. Authentication requests retain their separate control-plane timeout. A timeout or interrupted connection during commit can leave the outcome unknown. The CLI never automatically retries a Catalog write. If a write succeeds but reporting its result fails, the error says it was applied. Read the catalog before deciding whether to submit another change.
 
 ## JSON output
 

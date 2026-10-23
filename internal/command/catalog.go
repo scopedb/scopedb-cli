@@ -33,7 +33,7 @@ type catalogOptions struct {
 	all              bool
 	yes              bool
 	allowDestructive bool
-	timeout          time.Duration
+	requestTimeout   time.Duration
 }
 
 func (a *app) newCatalogCommand() *cobra.Command {
@@ -50,13 +50,13 @@ func (o *catalogOptions) addFlags(command *cobra.Command) {
 		command.Flags().String(kind, "", "select one "+kind+" by its fully qualified name")
 	}
 	command.Flags().StringVar(&o.format, "format", "yaml", "output format: yaml or json")
-	command.Flags().DurationVar(&o.timeout, "timeout", 5*time.Minute, "per-request timeout (must be positive)")
+	command.Flags().DurationVar(&o.requestTimeout, "request-timeout", 5*time.Minute, "timeout for each catalog request; 0 disables the request limit")
 	command.PreRunE = func(_ *cobra.Command, _ []string) error {
 		if o.format != "yaml" && o.format != "json" {
 			return usageError("catalog format must be yaml or json")
 		}
-		if o.timeout <= 0 {
-			return usageError("--timeout must be positive")
+		if o.requestTimeout < 0 {
+			return usageError("--request-timeout must not be negative")
 		}
 		return nil
 	}
@@ -183,7 +183,7 @@ func (a *app) readCatalogResource(cmd *cobra.Command, list string, options catal
 	}
 	defer client.Close()
 	catalog := resource.resolve(client, names)
-	ctx, cancel := options.requestContext(cmd.Context())
+	ctx, cancel := timeoutContext(cmd.Context(), options.requestTimeout)
 	defer cancel()
 	snapshot, err := catalog.Get(ctx)
 	if err != nil {
@@ -197,11 +197,6 @@ func (a *app) readCatalogResource(cmd *cobra.Command, list string, options catal
 		return writeCatalog(a.out, names, options.format)
 	}
 	return writeCatalog(a.out, snapshot.Definition, options.format)
-}
-
-// Time spent reviewing a diff does not consume either request's timeout.
-func (o catalogOptions) requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
-	return context.WithTimeout(ctx, o.timeout)
 }
 
 func normalizeCatalogError(catalogErr *scopedb.Error) error {

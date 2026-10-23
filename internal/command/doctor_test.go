@@ -33,7 +33,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const doctorQueryResult = `{"statement_id":"01989a4e-4ee2-7e63-87a5-65ac3b5161dc","status":"finished","created_at":"2026-09-09T00:00:00Z","progress":{},"result_set":{"metadata":{"fields":[{"name":"ready","data_type":"u_int"}],"num_rows":1},"format":"json","rows":[["1"]]}}`
+const doctorQueryResult = `{"statement_id":"01989a4e-4ee2-7e63-87a5-65ac3b5161dc","status":"finished","created_at":"2026-09-09T00:00:00Z","progress":{},"result_set":{"metadata":{"fields":[{"name":"ready","data_type":"uint"}],"num_rows":1},"format":"json","rows":[["1"]]}}`
 
 func TestDoctorChecksOAuthDataAccess(t *testing.T) {
 	for _, phase := range []struct {
@@ -214,6 +214,38 @@ type doctorTransport func(*http.Request) (*http.Response, error)
 
 func (f doctorTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+func TestDoctorCheckTimeout(t *testing.T) {
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	for _, disabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "default", true: "disabled"}[disabled], func(t *testing.T) {
+			requests := 0
+			root := NewRoot(Dependencies{
+				Out: io.Discard, ErrOut: io.Discard,
+				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+					requests++
+					deadline, ok := r.Context().Deadline()
+					if disabled {
+						require.False(t, ok)
+					} else {
+						require.True(t, ok)
+						require.InDelta(t, 5, time.Until(deadline).Seconds(), 1)
+					}
+					return finishedQueryResponse(r), nil
+				})},
+			})
+			args := []string{"doctor"}
+			if disabled {
+				args = append(args, "--timeout", "0")
+			}
+			root.SetArgs(args)
+			require.NoError(t, root.ExecuteContext(t.Context()))
+			require.Equal(t, 1, requests)
+		})
+	}
+}
+
 func TestDoctorTimeoutAndCancellation(t *testing.T) {
 	for _, interrupt := range []bool{false, true} {
 		t.Run(map[bool]string{false: "timeout", true: "interrupt"}[interrupt], func(t *testing.T) {
@@ -248,7 +280,7 @@ func TestDoctorTimeoutAndCancellation(t *testing.T) {
 			} else {
 				require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
 				require.Contains(t, out.String(), "operation timed out")
-				require.Contains(t, out.String(), "increase --timeout")
+				require.NotContains(t, out.String(), "increase --timeout")
 			}
 		})
 	}

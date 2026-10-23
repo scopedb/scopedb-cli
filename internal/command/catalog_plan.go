@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	scopedb "github.com/scopedb/goscopedb"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
@@ -102,7 +103,11 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 		// Machine credentials carry no workspace ID, so pin the credential without storing it.
 		credentialHash = fmt.Sprintf("%x", sha256.Sum256([]byte(access.APIKey)))
 	}
-	client, err := scopedb.NewClient(scopedb.Config{Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient, WriteTimeout: options.timeout})
+	client, err := scopedb.NewClient(scopedb.Config{
+		Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient,
+		// Use the CLI request budget instead of the SDK's default write timeout.
+		WriteTimeout: new(time.Duration),
+	})
 	if err != nil {
 		return err
 	}
@@ -119,7 +124,7 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 			return usageError("plan targets a different connection, workspace, or machine credential; select its connection or generate a new plan")
 		}
 	} else {
-		ctx, cancel := options.requestContext(cmd.Context())
+		ctx, cancel := timeoutContext(cmd.Context(), options.requestTimeout)
 		change, err := mutate(ctx, scopedb.CatalogOptions{DryRun: true})
 		cancel()
 		if err != nil {
@@ -157,7 +162,8 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 	if plan.Destructive && !options.allowDestructive {
 		return usageError("changes may permanently lose data; review the plan and pass --allow-destructive")
 	}
-	ctx, cancel := options.requestContext(cmd.Context())
+	// Time spent reviewing the diff does not consume the commit timeout.
+	ctx, cancel := timeoutContext(cmd.Context(), options.requestTimeout)
 	defer cancel()
 	result, err := mutate(ctx, scopedb.CatalogOptions{
 		AllowDestructive: options.allowDestructive, IfMatch: plan.ETag,

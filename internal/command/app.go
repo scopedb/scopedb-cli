@@ -225,6 +225,14 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	return a.newRuntime(paths, cfg)
 }
 
+// A zero timeout preserves parent cancellation without adding a deadline.
+func timeoutContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout == 0 {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, timeout)
+}
+
 func (a *app) readLine(ctx context.Context, prompt string) (string, error) {
 	if prompt != "" {
 		if _, err := fmt.Fprint(a.errOut, prompt); err != nil {
@@ -339,14 +347,10 @@ func NormalizeError(err error) error {
 			return result
 		}
 		switch interrupted.CancelResult.Status {
-		case scopedb.StatementStatusCancelled:
-			if code == clierror.ExitTemporary {
-				result.Hint = "increase --timeout and retry"
-			}
 		case scopedb.StatementStatusFinished:
 			result.Hint = "use the statement ID to retrieve its result; do not rerun a statement with side effects"
-		case scopedb.StatementStatusFailed:
-			// The original server failure already explains the terminal outcome.
+		case scopedb.StatementStatusCancelled, scopedb.StatementStatusFailed:
+			// The terminal response already explains the outcome.
 		default:
 			result.Hint = "verify the statement's outcome before retrying; it may have completed or still be running"
 		}
@@ -356,7 +360,7 @@ func NormalizeError(err error) error {
 		return clierror.Wrap(clierror.ExitInterrupted, err.Error(), err)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return clierror.WithHint(clierror.Wrap(clierror.ExitTemporary, "operation timed out", err), "increase --timeout and retry")
+		return clierror.Wrap(clierror.ExitTemporary, "operation timed out", err)
 	}
 	if errors.As(err, &keyringErr) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, err.Error(), err), keyringAccessHint)

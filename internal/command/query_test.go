@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	scopedb "github.com/scopedb/goscopedb"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
@@ -29,15 +30,40 @@ import (
 )
 
 func TestQueryWritesResultsToStdout(t *testing.T) {
-	submissions := 0
+	for _, timeout := range []string{"", "0", "2m"} {
+		t.Run("timeout="+timeout, func(t *testing.T) {
+			args := []string{"--format", "json"}
+			if timeout != "" {
+				args = append(args, "--timeout", timeout)
+			}
+			submissions := 0
+			out, err := runQueryWithTransport(t, func(r *http.Request) (*http.Response, error) {
+				require.Equal(t, "POST /v1/statements", r.Method+" "+r.URL.Path)
+				deadline, ok := r.Context().Deadline()
+				if timeout == "2m" {
+					require.True(t, ok)
+					require.InDelta(t, 120, time.Until(deadline).Seconds(), 1)
+				} else {
+					require.False(t, ok, "queries must not impose a wait limit by default or with --timeout 0")
+				}
+				submissions++
+				return finishedQueryResponse(r), nil
+			}, args...)
+			require.NoError(t, err)
+			require.Equal(t, 1, submissions)
+			require.JSONEq(t, `[{"ready":1}]`, out)
+		})
+	}
+}
+
+func TestQueryWaitLimitExpires(t *testing.T) {
 	out, err := runQueryWithTransport(t, func(r *http.Request) (*http.Response, error) {
-		require.Equal(t, "POST /v1/statements", r.Method+" "+r.URL.Path)
-		submissions++
-		return finishedQueryResponse(r), nil
-	}, "--format", "json")
-	require.NoError(t, err)
-	require.Equal(t, 1, submissions)
-	require.JSONEq(t, `[{"ready":1}]`, out)
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	}, "--timeout", "20ms")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, clierror.ExitTemporary, clierror.ExitCode(err))
+	require.Empty(t, out)
 }
 
 func TestQueryFailureDoesNotWriteResults(t *testing.T) {
@@ -206,7 +232,7 @@ func TestQueryTimeoutReportsServerCancellation(t *testing.T) {
 			switch cancelStatus {
 			case "cancelled":
 				require.Contains(t, rendered, "server cancellation confirmed")
-				require.Contains(t, rendered, "increase --timeout")
+				require.NotContains(t, rendered, "increase --timeout")
 				require.NotContains(t, rendered, "could not be confirmed")
 			case "finished":
 				require.Contains(t, rendered, "statement already completed")
