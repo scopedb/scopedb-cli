@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	scopedb "github.com/scopedb/goscopedb"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
@@ -105,7 +106,7 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 	client, err := scopedb.NewClient(scopedb.Config{
 		Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient,
 		// requestContext owns the deadline, including when the CLI limit is disabled.
-		WriteTimeout: scopedb.NoTimeout,
+		WriteTimeout: new(time.Duration),
 	})
 	if err != nil {
 		return err
