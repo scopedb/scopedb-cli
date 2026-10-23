@@ -290,12 +290,12 @@ func TestCatalogRequestFailures(t *testing.T) {
 				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
 					requests++
 					if apply && requests == 1 {
-						return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(`{"before":null,"after":{"name":"t","columns":[]}}`)), Request: r}, nil
+						return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(`{"before":null,"after":{"name":"t","columns":[]},"destructive":false}`)), Request: r}, nil
 					}
 					if tc.cause != nil && !tc.partial {
 						return nil, tc.cause
 					}
-					status, body := 200, `{"before":null,"after":{"name":"t","columns":[]}}`
+					status, body := 200, `{"before":null,"after":{"name":"t","columns":[]},"destructive":false}`
 					if tc.status != 0 {
 						status, body = tc.status, `{"message":"gateway unavailable"}`
 					}
@@ -522,13 +522,17 @@ func TestCatalogRequestTimeout(t *testing.T) {
 		timeout  time.Duration
 		requests int
 	}{
-		{[]string{"get", "--timeout", "2m"}, 2 * time.Minute, 1},
-		{[]string{"plan", "-f", "-", "--timeout", "2m"}, 2 * time.Minute, 1},
-		{[]string{"apply", "-f", "-", "--yes", "--timeout", "2m"}, 2 * time.Minute, 2},
-		{[]string{"drop", "--table", "db.public.t", "--yes", "--timeout", "2m"}, 2 * time.Minute, 2},
+		{[]string{"get", "--request-timeout", "2m"}, 2 * time.Minute, 1},
+		{[]string{"plan", "-f", "-", "--request-timeout", "2m"}, 2 * time.Minute, 1},
+		{[]string{"apply", "-f", "-", "--yes", "--request-timeout", "2m"}, 2 * time.Minute, 2},
+		{[]string{"drop", "--table", "db.public.t", "--yes", "--request-timeout", "2m"}, 2 * time.Minute, 2},
 		{[]string{"apply", "-f", "-", "--yes"}, 5 * time.Minute, 2},
-		{[]string{"apply", "-f", "-", "--yes", "--timeout", "0"}, 0, 0},
-		{[]string{"get", "--timeout", "-1s"}, 0, 0},
+		{[]string{"get", "--request-timeout", "0"}, 0, 1},
+		{[]string{"list", "databases", "--request-timeout", "0"}, 0, 1},
+		{[]string{"plan", "-f", "-", "--request-timeout", "0"}, 0, 1},
+		{[]string{"apply", "-f", "-", "--yes", "--request-timeout", "0"}, 0, 2},
+		{[]string{"drop", "--table", "db.public.t", "--yes", "--request-timeout", "0"}, 0, 2},
+		{[]string{"get", "--request-timeout", "-1s"}, 0, 0},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			requests := 0
@@ -536,9 +540,13 @@ func TestCatalogRequestTimeout(t *testing.T) {
 				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
 					requests++
 					deadline, ok := r.Context().Deadline()
-					require.True(t, ok)
-					require.InDelta(t, tc.timeout.Seconds(), time.Until(deadline).Seconds(), 5,
-						"the SDK must use the CLI timeout for both preview and commit")
+					if tc.timeout == 0 {
+						require.False(t, ok, "the SDK must not add a deadline when the request limit is disabled")
+					} else {
+						require.True(t, ok)
+						require.InDelta(t, tc.timeout.Seconds(), time.Until(deadline).Seconds(), 5,
+							"preview and commit must each receive the configured request budget")
+					}
 					body := `{"before":{"databases":[]},"after":{"databases":[{"name":"db"}]},"destructive":false}`
 					if r.Method == http.MethodGet {
 						body = `{"databases":[]}`
@@ -548,7 +556,7 @@ func TestCatalogRequestTimeout(t *testing.T) {
 			})
 			root.SetArgs(append([]string{"catalog"}, tc.args...))
 			err := root.ExecuteContext(t.Context())
-			if tc.timeout == 0 {
+			if tc.requests == 0 {
 				require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
 			} else {
 				require.NoError(t, err)

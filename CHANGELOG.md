@@ -17,7 +17,7 @@ All significant changes to this project will be documented in this file.
 
 ### New features
 
-* `scope catalog` lists resource names, exports YAML or JSON definitions, previews replacement changes, applies saved plans with version and connection checks, and drops selected resources. Interactive confirmation defaults to no; automation requires explicit authorization for data loss. Structured results go to stdout and diffs and warnings to stderr. Catalog commands require ScopeDB 0.6.0 or later.
+* `scope catalog` lists resource names, exports YAML or JSON definitions, previews replacement changes, applies saved plans with version and connection checks, and drops selected resources. Interactive confirmation defaults to no; automation requires explicit authorization for data loss. Structured results go to stdout and diffs and warnings to stderr. Catalog commands require ScopeDB 0.6.0 or later. `--request-timeout` limits each Catalog request to five minutes by default; `0` disables this limit.
 * `scope auth login` opens a browser by default and completes the login through a loopback redirect on the same device. `--use-device-code` selects device authorization for approval from any device; `--no-browser` skips automatic browser opening in either flow. Both flows print an approval link before attempting to open the browser and keep waiting for approval if the launch fails. Device authorization rejects verification links that are not absolute HTTP(S) URLs. Device login also prints a verification code and shows a waiting message with the request's remaining lifetime until approval, denial, or expiry. A loopback response is accepted only when its `state` and issuer match the request, including error responses. Neither flow requires an interactive terminal. Login keeps the profile's existing workspace selection when the account still owns it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID. `--workspace <id-or-name>` chooses one explicitly. The text and `--format json` results report the selected workspace name and ID; use `scope workspace use <id-or-name>` to switch afterwards. Login refuses to start while a renewable login is stored and asks you to run `scope auth logout` first; a stored login whose refresh token has expired is replaced. If another process completes login during authorization, the CLI preserves that login and attempts to revoke the unused authorization.
 * The CLI login is renewed automatically before its access token expires, using a rotating refresh token that is shared safely between concurrent `scope` processes; every credential update is serialized under the file lock. Network failures, including interrupted response bodies, retry the same refresh token within the server's recovery window, with at most two retries. Credential renewal keeps each running command on its resolved workspace even if another process changes the selection.
 * `scope auth logout` revokes the login in ScopeDB before removing local credentials, so a signed-out CLI cannot keep using its grant.
@@ -27,6 +27,7 @@ All significant changes to this project will be documented in this file.
 
 ### Bug fixes
 
+* Timeout errors no longer suggest increasing `--timeout` when the command has no such option or a different timeout caused the failure.
 * `scope query` displays the server's failure reason on ScopeDB 0.6 and includes the statement ID when the server cancels execution.
 * Table output reports write failures instead of returning success when the destination cannot accept the result.
 * `scope console --open` reports browser-launch failures during startup instead of reporting that the browser opened successfully.
@@ -40,6 +41,7 @@ All significant changes to this project will be documented in this file.
 
 ### Improvements
 
+* `scope query` waits without an additional client-side time limit by default. Use `--timeout 5m` to retain the previous limit, or `--timeout 0` to disable it; server and network timeouts still apply.
 * Report the underlying cause when the CLI renders an error, in the terminal output and in `scope doctor` details, so a failure such as a credential store problem explains itself.
 * A login that ScopeDB rejects, expires, or revokes is removed from the credential store after a failed refresh, and the next command asks you to run `scope auth login` instead of failing with an opaque credential error.
 * `scope workspace use` identifies the selected login workspace and warns when environment credentials override data commands or form an incomplete pair.

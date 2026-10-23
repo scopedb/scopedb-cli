@@ -15,7 +15,10 @@
 package command
 
 import (
+	"context"
 	"errors"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -43,4 +46,31 @@ func TestExpiredLoginReportsTheRemediationOnce(t *testing.T) {
 func TestOAuthTransportFailureIsTemporary(t *testing.T) {
 	err := NormalizeError(&controlplane.OAuthError{Retryable: true, Err: errors.New("connection refused")})
 	require.Equal(t, clierror.ExitTemporary, clierror.ExitCode(err))
+}
+
+func TestControlPlaneTimeoutDoesNotSuggestCommandTimeoutFlags(t *testing.T) {
+	fake, store := setupCLITest(t)
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+	for _, args := range [][]string{
+		{"workspace", "list"},
+		{"query", "SELECT 1 AS ready", "--timeout", "1m"},
+		{"catalog", "get", "--request-timeout", "1m"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			root := NewRoot(Dependencies{
+				Out: io.Discard, ErrOut: io.Discard,
+				Getenv: func(string) string { return "" },
+				HTTPClient: &http.Client{Transport: doctorTransport(func(*http.Request) (*http.Response, error) {
+					return nil, context.DeadlineExceeded
+				})},
+			})
+			root.SetArgs(args)
+			err := root.ExecuteContext(t.Context())
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			require.Equal(t, clierror.ExitTemporary, clierror.ExitCode(err))
+			require.Contains(t, clierror.Render(err), "operation timed out")
+			require.NotContains(t, clierror.Render(err), "--timeout")
+			require.NotContains(t, clierror.Render(err), "--request-timeout")
+		})
+	}
 }

@@ -87,6 +87,6 @@ If a timed-out query reports that server cancellation could not be confirmed, re
 | No workspace selected            | Run `scope workspace list`, then `scope workspace use <id-or-name>`.                                      |
 | Workspace is still provisioning  | Check `scope workspace get` or the Console and retry when the workspace is ready.                         |
 | API key rejected                 | Check that the endpoint and key belong to the same workspace and the key has not expired or been revoked. |
-| Operation timed out              | Check network access to the endpoint and retry with a larger `--timeout`.                                 |
+| Operation timed out              | Check connectivity; increase `doctor --timeout` only if the per-check limit is too short.                 |
 
 JSON diagnostics keep the same `ok` and `checks` fields as table diagnostics. Failed checks exit with code 1; invalid flags exit with code 2; Ctrl+C exits with code 130. Include a reported request ID when asking for support, and omit API keys and session credentials.

@@ -328,14 +328,10 @@ func NormalizeError(err error) error {
 			return result
 		}
 		switch interrupted.CancelResult.Status {
-		case scopedb.StatementStatusCancelled:
-			if code == clierror.ExitTemporary {
-				result.Hint = "increase --timeout and retry"
-			}
 		case scopedb.StatementStatusFinished:
 			result.Hint = "use the statement ID to retrieve its result; do not rerun a statement with side effects"
-		case scopedb.StatementStatusFailed:
-			// The original server failure already explains the terminal outcome.
+		case scopedb.StatementStatusCancelled, scopedb.StatementStatusFailed:
+			// The terminal response already explains the outcome.
 		default:
 			result.Hint = "verify the statement's outcome before retrying; it may have completed or still be running"
 		}
@@ -345,7 +341,7 @@ func NormalizeError(err error) error {
 		return clierror.Wrap(clierror.ExitInterrupted, err.Error(), err)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return clierror.WithHint(clierror.Wrap(clierror.ExitTemporary, "operation timed out", err), "increase --timeout and retry")
+		return clierror.Wrap(clierror.ExitTemporary, "operation timed out", err)
 	}
 	if errors.Is(err, auth.ErrNotLoggedIn) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "not logged in", err), "run 'scope auth login'")
