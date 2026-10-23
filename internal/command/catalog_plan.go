@@ -102,7 +102,11 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 		// Machine credentials carry no workspace ID, so pin the credential without storing it.
 		credentialHash = fmt.Sprintf("%x", sha256.Sum256([]byte(access.APIKey)))
 	}
-	client, err := scopedb.NewClient(scopedb.Config{Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient})
+	client, err := scopedb.NewClient(scopedb.Config{
+		Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient,
+		// requestContext owns the deadline, including when the CLI limit is disabled.
+		WriteTimeout: scopedb.NoTimeout,
+	})
 	if err != nil {
 		return err
 	}
