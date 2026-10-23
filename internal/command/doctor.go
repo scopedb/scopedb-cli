@@ -66,7 +66,6 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			}
 			report := doctorReport{OK: true, Checks: []doctorCheck{
 				{Name: "configuration", Status: "pass", Details: runtime.paths.Config},
-				{Name: "credential store", Status: "pass", Details: runtime.config.CredentialStore},
 			}}
 
 			access, machine, machineErr := runtime.auth.MachineAccess()
@@ -75,6 +74,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				report.OK = false
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: machineErr.Error()})
 			case machine:
+				report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: "environment"})
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "API key from environment for " + access.Endpoint})
 				a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 			default:
@@ -88,13 +88,18 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "pass", Details: runtime.config.ControlURL})
 				}
 
-				_, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
+				state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
 				if errors.Is(loadErr, credential.ErrNotFound) || errors.Is(loadErr, credential.ErrInvalidState) {
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login' or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY"})
 				} else if loadErr != nil {
 					report.OK = false
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(loadErr))})
 				} else {
+					source := state.Source
+					if source == credential.SourcePlaintext {
+						source += " (" + runtime.paths.CredentialsFile + ")"
+					}
+					report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: source})
 					accountCtx, accountCancel := timeoutContext(cmd.Context(), timeout)
 					account, accountErr := runtime.auth.Account(accountCtx)
 					accountCancel()

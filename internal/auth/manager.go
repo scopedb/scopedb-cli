@@ -65,11 +65,18 @@ type OAuthClient interface {
 	RevokeToken(context.Context, string) error
 }
 
+// CredentialStore distinguishes updates to an existing login from replacing
+// one. Replace chooses a new login's destination or restores a saved source.
+type CredentialStore interface {
+	credential.Store
+	Replace(controlURL string, state credential.State) error
+}
+
 type Manager struct {
 	ControlURL  string
 	Control     ControlPlane
 	OAuth       OAuthClient
-	Credentials credential.Store
+	Credentials CredentialStore
 	LockFile    string
 	Now         func() time.Time
 	Sleep       func(time.Duration)
@@ -128,8 +135,12 @@ func (m *Manager) MachineAccess() (Access, bool, error) {
 // RenewableLogin reports the stored login that can still be renewed, without refreshing it.
 func (m *Manager) RenewableLogin() (credential.State, bool, error) {
 	state, err := m.load()
+	var keyringErr *credential.KeyringError
 	switch {
 	case errors.Is(err, ErrNotLoggedIn):
+		return credential.State{}, false, nil
+	case errors.As(err, &keyringErr):
+		// New logins can fall back to a file when the keyring is unavailable.
 		return credential.State{}, false, nil
 	case err != nil:
 		return credential.State{}, false, err
@@ -174,8 +185,9 @@ func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (
 
 	previous, err := m.Credentials.Load(m.ControlURL)
 	previousFound := err == nil
+	var keyringErr *credential.KeyringError
 	switch {
-	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState):
+	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState), errors.As(err, &keyringErr):
 		previous = credential.State{}
 	case err != nil:
 		return credential.State{}, false, "", fmt.Errorf("%w: %w", ErrCredentialsUnreadable, err)
@@ -188,7 +200,7 @@ func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (
 		return credential.State{}, false, "", err
 	}
 	state.WorkspaceID = previous.WorkspaceID
-	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
+	if err := m.Credentials.Replace(m.ControlURL, state); err != nil {
 		return credential.State{}, false, "", err
 	}
 	return previous, previousFound, state.AccessToken, nil
@@ -215,7 +227,7 @@ func (m *Manager) RestoreLogin(ctx context.Context, state credential.State, foun
 		return nil
 	}
 	if found {
-		return m.Credentials.Save(m.ControlURL, state)
+		return m.Credentials.Replace(m.ControlURL, state)
 	}
 	return m.deleteIgnoringMissing()
 }
@@ -354,6 +366,11 @@ func (m *Manager) Logout(ctx context.Context) error {
 		return m.deleteIgnoringMissing()
 	}
 	if errors.Is(err, credential.ErrNotFound) {
+		// A prior logout may have cleared the file while the keyring was
+		// unavailable. Retry cleanup without reviving that old login.
+		if err := m.deleteIgnoringMissing(); err != nil {
+			return err
+		}
 		return ErrNotLoggedIn
 	}
 	if err != nil {

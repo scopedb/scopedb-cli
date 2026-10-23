@@ -79,7 +79,7 @@ type runtimeContext struct {
 	paths       config.Paths
 	config      config.Config
 	control     *controlplane.Client
-	credentials credential.Store
+	credentials *credential.Stores
 	auth        *auth.Manager
 
 	oauthMu sync.Mutex
@@ -194,9 +194,26 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 	if err != nil {
 		return nil, err
 	}
-	credentials, err := a.credentialFactory(cfg.CredentialStore, paths)
+	keyring, err := a.credentialFactory(credential.SourceKeyring, paths)
 	if err != nil {
 		return nil, err
+	}
+	plaintext, err := a.credentialFactory(credential.SourcePlaintext, paths)
+	if err != nil {
+		return nil, err
+	}
+	credentials := &credential.Stores{
+		Keyring:   keyring,
+		Plaintext: plaintext,
+		OnPlaintext: func(fallback, cleanup error) {
+			if fallback != nil {
+				_, _ = fmt.Fprintln(a.errOut, "Warning: OS keyring storage failed; falling back to plaintext storage.")
+			}
+			_, _ = fmt.Fprintf(a.errOut, "Warning: credentials are stored unencrypted in %s.\n", paths.CredentialsFile)
+			if cleanup != nil {
+				_, _ = fmt.Fprintln(a.errOut, "Warning: OS keyring cleanup could not be verified. Restore keyring access and run 'scope auth logout' to clean it up.")
+			}
+		},
 	}
 	runtime := &runtimeContext{
 		paths:       paths,

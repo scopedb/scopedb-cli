@@ -240,7 +240,7 @@ func TestLoginAuthorizationModes(t *testing.T) {
 		{name: "device browser failure", flags: []string{"--use-device-code"}, device: true, browserFails: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			fake, store := setupCLITest(t)
+			fake, _ := setupCLITest(t)
 			var out, diagnostics bytes.Buffer
 			browserCalls := 0
 			root := NewRoot(Dependencies{
@@ -294,7 +294,7 @@ func TestLoginAuthorizationModes(t *testing.T) {
 				require.NotEmpty(t, fake.TokenForms[0].Get("code_verifier"))
 				require.Zero(t, fake.DevicePolls)
 			}
-			state, err := store.Load(fake.URL)
+			state, err := credential.NewKeyringStore().Load(fake.URL)
 			require.NoError(t, err)
 			require.Equal(t, fake.RefreshToken, state.RefreshToken)
 		})
@@ -521,13 +521,18 @@ func TestLoginKeepsTheStoredSelectionWithoutWritingCredentials(t *testing.T) {
 
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
-		In:              strings.NewReader("\r"),
-		Out:             &out,
-		ErrOut:          &diagnostics,
-		Getenv:          func(string) string { return "" },
-		Sleep:           func(time.Duration) {},
-		OpenURL:         fake.authorizationURL(t),
-		CredentialStore: func(_ string, _ config.Paths) (credential.Store, error) { return counting, nil },
+		In:      strings.NewReader("\r"),
+		Out:     &out,
+		ErrOut:  &diagnostics,
+		Getenv:  func(string) string { return "" },
+		Sleep:   func(time.Duration) {},
+		OpenURL: fake.authorizationURL(t),
+		CredentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
+			if kind == credential.SourcePlaintext {
+				return counting, nil
+			}
+			return credential.New(kind, paths)
+		},
 		IsInputTerminal: func() bool { return true },
 		IsErrorTerminal: func() bool { return true },
 	})
@@ -798,7 +803,10 @@ func TestLoginRollsBackFailedPersistence(t *testing.T) {
 		OpenURL:         fake.authorizationURL(t),
 		IsInputTerminal: func() bool { return true },
 		IsErrorTerminal: func() bool { return true },
-		CredentialStore: func(_ string, paths config.Paths) (credential.Store, error) {
+		CredentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
+			if kind != credential.SourcePlaintext {
+				return credential.New(kind, paths)
+			}
 			return &interruptSaveStore{Store: store, afterSave: func() error { return os.Mkdir(paths.Config, 0o700) }}, nil
 		},
 	})

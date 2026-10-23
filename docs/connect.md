@@ -1,6 +1,6 @@
 # Connect the CLI and your application
 
-Use `scope auth login` for terminal exploration. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring; SDKs do not read it.
+Use `scope auth login` for terminal exploration. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring when available, with a plaintext fallback; SDKs do not read it.
 
 ## Verify your login
 
@@ -25,13 +25,13 @@ Login keeps a valid workspace selection or automatically selects the first works
 
 If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id-or-name>`.
 
-`scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`. In login mode it verifies your login against ScopeDB and reports when the login expires; in environment mode it displays the configured endpoint without validating the API key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
+`scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`, and the credential file path when using plaintext. In login mode it verifies your login against ScopeDB and reports when the login expires; in environment mode it displays the configured endpoint without validating the API key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
 
 `scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
 
 ## Use headless Linux
 
-On Linux, the OS keyring requires a working D-Bus session and a Secret Service provider, such as GNOME Keyring, with an accessible login collection. Servers, SSH sessions, and containers may not have these services available. Device code login lets you approve access from another device, but still needs somewhere to store the login; it does not remove the keyring requirement.
+On Linux, the OS keyring requires a working D-Bus session and a Secret Service provider, such as GNOME Keyring, with an accessible login collection. Servers, SSH sessions, and containers may not have these services available. If keyring storage fails during a new login, the CLI prints a warning to stderr and saves the credentials unencrypted in `credentials.json`. Device authorization and storage selection are independent.
 
 For servers and CI, use a workspace endpoint and API key:
 
@@ -44,18 +44,20 @@ scope query --format json 'SELECT 1 AS ready'
 
 With both variables set, `scope query`, `scope auth status`, and `scope doctor` skip the keyring and do not require `scope auth login`. Setting only one variable fails. Workspace and API key management still require a CLI login.
 
-If you need a CLI login on a host without a usable keyring, explicitly opt in to plaintext storage:
+For a CLI login on a host without a usable keyring:
 
 ```sh
 unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
-scope auth login --use-device-code --no-browser --insecure-storage
+scope auth login --use-device-code --no-browser
 scope auth status
 scope query 'SELECT 1 AS ready'
 ```
 
-Approve the printed device code in a browser on another device. `--use-device-code` selects that authorization flow, and `--no-browser` skips opening a browser on the host. The login credentials are stored unencrypted in `credentials.json` with permissions `0600`. A successful login saves the storage choice in `config.toml` for subsequent commands. On Linux these files default to `$XDG_CONFIG_HOME/scopedb` or `~/.config/scopedb`; `SCOPEDB_CONFIG_DIR` overrides their directory.
+Approve the printed device code in a browser on another device. `--use-device-code` selects that authorization flow, and `--no-browser` skips opening a browser on the host. Add `--insecure-storage` to choose plaintext directly for this login. It does not change future login defaults. Plaintext credentials use permissions `0600` on Unix. On Linux, `credentials.json` and `config.toml` default to `$XDG_CONFIG_HOME/scopedb` or `~/.config/scopedb`; `SCOPEDB_CONFIG_DIR` overrides their directory.
 
-The CLI never switches to plaintext storage automatically. To keep using the OS keyring, restore access to the D-Bus session and Secret Service instead.
+Queries and other commands discover the existing login, and refresh writes back to the same store without automatic downgrade. A fallback file takes precedence over an old keyring entry for the same control-plane URL. Logout revokes the active login and clears both stores. If the keyring cannot be cleared, the command reports the failure and removes local file tokens while retaining a non-secret logout marker so an old keyring entry cannot become active again. Restore keyring access and rerun `scope auth logout` to finish cleanup.
+
+To return to keyring storage, restore keyring access, run `scope auth logout`, then run `scope auth login` without `--insecure-storage`. Each new login tries the keyring again. `config.toml` stores service addresses, not a credential-store preference; legacy `credential_store` entries and `SCOPEDB_CREDENTIAL_STORE` are ignored.
 
 ## Get application credentials
 

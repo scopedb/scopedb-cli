@@ -56,7 +56,7 @@ scope query 'FROM system.tables LIMIT 10'
 
 Login does not require an interactive terminal. Authorization instructions and progress go to stderr; `--format text|json` selects the result format on stdout. For unattended access, use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; `scope auth status --format json` and `scope workspace list --format json` report machine-readable state.
 
-On Linux, the default login storage requires a working D-Bus session and Secret Service, such as GNOME Keyring. For servers or containers without a usable keyring, set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` for queries, or explicitly run `scope auth login --use-device-code --no-browser --insecure-storage` to store login credentials unencrypted in a `0600` file. The CLI never switches to plaintext storage automatically. See [headless Linux setup](docs/connect.md#use-headless-linux) for both workflows.
+Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves credentials unencrypted in a file (`0600` on Unix); `scope auth status` shows its location. `--insecure-storage` selects plaintext for that login only. For servers and CI, set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or use device authorization for a CLI login. See [headless Linux setup](docs/connect.md#use-headless-linux).
 
 Pass `--workspace <id-or-name>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account still owns it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. The text and JSON results report the selected workspace name and ID. Use `scope workspace use <id-or-name>` to switch afterwards.
 
