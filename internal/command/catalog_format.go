@@ -15,7 +15,7 @@
 package command
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,18 +27,23 @@ import (
 	scopedb "github.com/scopedb/goscopedb"
 )
 
-func (a *app) readCatalog(path string) (json.RawMessage, error) {
-	var data []byte
+func (a *app) readCatalog(ctx context.Context, path string) (json.RawMessage, error) {
+	var data string
 	var err error
 	if path == "-" {
-		data, err = io.ReadAll(a.input)
+		data, err = readInput(ctx, func() (string, error) {
+			value, err := io.ReadAll(a.input)
+			return string(value), err
+		})
 	} else {
-		data, err = os.ReadFile(path)
+		var value []byte
+		value, err = os.ReadFile(path)
+		data = string(value)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read catalog file: %w", err)
 	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := yaml.NewDecoder(strings.NewReader(data))
 	var value any
 	if err := decoder.Decode(&value); err != nil {
 		return nil, usageError("invalid catalog YAML or JSON: " + err.Error())
@@ -52,23 +57,6 @@ func (a *app) readCatalog(path string) (json.RawMessage, error) {
 		return nil, usageError("catalog must contain JSON-compatible YAML: " + err.Error())
 	}
 	return result, nil
-}
-
-func (a *app) writeCatalogOutput(value any, options catalogOptions) error {
-	switch options.output {
-	case "":
-		return nil
-	case "-":
-		return writeCatalog(a.out, value, options.format)
-	default:
-		if err := writeResultFile(options.output, options.force, func(w io.Writer) error {
-			return writeCatalog(w, value, options.format)
-		}); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintf(a.errOut, "Saved to %s.\n", options.output)
-		return err
-	}
 }
 
 func writeCatalog(writer io.Writer, value any, format string) error {

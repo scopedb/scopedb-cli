@@ -12,6 +12,7 @@ The global working agreements apply. Keep this file limited to constraints speci
 ## CLI contracts
 
 - Write command payloads to stdout and prompts, warnings, and progress to stderr.
+- Query results go to stdout. Leave output-file creation, permissions, and overwrite policy to the caller through redirection.
 - Never include session tokens, API keys, verification codes, or credential file contents in logs or errors.
 - Keep configuration precedence explicit: flags, environment, config file, defaults. Do not add Viper or implicit environment binding.
 - The OS keyring is the default credential store. Plaintext storage must remain an explicit opt-in and must use restrictive file permissions.
@@ -26,6 +27,7 @@ The global working agreements apply. Keep this file limited to constraints speci
 - Keep domain and transport errors structured until the process boundary in `cmd/scope`.
 - Add tests at observable boundaries: HTTP contracts, credential safety, auth resolution, cancellation, and rendered output. Avoid tests that merely mirror command registration or static literals.
 - Run `mise run check` and `mise run test:race` before merging behavior changes.
+- Run the same mise check, build, and test tasks on Linux, macOS, and Windows in CI; keep tool versions and commands in mise rather than duplicating them in platform-specific jobs.
 
 ## Documentation
 

@@ -21,7 +21,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -59,9 +61,6 @@ func RenderResult(writer io.Writer, result *scopedb.ResultSet, format string) er
 }
 
 func renderTable(writer io.Writer, schema scopedb.Schema, rows [][]scopedb.Value) error {
-	t := table.NewWriter()
-	t.SetOutputMirror(writer)
-	t.SetStyle(table.StyleLight)
 	header := make(table.Row, len(schema))
 	for index, field := range schema {
 		if field == nil {
@@ -69,7 +68,7 @@ func renderTable(writer io.Writer, schema scopedb.Schema, rows [][]scopedb.Value
 		}
 		header[index] = field.Name
 	}
-	t.AppendHeader(header)
+	t := NewTable(header...)
 	for _, values := range rows {
 		row := make(table.Row, len(values))
 		for index, value := range values {
@@ -77,8 +76,7 @@ func renderTable(writer io.Writer, schema scopedb.Schema, rows [][]scopedb.Value
 		}
 		t.AppendRow(row)
 	}
-	t.Render()
-	return nil
+	return WriteTable(writer, t)
 }
 
 type namedValue struct {
@@ -206,7 +204,11 @@ func displayValue(value any, null string) string {
 	case uint64:
 		return strconv.FormatUint(typed, 10)
 	case float64:
-		return strconv.FormatFloat(typed, 'g', -1, 64)
+		formatted := strconv.FormatFloat(typed, 'g', -1, 64)
+		if !math.IsNaN(typed) && !math.IsInf(typed, 0) && !strings.ContainsAny(formatted, ".e") {
+			formatted += ".0"
+		}
+		return formatted
 	default:
 		return fmt.Sprint(typed)
 	}

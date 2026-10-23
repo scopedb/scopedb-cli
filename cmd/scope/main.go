@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/command"
+	"github.com/scopedb/scopedb-cli/internal/dataplane"
 )
 
 func main() {
@@ -33,15 +35,28 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	root := command.NewRoot(command.Dependencies{
+	return execute(ctx, command.Dependencies{
 		In:     os.Stdin,
 		Out:    os.Stdout,
 		ErrOut: os.Stderr,
-	})
+	}, os.Args[1:])
+}
+
+func execute(ctx context.Context, deps command.Dependencies, args []string) int {
+	root := command.NewRoot(deps)
+	root.SetArgs(args)
 	err := command.NormalizeError(root.ExecuteContext(ctx))
 	if err == nil {
 		return clierror.ExitOK
 	}
-	_, _ = fmt.Fprint(os.Stderr, clierror.Render(err))
-	return clierror.ExitCode(err)
+	code := clierror.ExitCode(err)
+	var interrupted *dataplane.InterruptedError
+	var failure *clierror.Error
+	hasHint := errors.As(err, &failure) && failure.Hint != ""
+	if code == clierror.ExitInterrupted && !hasHint && (!errors.As(err, &interrupted) || interrupted.StatementID == "") {
+		_, _ = fmt.Fprintln(root.ErrOrStderr())
+	} else {
+		_, _ = fmt.Fprint(root.ErrOrStderr(), clierror.Render(err))
+	}
+	return code
 }

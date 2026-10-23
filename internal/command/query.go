@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
 )
@@ -31,8 +32,6 @@ const maxStatementBytes = 8 << 20
 func (a *app) newQueryCommand() *cobra.Command {
 	var statementFile string
 	var format string
-	var outputPath string
-	var force bool
 	var timeout time.Duration
 	command := &cobra.Command{
 		Use:   "query [scopeql]",
@@ -50,7 +49,9 @@ func (a *app) newQueryCommand() *cobra.Command {
 			if timeout < 0 {
 				return usageError("--timeout must not be negative")
 			}
-			statement, err := a.readStatement(args, statementFile)
+			statement, err := readInput(cmd.Context(), func() (string, error) {
+				return a.readStatement(args, statementFile)
+			})
 			if err != nil {
 				return err
 			}
@@ -73,27 +74,15 @@ func (a *app) newQueryCommand() *cobra.Command {
 			if err != nil {
 				return NormalizeError(err)
 			}
-
-			if outputPath == "" {
-				if err := output.RenderResult(a.out, result, format); err != nil {
-					return NormalizeError(err)
-				}
-				return nil
+			if err := output.RenderResult(a.out, result.ResultSet, format); err != nil {
+				return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, fmt.Sprintf("query %s completed, but its results could not be written", result.StatementID), err), "use the statement ID to retrieve its result; do not rerun a statement with side effects")
 			}
-			if err := writeResultFile(outputPath, force, func(writer io.Writer) error {
-				return output.RenderResult(writer, result, format)
-			}); err != nil {
-				return NormalizeError(err)
-			}
-			_, err = fmt.Fprintf(a.errOut, "Wrote %d row(s) to %s.\n", result.TotalRows, outputPath)
-			return NormalizeError(err)
+			return nil
 		},
 	}
 	command.Flags().StringVarP(&statementFile, "file", "f", "", "read ScopeQL from a file; use - for stdin")
 	command.Flags().StringVar(&format, "format", output.FormatTable, "output format: table, json, jsonl, or csv")
-	command.Flags().StringVarP(&outputPath, "output", "o", "", "write results to a file")
-	command.Flags().BoolVar(&force, "force", false, "overwrite an existing output file")
-	command.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "maximum time to wait before cancelling the statement; 0 disables the limit")
+	command.Flags().DurationVar(&timeout, "timeout", 5*time.Minute, "client-side wait limit before cancelling the statement; 0 disables the client limit")
 	return command
 }
 

@@ -52,7 +52,13 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-`scope auth login` prompts for an email address and verification code, then stores the session in the operating system keyring. A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status or create your first workspace in the Console. Once a workspace is available, select it without logging in again:
+`scope auth login` opens your browser, asks you to approve the request in the ScopeDB Console, and stores the login in the operating system keyring. Upgrading from an older CLI asks you to log in again. If the browser does not open, open the printed URL on the same device. For approval from another device, such as when using SSH or a container, run `scope auth login --use-device-code`. Add `--no-browser` to either flow to skip opening the browser automatically. A browser-launch failure leaves the selected flow waiting for approval.
+
+Login does not require an interactive terminal. Authorization instructions and progress go to stderr; `--format text|json` selects the result format on stdout. For unattended access, use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; `scope auth status --format json` and `scope workspace list --format json` report machine-readable state.
+
+Pass `--workspace <id-or-name>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account still owns it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. The text and JSON results report the selected workspace name and ID. Use `scope workspace use <id-or-name>` to switch afterwards.
+
+A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status and create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
 ```sh
 scope workspace list
@@ -60,26 +66,28 @@ scope workspace use <id-or-name>
 scope auth status
 ```
 
-`scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
-
-The verification code is hidden when entered at a terminal. For piped input, provide `--email` and send the code on stdin; passing `--code` exposes it in process arguments.
+The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
 
 `scope console [page]` provides shortcuts to Console pages: `home` (default), `query`, `data`, `keys`, and `connect`. For example, `scope console query` prints the query page URL; add `--open` to also open it in your browser.
 
 ## Query output
 
-Queries can be provided inline, from a file with `--file` or `-f`, or through stdin. Use `--format` to select the output format. Results can be rendered as a table, JSON, JSON Lines, or CSV.
+Queries can be provided inline, from a file with `--file` or `-f`, or through stdin. Results go to stdout; use `--format` to select a table, JSON, JSON Lines, or CSV. Use shell redirection to save results to a file.
 
 ```sh
 scope query -f report.scopeql --format json
-scope query 'FROM system.tables LIMIT 10' --format csv --output tables.csv
+scope query 'FROM system.tables LIMIT 10' --format csv > tables.csv
 ```
 
-Files created with `scope query --output` have permissions `0600` on Unix-like systems.
+The shell controls file replacement and permissions. Redirecting with `>` can truncate an existing file before the query runs; write to a temporary file and move it after success if you need to preserve the previous result on failure.
+
+`scope query` and the query check in `scope doctor` require ScopeDB 0.6.0 or later. `--timeout` limits client-side waiting (default: five minutes) and attempts server cancellation when it expires. `--timeout 0` disables this client limit; the server's default one-hour elapsed-time limit still applies.
+
+Once a statement ID has been received, timeout and Ctrl+C diagnostics include it and distinguish confirmed cancellation, an already completed statement, a server failure, and an unconfirmed outcome. The command keeps its timeout or interrupt exit code and writes no query results. If the statement already completed, retrieve its result using the ID instead of rerunning a statement with side effects.
 
 ## Catalog
 
-Catalog commands require a server with the declarative Catalog API. `get`, `apply`, and `plan` default to the entire tenant. Select one resource with `--database DB`, `--schema DB.SCHEMA`, `--table DB.SCHEMA.TABLE`, or `--view DB.SCHEMA.VIEW`. These scope flags are mutually exclusive and require fully qualified names. Bare names are case insensitive; use backticks to preserve case or include dots and special characters, for example ``'scopedb.public.`Events.Daily`'``.
+Catalog commands require ScopeDB 0.6.0 or later. `get`, `plan`, and `apply` default to the entire tenant. Select one resource with `--database DB`, `--schema DB.SCHEMA`, `--table DB.SCHEMA.TABLE`, or `--view DB.SCHEMA.VIEW`. These scope flags are mutually exclusive and require fully qualified names. Bare names are case insensitive; use backticks to preserve case or include special characters, for example ``'scopedb.public.`Events.Daily`'``.
 
 Browse resource names, then export the definition to edit:
 
@@ -87,29 +95,26 @@ Browse resource names, then export the definition to edit:
 scope catalog list databases
 scope catalog list schemas --database scopedb
 scope catalog list tables --schema scopedb.public
-scope catalog get --table scopedb.public.events -o events.yaml
+scope catalog get --table scopedb.public.events > events.yaml
 # Edit events.yaml.
 scope catalog apply --table scopedb.public.events -f events.yaml
 ```
 
-`list databases`, `list schemas`, `list tables`, and `list views` default to the entire tenant and return fully qualified names. Limit schemas with `--database`; limit tables or views with `--database` or `--schema`. Listing reads the complete selected resource and extracts its names locally. A definition replaces the complete selected resource: omitted objects are removed, and omitted collections are empty. Start from `get` when editing an existing resource. To manage the entire tenant, use `scope catalog get > catalog.yaml` and `scope catalog apply -f catalog.yaml`.
+`list` supports databases, schemas, tables, and views. Limit schemas with `--database`; limit tables or views with `--database` or `--schema`. Returned names are fully qualified and can be passed to `get`.
 
-`apply -f` displays a unified YAML diff on stderr. Changes that may permanently lose data display a warning before confirmation. Press Enter to approve the displayed changes, or Ctrl-C to cancel. Use `--yes` in automation and additionally pass `--allow-destructive` to permit data loss. Output defaults to YAML; `--format json` produces JSON. Files accept either format, and `-f -` reads stdin.
+A definition replaces the complete selected resource: omitted objects and fields are cleared. Start from `get` when editing an existing resource. `apply -f` displays a YAML diff on stderr and asks for confirmation, defaulting to no. Confirm with `y` or `yes`; changes that may permanently lose data display a warning first. Automation requires `--yes` and additionally `--allow-destructive` to permit data loss. Input files accept YAML or JSON, and `-f -` reads stdin; when stdin carries the definition, pass `--yes` or use a saved plan.
 
-For agents and reviewed changes, save a plan and apply it explicitly:
+Save a plan for review and apply it later:
 
 ```sh
-scope catalog plan --table scopedb.public.events -f events.yaml -o plan.yaml
+scope catalog plan --table scopedb.public.events -f events.yaml > plan.yaml
 scope catalog apply --plan plan.yaml
-# GitOps: save the actual before/after result as an audit artifact.
-scope catalog apply --table scopedb.public.events -f events.yaml --yes -o applied.yaml
+scope catalog apply --table scopedb.public.events -f events.yaml --yes --format json > applied.json
 ```
 
-`plan` displays a YAML diff on stderr. Use `--output FILE` to save the complete plan, or `--output -` to write it to stdout. A plan contains the original request, normalized before/after definitions, a `destructive` risk flag, connection, and catalog version. Machine-authenticated plans also bind to the API key through a hash, without including the key itself. Plans retain any custom storage credentials in the submitted definition; protect them like the source configuration.
+`plan` writes the plan to stdout and the diff to stderr. A plan contains the original request, normalized before/after definitions, a `destructive` risk flag, connection identity, and catalog version. Machine-authenticated plans bind to the API key through a hash without including the key itself. Plans can contain custom storage credentials from the source definition; protect them like the source configuration.
 
-`apply --plan` submits the saved request and reports a short result on stderr without prompting, redisplaying the saved diff, or rereading the source file; destructive plans require `--allow-destructive`. Treat the plan as a snapshot; edit the definition and regenerate the plan to change it. If the catalog changes, apply fails and asks you to plan again. Plans include any deletions caused by the replacement definition. Planning alone can also be used for audits.
-
-With `--output`, apply and drop save the actual before/after state and the `destructive` flag. Data loss risks include removing tables or physical columns, shortening retention, and changing deduplication on existing tables.
+`apply --plan` submits the saved request without another preview or prompt; destructive plans require `--allow-destructive`. If the catalog or connection has changed, apply fails. Regenerate and review the plan after editing its source or changing the target. `--plan -` reads a saved plan from stdin.
 
 ```sh
 scope catalog drop --table scopedb.public.events
@@ -117,19 +122,11 @@ scope catalog drop --table scopedb.public.events --yes --allow-destructive
 scope catalog drop --all --yes --allow-destructive
 ```
 
-`drop` requires a resource scope or `--all` to clear the tenant's complete user catalog. `drop` displays the deletion diff and asks for confirmation; use `--yes --allow-destructive` to automate deleting stored data. To clear only the tables in a schema, export that schema, set `tables: []`, and apply the edited definition. The CLI sends `allow_destructive=true` after interactive approval or an explicit flag; the server checks every request independently.
+`drop` requires a resource scope or `--all` to clear the tenant's complete user catalog. It previews the deletion and uses the same confirmation rules as apply. Data loss risks include removing tables or physical columns, shortening retention, and changing deduplication on existing tables; the server checks each request independently.
 
-Catalog reports, diffs, warnings, and confirmation prompts always go to stderr. Structured output uses YAML by default; `--format json` changes only its encoding, not its destination. The filename extension does not select a format.
+All commands write structured results to stdout, using YAML by default or JSON with `--format json`. Apply and drop return the actual before/after definitions and `destructive` flag. Diffs, warnings, prompts, and progress go to stderr. Use shell redirection to save results; the shell controls file replacement and permissions.
 
-| Command      | Default output                       | `--output FILE`                    | `--output -`                 |
-| ------------ | ------------------------------------ | ---------------------------------- | ---------------------------- |
-| `get`        | Full definition on stdout            | Definition in file                 | Definition on stdout         |
-| `list`       | Fully qualified names on stdout      | Names in file                      | Names on stdout              |
-| `plan`       | Diff and warnings on stderr          | Saved plan in file, report stderr  | Plan stdout, report stderr   |
-| `apply`      | Diff and execution result on stderr  | Result in file, report stderr      | Result stdout, report stderr |
-| `drop`       | Diff and execution result on stderr  | Result in file, report stderr      | Result stdout, report stderr |
-
-`--output` has the short form `-o`. Output files use permissions `0600` on Unix-like systems. Existing files require `--force`, which only permits overwriting the local file; data-loss authorization remains `--allow-destructive`. If a server write succeeds but saving the result fails, the CLI reports that the change was applied and exits with an error. Read the catalog before deciding whether to submit another change.
+`--timeout` sets a positive per-request duration, defaulting to five minutes. Preview and commit each receive the full budget; time spent reviewing a diff does not consume it. A timeout or interrupted connection during commit can leave the outcome unknown. The CLI never automatically retries a Catalog write. If a write succeeds but reporting its result fails, the error says it was applied. Read the catalog before deciding whether to submit another change.
 
 ## JSON output
 
@@ -166,7 +163,7 @@ For SDK setup, get the endpoint with `scope workspace get` and create an applica
 
 ## Development
 
-Development tools are managed with [mise](https://mise.jdx.dev/):
+Development tools are managed with [mise](https://mise.jdx.dev/). Tasks use Bash (Git Bash on Windows):
 
 ```sh
 mise install

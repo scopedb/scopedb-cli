@@ -39,6 +39,7 @@ type Paths struct {
 	Directory       string
 	Config          string
 	CredentialsFile string
+	LockFile        string
 }
 
 // Config contains non-secret user configuration.
@@ -72,6 +73,7 @@ func ResolvePaths() (Paths, error) {
 		Directory:       directory,
 		Config:          filepath.Join(directory, "config.toml"),
 		CredentialsFile: filepath.Join(directory, "credentials.json"),
+		LockFile:        filepath.Join(directory, "credentials.lock"),
 	}, nil
 }
 
@@ -188,7 +190,7 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := temporary.Close(); err != nil {
 		return fmt.Errorf("close temporary config file: %w", err)
 	}
-	if err := fileutil.Commit(temporaryPath, path, true); err != nil {
+	if err := fileutil.Commit(temporaryPath, path); err != nil {
 		return fmt.Errorf("replace config file: %w", err)
 	}
 	return nil

@@ -12,28 +12,31 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package command
+package filelock
 
 import (
-	"io"
-	"os"
+	"context"
 	"path/filepath"
-	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-func TestOutputFilePermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows file permissions use ACLs")
-	}
-	path := filepath.Join(t.TempDir(), "results.json")
-	require.NoError(t, writeResultFile(path, false, func(w io.Writer) error {
-		_, err := io.WriteString(w, `[{"email":"private@example.com"}]`)
-		return err
-	}))
-	info, err := os.Stat(path)
+func TestAcquireTakesAnUncontendedLock(t *testing.T) {
+	lock, err := Acquire(context.Background(), filepath.Join(t.TempDir(), "credentials.lock"))
 	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	require.NoError(t, lock.Close())
+}
+
+func TestAcquireGivesUpWhenTheContextEnds(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credentials.lock")
+	held, err := Acquire(context.Background(), path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, held.Close()) }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err = Acquire(ctx, path)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

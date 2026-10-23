@@ -15,20 +15,16 @@
 package command
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"runtime"
 	"strings"
 
 	scopedb "github.com/scopedb/goscopedb"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 type catalogPlan struct {
@@ -42,11 +38,18 @@ type catalogPlan struct {
 	scopedb.CatalogResult[json.RawMessage]
 }
 
-func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogResource, options catalogOptions) error {
+func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOptions) error {
+	resource, err := options.resource(cmd)
+	if err != nil {
+		return err
+	}
+	if action == "drop" && resource.Kind == "catalog" && !options.all {
+		return usageError("select a resource to drop, or use --all to clear the tenant")
+	}
 	var plan catalogPlan
 	var method string
 	if options.plan != "" {
-		data, err := a.readCatalog(options.plan)
+		data, err := a.readCatalog(cmd.Context(), options.plan)
 		if err != nil {
 			return err
 		}
@@ -70,7 +73,7 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 			if options.file == "" {
 				return usageError("provide --file (-f), or use --file - for stdin")
 			}
-			definition, err := a.readCatalog(options.file)
+			definition, err := a.readCatalog(cmd.Context(), options.file)
 			if err != nil {
 				return err
 			}
@@ -99,7 +102,7 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 		// Machine credentials carry no workspace ID, so pin the credential without storing it.
 		credentialHash = fmt.Sprintf("%x", sha256.Sum256([]byte(access.APIKey)))
 	}
-	client, err := scopedb.NewClient(scopedb.Config{Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient})
+	client, err := scopedb.NewClient(scopedb.Config{Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient, WriteTimeout: options.timeout})
 	if err != nil {
 		return err
 	}
@@ -115,63 +118,46 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 		if plan.Endpoint != endpoint || plan.WorkspaceID != access.WorkspaceID || plan.CredentialHash != credentialHash {
 			return usageError("plan targets a different connection, workspace, or machine credential; select its connection or generate a new plan")
 		}
-		if plan.Destructive && !options.allowDestructive {
-			return usageError("changes may permanently lose data; review the plan and pass --allow-destructive")
-		}
+	} else {
 		ctx, cancel := options.requestContext(cmd.Context())
-		defer cancel()
-		result, err := mutate(ctx, scopedb.CatalogOptions{
-			AllowDestructive: options.allowDestructive, IfMatch: plan.ETag,
-		})
+		change, err := mutate(ctx, scopedb.CatalogOptions{DryRun: true})
+		cancel()
 		if err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintln(a.errOut, "Applied."); err != nil {
-			return clierror.Wrap(clierror.ExitGeneral, "catalog applied, but reporting the result failed: "+err.Error(), err)
+		plan.Version, plan.Endpoint, plan.WorkspaceID = 1, endpoint, access.WorkspaceID
+		plan.CredentialHash = credentialHash
+		plan.ETag, plan.CatalogResult = change.ETag, change
+		diff, err := catalogDiff(plan.Resource, plan.CatalogResult)
+		if err != nil {
+			return err
 		}
-		if err := a.writeCatalogOutput(result, options); err != nil {
-			return clierror.Wrap(clierror.ExitGeneral, "catalog applied, but writing the result failed: "+err.Error(), err)
+		if diff != "" {
+			if _, err := fmt.Fprint(a.errOut, diff); err != nil {
+				return err
+			}
+		} else if _, err := fmt.Fprintln(a.errOut, "No changes."); err != nil {
+			return err
 		}
-		return nil
+		if plan.Destructive {
+			if _, err := fmt.Fprintln(a.errOut, "Warning: these changes may permanently lose data."); err != nil {
+				return err
+			}
+		}
+		if action == "plan" {
+			return writeCatalog(a.out, plan, options.format)
+		}
+		if (diff != "" || plan.Destructive) && !options.yes {
+			if err := a.confirmCatalog(cmd.Context(), options.file == "-"); err != nil {
+				return err
+			}
+			options.allowDestructive = options.allowDestructive || plan.Destructive
+		}
+	}
+	if plan.Destructive && !options.allowDestructive {
+		return usageError("changes may permanently lose data; review the plan and pass --allow-destructive")
 	}
 	ctx, cancel := options.requestContext(cmd.Context())
-	change, err := mutate(ctx, scopedb.CatalogOptions{DryRun: true})
-	cancel()
-	if err != nil {
-		return err
-	}
-	plan.Version, plan.Endpoint, plan.WorkspaceID = 1, endpoint, access.WorkspaceID
-	plan.CredentialHash = credentialHash
-	plan.ETag, plan.CatalogResult = change.ETag, change
-	diff, err := catalogDiff(plan.Resource, plan.CatalogResult)
-	if err != nil {
-		return err
-	}
-	if diff != "" {
-		if _, err := fmt.Fprint(a.errOut, diff); err != nil {
-			return err
-		}
-	} else if _, err := fmt.Fprintln(a.errOut, "No changes."); err != nil {
-		return err
-	}
-	if plan.Destructive {
-		if _, err := fmt.Fprintln(a.errOut, "Warning: these changes may permanently lose data."); err != nil {
-			return err
-		}
-	}
-	if action == "plan" {
-		return a.writeCatalogOutput(plan, options)
-	}
-	if plan.Destructive && !options.allowDestructive && options.yes {
-		return usageError("changes may permanently lose data; review the diff and pass --allow-destructive")
-	}
-	if (diff != "" || plan.Destructive) && !options.yes {
-		if err := a.confirmCatalog(cmd.Context(), options.file == "-"); err != nil {
-			return err
-		}
-		options.allowDestructive = options.allowDestructive || plan.Destructive
-	}
-	ctx, cancel = options.requestContext(cmd.Context())
 	defer cancel()
 	result, err := mutate(ctx, scopedb.CatalogOptions{
 		AllowDestructive: options.allowDestructive, IfMatch: plan.ETag,
@@ -186,45 +172,22 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, resource catalogR
 	if _, err := fmt.Fprintln(a.errOut, message); err != nil {
 		return clierror.Wrap(clierror.ExitGeneral, "catalog applied, but reporting the result failed: "+err.Error(), err)
 	}
-	if err := a.writeCatalogOutput(result, options); err != nil {
+	if err := writeCatalog(a.out, result, options.format); err != nil {
 		return clierror.Wrap(clierror.ExitGeneral, "catalog applied, but writing the result failed: "+err.Error(), err)
 	}
 	return nil
 }
 
 func (a *app) confirmCatalog(ctx context.Context, stdinConsumed bool) error {
-	reader := a.input
 	if stdinConsumed || !a.isInputTerminal() {
-		path := "/dev/tty"
-		if runtime.GOOS == "windows" {
-			path = "CONIN$"
-		}
-		terminal, err := os.Open(path)
-		if err != nil {
-			return usageError("confirmation requires a terminal; pass --yes or apply a saved plan")
-		}
-		defer func() { _ = terminal.Close() }()
-		if !term.IsTerminal(int(terminal.Fd())) {
-			return usageError("confirmation requires a terminal; pass --yes or apply a saved plan")
-		}
-		reader = bufio.NewReader(terminal)
+		return usageError("confirmation requires interactive input; pass --yes or apply a saved plan")
 	}
-	if _, err := fmt.Fprint(a.errOut, "Press Enter to apply these changes; Ctrl-C to cancel: "); err != nil {
+	answer, err := a.readLine(ctx, "Apply these catalog changes? [y/N] ")
+	if err != nil {
 		return err
 	}
-	type reply struct {
-		text string
-		err  error
+	if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
+		return clierror.New(clierror.ExitInterrupted, "catalog apply cancelled")
 	}
-	done := make(chan reply, 1)
-	go func() { text, err := reader.ReadString('\n'); done <- reply{text, err} }()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case response := <-done:
-		if response.err != nil || strings.TrimSpace(response.text) != "" {
-			return clierror.New(clierror.ExitInterrupted, "catalog apply cancelled")
-		}
-		return nil
-	}
+	return nil
 }

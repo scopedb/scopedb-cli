@@ -26,6 +26,7 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 
 	"github.com/go-openapi/go-yaml"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
@@ -79,7 +80,7 @@ func TestCatalogPlanApply(t *testing.T) {
 		root.SetArgs(args)
 		return root.ExecuteContext(t.Context())
 	}
-	require.NoError(t, run("name: a/b\ncomment: yes\nstorage:\n  secret_access_key: storage-secret\n", "catalog", "plan", "--table", "db.public.`a/b`", "-f", "-", "--output", "-"))
+	require.NoError(t, run("name: a/b\ncomment: yes\nstorage:\n  secret_access_key: storage-secret\n", "catalog", "plan", "--table", "db.public.`a/b`", "-f", "-"))
 	saved := out.String()
 	require.NotContains(t, saved, "fixture-secret")
 	require.NotContains(t, diagnostics.String(), "storage-secret")
@@ -93,7 +94,7 @@ func TestCatalogPlanApply(t *testing.T) {
 	require.Equal(t, 1, writes)
 	require.Equal(t, 1, plans, "saved plan must not be refreshed before applying")
 	require.Equal(t, "Applied.\n", diagnostics.String(), "saved plans apply without redisplaying the reviewed diff")
-	require.Empty(t, out.String())
+	require.Contains(t, out.String(), "destructive: true")
 	apiKey = "another-workspace-key"
 	err := run(saved, "catalog", "apply", "--plan", "-")
 	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
@@ -114,12 +115,15 @@ func TestCatalogApplyConfirmation(t *testing.T) {
 	definition := filepath.Join(t.TempDir(), "table.yaml")
 	require.NoError(t, os.WriteFile(definition, []byte("name: t\ncolumns: []\n"), 0o600))
 	for _, tc := range []struct {
-		name, input                        string
-		yes, destructive, allowDestructive bool
-		wantCode                           int
-		wantWrites                         int
+		name, input                                        string
+		yes, destructive, allowDestructive, nonInteractive bool
+		wantCode                                           int
+		wantWrites                                         int
 	}{
-		{name: "enter", input: "\n", destructive: true, wantWrites: 1},
+		{name: "enter declines", input: "\n", destructive: true, wantCode: clierror.ExitInterrupted},
+		{name: "yes", input: "yes\n", destructive: true, wantWrites: 1},
+		{name: "y", input: "y\n", wantWrites: 1},
+		{name: "non-interactive input cannot confirm", input: "yes\n", nonInteractive: true, wantCode: clierror.ExitUsage},
 		{name: "eof", input: "", destructive: true, wantCode: clierror.ExitInterrupted},
 		{name: "decline", input: "no\n", destructive: true, wantCode: clierror.ExitInterrupted},
 		{name: "safe automation", yes: true, wantWrites: 1},
@@ -130,7 +134,7 @@ func TestCatalogApplyConfirmation(t *testing.T) {
 			writes := 0
 			var out, diagnostics bytes.Buffer
 			root := NewRoot(Dependencies{In: strings.NewReader(tc.input), Out: &out, ErrOut: &diagnostics,
-				IsInputTerminal: func() bool { return !tc.yes },
+				IsInputTerminal: func() bool { return !tc.yes && !tc.nonInteractive },
 				Getenv: func(name string) string {
 					switch name {
 					case "SCOPEDB_ENDPOINT":
@@ -212,7 +216,7 @@ func TestCatalogDrop(t *testing.T) {
 				})},
 			}
 			root := NewRoot(deps)
-			root.SetArgs(append(append([]string{"catalog", "drop"}, tc.resource...), "--yes", "--allow-destructive", "--format", "json", "--output", "-"))
+			root.SetArgs(append(append([]string{"catalog", "drop"}, tc.resource...), "--yes", "--allow-destructive", "--format", "json"))
 			require.NoError(t, root.ExecuteContext(t.Context()))
 			require.Equal(t, 2, requests)
 			require.JSONEq(t, `{"before":{"name":"t"},"after":`+tc.after+`,"destructive":true}`, out.String())
@@ -229,7 +233,7 @@ func TestCatalogInvalidInput(t *testing.T) {
 		})
 	}
 	a := newApp(Dependencies{In: strings.NewReader("name: t\ncomment: 2026-10-12\nretention_days: 9007199254740993\nzero: 077\neight: 008\nexplicit: !!str 077\nbinary: 0b10\nunderscores: 1_000\nexponent: 1e3\n")})
-	data, err := a.readCatalog("-")
+	data, err := a.readCatalog(t.Context(), "-")
 	require.NoError(t, err)
 	require.JSONEq(t, `{"name":"t","comment":"2026-10-12","retention_days":9007199254740993,"zero":77,"eight":8,"explicit":"077","binary":"0b10","underscores":"1_000","exponent":1000}`, string(data))
 	var out bytes.Buffer
@@ -335,9 +339,6 @@ func TestCatalogRequestFailures(t *testing.T) {
 				}
 			} else {
 				require.Equal(t, 1, requests)
-				if tc.code == clierror.ExitInterrupted {
-					require.Equal(t, "\n", clierror.Render(err))
-				}
 			}
 		})
 	}
@@ -436,7 +437,7 @@ func TestCatalogTenantApply(t *testing.T) {
 			return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"9"`}}, Body: io.NopCloser(strings.NewReader(`{"before":{"databases":[{"name":"db"}]},"after":{"databases":[]},"destructive":false}`)), Request: r}, nil
 		})},
 	})
-	root.SetArgs([]string{"catalog", "apply", "-f", "-", "--yes", "--format", "json", "--output", "-"})
+	root.SetArgs([]string{"catalog", "apply", "-f", "-", "--yes", "--format", "json"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
 	require.Equal(t, 2, requests)
 	require.Contains(t, diagnostics.String(), "-databases:")
@@ -481,48 +482,78 @@ func TestCatalogOutput(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 	})}
-	run := func(args ...string) error {
+	run := func(writer io.Writer, args ...string) error {
 		out.Reset()
 		diagnostics.Reset()
-		root := NewRoot(Dependencies{In: strings.NewReader("databases: [{name: db}]\n"), Out: &out, ErrOut: &diagnostics, HTTPClient: client})
+		root := NewRoot(Dependencies{In: strings.NewReader("databases: [{name: db}]\n"), Out: writer, ErrOut: &diagnostics, HTTPClient: client})
 		root.SetArgs(append([]string{"catalog"}, args...))
 		return root.ExecuteContext(t.Context())
 	}
-	// Selecting a format does not enable structured output for a report command.
-	require.NoError(t, run("plan", "-f", "-", "--format", "json"))
-	require.Empty(t, out.String())
-	require.Contains(t, diagnostics.String(), "+- name: db")
-
-	path := filepath.Join(t.TempDir(), "plan.yaml")
-	require.NoError(t, run("plan", "-f", "-", "-o", path))
-	require.Empty(t, out.String())
-	saved, err := os.ReadFile(path)
-	require.NoError(t, err)
-	data, err := yaml.ToJSON(saved)
-	require.NoError(t, err)
+	require.NoError(t, run(&out, "plan", "-f", "-", "--format", "json"))
 	var plan catalogPlan
-	require.NoError(t, json.Unmarshal(data, &plan))
+	require.NoError(t, json.Unmarshal(out.Bytes(), &plan))
 	require.Equal(t, "catalog", plan.Resource.Kind)
 	require.Equal(t, `"1"`, plan.ETag)
-	require.Contains(t, diagnostics.String(), path)
-	require.ErrorContains(t, run("plan", "-f", "-", "-o", path), "already exists")
-	require.NoError(t, run("plan", "-f", "-", "-o", path, "--force"))
+	require.Contains(t, diagnostics.String(), "+- name: db")
+	path := filepath.Join(t.TempDir(), "plan.json")
+	require.NoError(t, os.WriteFile(path, out.Bytes(), 0o600))
 
-	require.NoError(t, run("apply", "--plan", path, "--output", "-", "--format", "json"))
+	require.NoError(t, run(&out, "apply", "--plan", path, "--format", "json"))
 	require.JSONEq(t, result, out.String())
 	require.Equal(t, "Applied.\n", diagnostics.String())
 	require.Equal(t, 1, writes)
 
-	err = run("apply", "--plan", path, "--output", path)
+	err := run(failingWriter{err: io.ErrClosedPipe}, "apply", "--plan", path)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
 	require.Contains(t, clierror.Render(err), "catalog applied, but writing the result failed")
-	require.NotContains(t, clierror.Render(err), "pass --force")
 	require.Equal(t, 2, writes, "output failure must not retry a committed request")
-	require.Empty(t, out.String())
 
-	definition := filepath.Join(t.TempDir(), "catalog.yaml")
-	require.NoError(t, run("get", "--output", definition, "--format", "json"))
-	data, err = os.ReadFile(definition)
-	require.NoError(t, err)
-	require.JSONEq(t, `{"databases":[{"name":"db"}]}`, string(data))
-	require.Empty(t, out.String())
+	require.NoError(t, run(&out, "get", "--format", "json"))
+	require.JSONEq(t, `{"databases":[{"name":"db"}]}`, out.String())
+	require.Empty(t, diagnostics.String())
+}
+
+func TestCatalogRequestTimeout(t *testing.T) {
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	for _, tc := range []struct {
+		args     []string
+		timeout  time.Duration
+		requests int
+	}{
+		{[]string{"get", "--timeout", "2m"}, 2 * time.Minute, 1},
+		{[]string{"plan", "-f", "-", "--timeout", "2m"}, 2 * time.Minute, 1},
+		{[]string{"apply", "-f", "-", "--yes", "--timeout", "2m"}, 2 * time.Minute, 2},
+		{[]string{"drop", "--table", "db.public.t", "--yes", "--timeout", "2m"}, 2 * time.Minute, 2},
+		{[]string{"apply", "-f", "-", "--yes"}, 5 * time.Minute, 2},
+		{[]string{"apply", "-f", "-", "--yes", "--timeout", "0"}, 0, 0},
+		{[]string{"get", "--timeout", "-1s"}, 0, 0},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			requests := 0
+			root := NewRoot(Dependencies{In: strings.NewReader("databases: []\n"), Out: io.Discard, ErrOut: io.Discard,
+				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+					requests++
+					deadline, ok := r.Context().Deadline()
+					require.True(t, ok)
+					require.InDelta(t, tc.timeout.Seconds(), time.Until(deadline).Seconds(), 5,
+						"the SDK must use the CLI timeout for both preview and commit")
+					body := `{"before":{"databases":[]},"after":{"databases":[{"name":"db"}]},"destructive":false}`
+					if r.Method == http.MethodGet {
+						body = `{"databases":[]}`
+					}
+					return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+				})},
+			})
+			root.SetArgs(append([]string{"catalog"}, tc.args...))
+			err := root.ExecuteContext(t.Context())
+			if tc.timeout == 0 {
+				require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.requests, requests)
+		})
+	}
 }

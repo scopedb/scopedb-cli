@@ -15,21 +15,26 @@
 package command
 
 import (
+	"errors"
+	"fmt"
 	"io"
+	"time"
 
 	"github.com/jedib0t/go-pretty/v6/table"
+	"github.com/scopedb/scopedb-cli/internal/auth"
+	"github.com/scopedb/scopedb-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 
 type statusView struct {
-	AuthMode         string `json:"auth_mode"`
-	ControlURL       string `json:"control_url,omitempty"`
-	Email            string `json:"email,omitempty"`
-	CredentialSource string `json:"credential_source"`
-	UserStatus       string `json:"user_status,omitempty"`
-	WorkspaceID      string `json:"workspace_id,omitempty"`
-	WorkspaceName    string `json:"workspace_name,omitempty"`
-	Endpoint         string `json:"endpoint,omitempty"`
+	ControlURL            string `json:"control_url,omitempty"`
+	Email                 string `json:"email,omitempty"`
+	CredentialSource      string `json:"credential_source"`
+	UserStatus            string `json:"user_status,omitempty"`
+	RefreshTokenExpiresAt string `json:"refresh_token_expires_at,omitempty"`
+	WorkspaceID           string `json:"workspace_id,omitempty"`
+	WorkspaceName         string `json:"workspace_name,omitempty"`
+	Endpoint              string `json:"endpoint,omitempty"`
 }
 
 func (a *app) newStatusCommand() *cobra.Command {
@@ -38,7 +43,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 		Use:   "status",
 		Short: "Show authentication source, identity, and connection target",
 		Long: "Show authentication source, identity, and connection target.\n" +
-			"Uses environment credentials when set; otherwise verifies your login session.\n" +
+			"Uses environment credentials when set; otherwise verifies your CLI login.\n" +
 			"Run 'scope doctor' to verify query access or 'scope workspace get' for deployment details.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -54,31 +59,44 @@ func (a *app) newStatusCommand() *cobra.Command {
 					return NormalizeError(machineErr)
 				}
 				return renderStatus(a.out, format, statusView{
-					AuthMode: access.Mode, CredentialSource: "environment", Endpoint: access.Endpoint,
+					CredentialSource: "environment", Endpoint: access.Endpoint,
 				})
 			}
 
-			state, session, err := runtime.auth.LoadSession(cmd.Context())
+			account, err := runtime.auth.Account(cmd.Context())
+			if err != nil {
+				return NormalizeError(err)
+			}
+			if account.SelectedWorkspaceID != "" && errors.Is(auth.RequireWorkspace(account), auth.ErrWorkspaceUnavailable) {
+				if err := runtime.auth.ClearWorkspace(cmd.Context()); err != nil {
+					return NormalizeError(err)
+				}
+				account.SelectedWorkspaceID = ""
+				if _, err := fmt.Fprintln(a.errOut, "The selected workspace is no longer available; no workspace is selected."); err != nil {
+					return NormalizeError(err)
+				}
+			}
+			state, err := runtime.auth.LoadAccess(cmd.Context())
 			if err != nil {
 				return NormalizeError(err)
 			}
 			view := statusView{
-				AuthMode:         "session",
-				ControlURL:       runtime.config.ControlURL,
-				Email:            session.User.Email,
-				CredentialSource: runtime.config.CredentialStore,
-				UserStatus:       session.User.Status,
-				WorkspaceID:      state.WorkspaceID,
+				ControlURL:            runtime.config.ControlURL,
+				Email:                 account.User.Email,
+				CredentialSource:      runtime.config.CredentialStore,
+				UserStatus:            account.User.Status,
+				RefreshTokenExpiresAt: refreshTokenExpiry(state.RefreshTokenExpiresAt),
+				WorkspaceID:           account.SelectedWorkspaceID,
 			}
-			if state.WorkspaceID != "" {
-				details, err := runtime.control.GetWorkspace(cmd.Context(), state.SessionToken, state.WorkspaceID)
+			if account.SelectedWorkspaceID != "" {
+				details, err := runtime.control.GetWorkspace(cmd.Context(), state.AccessToken, account.SelectedWorkspaceID)
 				if err != nil {
 					return NormalizeError(err)
 				}
 				view.WorkspaceName = details.Workspace.Name()
 				view.Endpoint = details.Connection.APIBaseURL
 			}
-			if err := a.writeWorkspaceSetup(session); err != nil {
+			if err := a.writeWorkspaceSetup(account); err != nil {
 				return err
 			}
 			return renderStatus(a.out, format, view)
@@ -88,23 +106,29 @@ func (a *app) newStatusCommand() *cobra.Command {
 	return command
 }
 
+func refreshTokenExpiry(expiresAt time.Time) string {
+	if expiresAt.IsZero() {
+		return ""
+	}
+	return expiresAt.UTC().Format(time.RFC3339)
+}
+
 func renderStatus(out io.Writer, format string, view statusView) error {
 	if format == structuredFormatJSON {
 		return writeJSON(out, view)
 	}
-	t := newTable(out, "FIELD", "VALUE")
+	t := output.NewTable("FIELD", "VALUE")
 	t.AppendRows([]table.Row{
-		{"Auth mode", view.AuthMode},
 		{"Credential source", view.CredentialSource},
 		{"Email", emptyDash(view.Email)},
 		{"User status", emptyDash(view.UserStatus)},
+		{"Refresh token expires", emptyDash(view.RefreshTokenExpiresAt)},
 		{"Workspace", emptyDash(view.WorkspaceName)},
 		{"Workspace ID", emptyDash(view.WorkspaceID)},
 		{"Endpoint", emptyDash(view.Endpoint)},
 		{"Control URL", emptyDash(view.ControlURL)},
 	})
-	t.Render()
-	return nil
+	return output.WriteTable(out, t)
 }
 
 func emptyDash(value string) string {

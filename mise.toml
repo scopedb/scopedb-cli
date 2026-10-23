@@ -18,6 +18,9 @@ go = "1.27.1"
 golangci-lint = "2.13.2"
 typos = "1.50.1"
 
+[task_config]
+shell = "bash -e -o pipefail -c"
+
 [tasks.scope]
 description = "Run the repository-local ScopeDB CLI"
 run = "go run ./cmd/scope"
@@ -56,10 +59,8 @@ golangci-lint run
 
 [tasks.build]
 description = "Build the ScopeDB CLI"
-run = '''
-mkdir -p bin
-CGO_ENABLED=0 go build -trimpath -o bin/scope ./cmd/scope
-'''
+env.CGO_ENABLED = "0"
+run = "go build -trimpath -o bin/ ./cmd/scope"
 
 [tasks.test]
 description = "Run all tests"

@@ -49,9 +49,9 @@ func NewRoot(deps Dependencies) *cobra.Command {
 	root.AddCommand(
 		a.newAuthCommand(),
 		a.newWorkspaceCommand(),
+		a.newAPIKeyCommand(),
 		a.newQueryCommand(),
 		a.newCatalogCommand(),
-		a.newAPIKeyCommand(),
 		a.newDoctorCommand(),
 		a.newConsoleCommand(),
 		newVersionCommand(a.out),
@@ -63,7 +63,7 @@ func NewRoot(deps Dependencies) *cobra.Command {
 func (a *app) newAuthCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "auth",
-		Short: "Manage CLI authentication",
+		Short: "Log in, log out, and check authentication status",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
