@@ -70,7 +70,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 				return NormalizeError(err)
 			}
 			if account.SelectedWorkspaceID != "" && errors.Is(auth.RequireWorkspace(account), auth.ErrWorkspaceUnavailable) {
-				if err := runtime.auth.ClearWorkspace(cmd.Context()); err != nil {
+				if err := runtime.auth.SelectWorkspace(cmd.Context(), ""); err != nil {
 					return NormalizeError(err)
 				}
 				account.SelectedWorkspaceID = ""

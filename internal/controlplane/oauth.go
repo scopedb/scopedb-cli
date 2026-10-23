@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -131,7 +132,7 @@ func (c *Client) DiscoverOAuth(ctx context.Context) (*OAuth, error) {
 			return nil, fmt.Errorf("invalid %s: %s", name, err)
 		}
 	}
-	if !contains(metadata.CodeChallengeMethodsSupported, "S256") {
+	if !slices.Contains(metadata.CodeChallengeMethodsSupported, "S256") {
 		return nil, fmt.Errorf("the authorization server does not support PKCE with S256")
 	}
 	if !metadata.AuthorizationResponseIssParameterSupported {
@@ -322,13 +323,4 @@ func sameOrigin(origin, endpoint string) error {
 		return fmt.Errorf("it must be served from %s", origin)
 	}
 	return nil
-}
-
-func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }

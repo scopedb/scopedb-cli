@@ -293,7 +293,7 @@ func isControlUnauthorized(err error) bool {
 	return errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized
 }
 
-// An OAuth credential is never rotated to change workspace, so the selection is local state. The
+// SelectWorkspace updates the local selection; an empty ID clears it. The
 // record is re-read under the lock so a concurrent refresh or data-token cache write is preserved.
 func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error {
 	lock, err := filelock.Acquire(ctx, m.LockFile)
@@ -314,31 +314,7 @@ func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error
 	state.DataTokenWorkspaceID = ""
 	state.DataTokenExpiresAt = time.Time{}
 	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
-		return fmt.Errorf("workspace changed, but the selection could not be saved: %w", err)
-	}
-	return nil
-}
-
-func (m *Manager) ClearWorkspace(ctx context.Context) error {
-	lock, err := filelock.Acquire(ctx, m.LockFile)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = lock.Close() }()
-
-	state, err := m.load()
-	if err != nil {
-		return err
-	}
-	if state.WorkspaceID == "" {
-		return nil
-	}
-	state.WorkspaceID = ""
-	state.DataToken = ""
-	state.DataTokenWorkspaceID = ""
-	state.DataTokenExpiresAt = time.Time{}
-	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
-		return fmt.Errorf("workspace selection could not be cleared: %w", err)
+		return fmt.Errorf("save workspace selection: %w", err)
 	}
 	return nil
 }
