@@ -143,7 +143,7 @@ func (f *fakeControlPlane) serve(w http.ResponseWriter, r *http.Request) {
 		f.writeJSON(w, http.StatusOK, f.User)
 	case r.URL.Path == "/api/workspaces" && r.Method == http.MethodGet:
 		f.writeJSON(w, http.StatusOK, controlplane.WorkspacesResponse{Workspaces: f.workspaces()})
-	case r.URL.Path == "/healthz":
+	case r.URL.Path == "/livez":
 		status := f.HealthStatus
 		if status == 0 {
 			status = http.StatusOK

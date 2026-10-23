@@ -102,6 +102,7 @@ func TestDoctorChecksOAuthDataAccess(t *testing.T) {
 			require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 			require.Empty(t, diagnostics.String())
 			require.NotContains(t, out.String(), "data-secret")
+			require.Contains(t, report.Checks, doctorCheck{Name: "control plane", Status: "pass", Details: fake.URL})
 			if phase.wantDetail == "" {
 				require.NoError(t, err)
 				require.True(t, report.OK)
