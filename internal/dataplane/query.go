@@ -25,41 +25,40 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/auth"
 )
 
-// InterruptedError records cancellation of a submitted server-side statement.
+// InterruptedError records a client interruption or timeout and the server's
+// response to the subsequent cancellation request.
 type InterruptedError struct {
-	StatementID string
-	CancelErr   error
+	StatementID  string
+	Cause        error
+	CancelResult scopedb.StatementCancelResult
+	CancelErr    error
 }
 
 func (e *InterruptedError) Error() string {
+	reason := "interrupted"
+	if errors.Is(e.Cause, context.DeadlineExceeded) {
+		reason = "timed out"
+	}
 	if e.StatementID == "" {
-		return "query interrupted"
+		return "query " + reason
 	}
+	message := fmt.Sprintf("query %s %s", e.StatementID, reason)
 	if e.CancelErr != nil {
-		return fmt.Sprintf("query %s interrupted; server cancellation could not be confirmed", e.StatementID)
+		return fmt.Sprintf("%s; server cancellation could not be confirmed: %v", message, e.CancelErr)
 	}
-	return fmt.Sprintf("query %s interrupted; server cancellation confirmed", e.StatementID)
+	switch e.CancelResult.Status {
+	case scopedb.StatementStatusCancelled:
+		return message + "; server cancellation confirmed"
+	case scopedb.StatementStatusFinished:
+		return message + "; statement already completed"
+	case scopedb.StatementStatusFailed:
+		return message + "; statement failed: " + e.CancelResult.Message
+	default:
+		return fmt.Sprintf("%s; server cancellation could not be confirmed (status %s)", message, e.CancelResult.Status)
+	}
 }
 
-func (e *InterruptedError) Unwrap() error { return context.Canceled }
-
-// TimedOutError records a client-side deadline after a statement was submitted.
-type TimedOutError struct {
-	StatementID string
-	CancelErr   error
-}
-
-func (e *TimedOutError) Error() string {
-	if e.StatementID == "" {
-		return "query timed out"
-	}
-	if e.CancelErr != nil {
-		return fmt.Sprintf("query %s timed out; server cancellation could not be confirmed", e.StatementID)
-	}
-	return fmt.Sprintf("query %s timed out", e.StatementID)
-}
-
-func (e *TimedOutError) Unwrap() error { return context.DeadlineExceeded }
+func (e *InterruptedError) Unwrap() error { return e.Cause }
 
 // QueryService executes ScopeQL through the public Go SDK.
 type QueryService struct {
@@ -73,7 +72,7 @@ type QueryResult struct {
 }
 
 // Execute submits a statement, waits for its result, and best-effort cancels
-// the server-side work if the caller interrupts the command.
+// the server-side work if the caller interrupts the command or its wait times out.
 func (s *QueryService) Execute(ctx context.Context, access auth.Access, statement string) (*QueryResult, error) {
 	client, err := scopedb.NewClient(scopedb.Config{
 		Endpoint:   access.Endpoint,
@@ -93,20 +92,17 @@ func (s *QueryService) Execute(ctx context.Context, access auth.Access, statemen
 	if err == nil {
 		return &QueryResult{ResultSet: result, StatementID: handle.ID().String()}, nil
 	}
-	interrupted := errors.Is(err, context.Canceled)
-	timedOut := errors.Is(err, context.DeadlineExceeded)
-	if !interrupted && !timedOut {
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		return nil, err
 	}
 
 	cancelCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	status, cancelErr := handle.Cancel(cancelCtx)
-	if cancelErr == nil && status != scopedb.StatementStatusCancelled {
-		cancelErr = fmt.Errorf("statement was not cancelled: status %s", status)
+	cancelResult, cancelErr := handle.Cancel(cancelCtx)
+	return nil, &InterruptedError{
+		StatementID:  handle.ID().String(),
+		Cause:        err,
+		CancelResult: cancelResult,
+		CancelErr:    cancelErr,
 	}
-	if timedOut {
-		return nil, &TimedOutError{StatementID: handle.ID().String(), CancelErr: cancelErr}
-	}
-	return nil, &InterruptedError{StatementID: handle.ID().String(), CancelErr: cancelErr}
 }

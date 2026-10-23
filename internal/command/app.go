@@ -314,22 +314,31 @@ func NormalizeError(err error) error {
 	}
 	var interrupted *dataplane.InterruptedError
 	if errors.As(err, &interrupted) {
-		result := clierror.Wrap(clierror.ExitInterrupted, interrupted.Error(), err)
+		code := clierror.ExitInterrupted
+		if errors.Is(err, context.DeadlineExceeded) {
+			code = clierror.ExitTemporary
+		}
+		result := clierror.Wrap(code, interrupted.Error(), err)
 		if interrupted.CancelErr != nil {
+			result.Hint = "verify the statement's outcome before retrying; it may have completed or still be running"
+			return result
+		}
+		switch interrupted.CancelResult.Status {
+		case scopedb.StatementStatusCancelled:
+			if code == clierror.ExitTemporary {
+				result.Hint = "increase --timeout and retry"
+			}
+		case scopedb.StatementStatusFinished:
+			result.Hint = "use the statement ID to retrieve its result; do not rerun a statement with side effects"
+		case scopedb.StatementStatusFailed:
+			// The original server failure already explains the terminal outcome.
+		default:
 			result.Hint = "verify the statement's outcome before retrying; it may have completed or still be running"
 		}
 		return result
 	}
 	if errors.Is(err, context.Canceled) {
 		return clierror.Wrap(clierror.ExitInterrupted, err.Error(), err)
-	}
-	var timedOut *dataplane.TimedOutError
-	if errors.As(err, &timedOut) {
-		hint := "increase --timeout and retry"
-		if timedOut.CancelErr != nil {
-			hint = "verify the statement's outcome before retrying; it may have completed or still be running"
-		}
-		return clierror.WithHint(clierror.Wrap(clierror.ExitTemporary, timedOut.Error(), err), hint)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitTemporary, "operation timed out", err), "increase --timeout and retry")
