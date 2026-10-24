@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
@@ -35,6 +36,10 @@ import (
 	"github.com/stretchr/testify/require"
 	keyring "github.com/zalando/go-keyring"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type fakeControlPlane struct {
 	t      *testing.T
@@ -384,37 +389,36 @@ func saveLogin(t *testing.T, store *credential.PlaintextStore, controlURL, works
 
 func runFakeCommand(t *testing.T, fake *fakeControlPlane, args ...string) (string, string, error) {
 	t.Helper()
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		In:      strings.NewReader(""),
-		Out:     &out,
-		ErrOut:  &diagnostics,
-		Getenv:  func(string) string { return "" },
-		Sleep:   func(time.Duration) {},
-		OpenURL: fake.authorizationURL(t),
-	})
-	root.SetArgs(append([]string{"--control-url", fake.URL}, args...))
-	err := NormalizeError(root.ExecuteContext(t.Context()))
-	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
-		require.NotContains(t, out.String()+diagnostics.String(), secret)
-	}
-	return out.String(), diagnostics.String(), err
+	return runCommandWith(t, Dependencies{OpenURL: fake.authorizationURL(t)}, append([]string{"--control-url", fake.URL}, args...)...)
 }
 
 func runCommand(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
+	return runCommandWith(t, Dependencies{}, args...)
+}
+
+func runCommandWith(t *testing.T, deps Dependencies, args ...string) (string, string, error) {
+	t.Helper()
 	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		In:     strings.NewReader(""),
-		Out:    &out,
-		ErrOut: &diagnostics,
-		Getenv: func(string) string { return "" },
-		Sleep:  func(time.Duration) {},
-	})
+	deps.Out, deps.ErrOut = &out, &diagnostics
+	if deps.In == nil {
+		deps.In = strings.NewReader("")
+	}
+	if deps.Getenv == nil {
+		deps.Getenv = func(string) string { return "" }
+	}
+	if deps.Sleep == nil {
+		deps.Sleep = func(time.Duration) {}
+	}
+	root := NewRoot(deps)
 	root.SetArgs(args)
 	err := NormalizeError(root.ExecuteContext(t.Context()))
-	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated"} {
-		require.NotContains(t, out.String()+diagnostics.String(), secret)
+	rendered := out.String() + diagnostics.String()
+	if err != nil {
+		rendered += clierror.Render(err)
+	}
+	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
+		require.NotContains(t, rendered, secret)
 	}
 	return out.String(), diagnostics.String(), err
 }
@@ -431,53 +435,28 @@ type loginScenario struct {
 
 func runLoginScenario(t *testing.T, fake *fakeControlPlane, scenario loginScenario) (string, string, error) {
 	t.Helper()
-	getenv := scenario.getenv
-	if getenv == nil {
-		getenv = func(string) string { return "" }
+	if scenario.openURL == nil {
+		scenario.openURL = fake.authorizationURL(t)
 	}
-	openURL := scenario.openURL
-	if openURL == nil {
-		openURL = fake.authorizationURL(t)
-	}
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		In:              strings.NewReader(scenario.input),
-		Out:             &out,
-		ErrOut:          &diagnostics,
-		Getenv:          getenv,
-		Sleep:           func(time.Duration) {},
-		OpenURL:         openURL,
-		CredentialStore: scenario.credentialStore,
-		IsInputTerminal: func() bool { return scenario.inputTerminal },
-		IsErrorTerminal: func() bool { return scenario.errorTerminal },
-	})
 	args := scenario.args
 	if len(args) == 0 || args[0] != "auth" {
 		args = append([]string{"auth", "login", "--insecure-storage"}, args...)
 	}
-	root.SetArgs(append([]string{"--control-url", fake.URL}, args...))
-	err := NormalizeError(root.ExecuteContext(t.Context()))
-	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
-		require.NotContains(t, out.String()+diagnostics.String(), secret)
-	}
-	return out.String(), diagnostics.String(), err
+	return runCommandWith(t, Dependencies{
+		In: strings.NewReader(scenario.input), Getenv: scenario.getenv,
+		OpenURL: scenario.openURL, CredentialStore: scenario.credentialStore,
+		IsInputTerminal: func() bool { return scenario.inputTerminal },
+		IsErrorTerminal: func() bool { return scenario.errorTerminal },
+	}, append([]string{"--control-url", fake.URL}, args...)...)
 }
 
 func runInteractiveCommand(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
+	return runCommandWith(t, Dependencies{
 		In:              strings.NewReader("\r"),
-		Out:             &out,
-		ErrOut:          &diagnostics,
-		Getenv:          func(string) string { return "" },
-		Sleep:           func(time.Duration) {},
 		IsInputTerminal: func() bool { return true },
 		IsErrorTerminal: func() bool { return true },
-	})
-	root.SetArgs(args)
-	err := NormalizeError(root.ExecuteContext(t.Context()))
-	return out.String(), diagnostics.String(), err
+	}, args...)
 }
 
 func runDeviceLogin(t *testing.T, fake *fakeControlPlane, flags ...string) (string, string, error) {

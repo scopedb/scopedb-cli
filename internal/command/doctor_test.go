@@ -75,13 +75,8 @@ func TestDoctorChecksOAuthDataAccess(t *testing.T) {
 				AccessToken: "data-secret", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Hour).UTC(),
 			}
 			saveStoredLogin(t, store, fake.URL, "ws-1")
-
-			var out, diagnostics bytes.Buffer
-			root := NewRoot(Dependencies{
-				Out: &out, ErrOut: &diagnostics,
-				Getenv: func(string) string { return "" },
-				Sleep:  func(time.Duration) {},
-				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+			out, diagnostics, err := runCommandWith(t, Dependencies{
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					if r.URL.Path == "/api/workspaces/ws-1/token-exchange" && phase.exchangeStatus != http.StatusOK {
 						header := http.Header{}
 						header.Set("Content-Type", "application/json")
@@ -95,13 +90,11 @@ func TestDoctorChecksOAuthDataAccess(t *testing.T) {
 					}
 					return http.DefaultTransport.RoundTrip(r)
 				})},
-			})
-			root.SetArgs([]string{"--control-url", fake.URL, "doctor", "--format", "json"})
-			err := NormalizeError(root.ExecuteContext(t.Context()))
+			}, "--control-url", fake.URL, "doctor", "--format", "json")
 			var report doctorReport
-			require.NoError(t, json.Unmarshal(out.Bytes(), &report))
-			require.Empty(t, diagnostics.String())
-			require.NotContains(t, out.String(), "data-secret")
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.Empty(t, diagnostics)
+			require.NotContains(t, out, "data-secret")
 			require.Contains(t, report.Checks, doctorCheck{Name: "control plane", Status: "pass", Details: fake.URL})
 			if phase.wantDetail == "" {
 				require.NoError(t, err)
@@ -110,7 +103,7 @@ func TestDoctorChecksOAuthDataAccess(t *testing.T) {
 			} else {
 				require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
 				require.False(t, report.OK)
-				require.Contains(t, out.String(), phase.wantDetail)
+				require.Contains(t, out, phase.wantDetail)
 				require.Equal(t, "fail", report.Checks[len(report.Checks)-1].Status)
 			}
 			if phase.queryStatus != 0 {
@@ -124,7 +117,7 @@ func TestDoctorChecksOAuthDataAccess(t *testing.T) {
 				require.Zero(t, fake.ExchangeCalls)
 			}
 			if phase.exchangeStatus == http.StatusUnauthorized {
-				require.Contains(t, out.String(), "exchange-request")
+				require.Contains(t, out, "exchange-request")
 			}
 		})
 	}
@@ -156,9 +149,7 @@ func TestDoctorMachineCredentials(t *testing.T) {
 				}
 			}))
 			t.Cleanup(server.Close)
-			var out, diagnostics bytes.Buffer
-			root := NewRoot(Dependencies{
-				Out: &out, ErrOut: &diagnostics,
+			out, diagnostics, err := runCommandWith(t, Dependencies{
 				Getenv: func(name string) string {
 					if name == "SCOPEDB_ENDPOINT" {
 						return server.URL
@@ -171,20 +162,18 @@ func TestDoctorMachineCredentials(t *testing.T) {
 				CredentialStore: func(string, config.Paths) (credential.Store, error) {
 					return doctorUnusedStore{t: t}, nil
 				},
-			})
-			root.SetArgs([]string{"doctor", "--format", "json"})
-			err := NormalizeError(root.ExecuteContext(t.Context()))
+			}, "doctor", "--format", "json")
 			var report doctorReport
-			require.NoError(t, json.Unmarshal(out.Bytes(), &report))
-			require.NotContains(t, out.String()+diagnostics.String(), "machine-secret")
-			require.Empty(t, diagnostics.String())
+			require.NoError(t, json.Unmarshal([]byte(out), &report))
+			require.NotContains(t, out+diagnostics, "machine-secret")
+			require.Empty(t, diagnostics)
 			if scenario.want == "" {
 				require.NoError(t, err)
 				require.True(t, report.OK)
 			} else {
 				require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
 				require.False(t, report.OK)
-				require.Contains(t, out.String(), scenario.want)
+				require.Contains(t, out, scenario.want)
 			}
 			if scenario.key == "" {
 				require.Zero(t, calls)
@@ -210,10 +199,6 @@ func (s doctorUnusedStore) Delete(string) error {
 	return nil
 }
 
-type doctorTransport func(*http.Request) (*http.Response, error)
-
-func (f doctorTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
 func TestDoctorCheckTimeout(t *testing.T) {
 	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
@@ -223,7 +208,7 @@ func TestDoctorCheckTimeout(t *testing.T) {
 			requests := 0
 			root := NewRoot(Dependencies{
 				Out: io.Discard, ErrOut: io.Discard,
-				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					requests++
 					deadline, ok := r.Context().Deadline()
 					if disabled {
@@ -264,7 +249,7 @@ func TestDoctorTimeoutAndCancellation(t *testing.T) {
 					}
 					return ""
 				},
-				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					if interrupt {
 						cancel()
 					}

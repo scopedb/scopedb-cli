@@ -15,7 +15,6 @@
 package command
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -124,10 +123,8 @@ func TestQueryEnvironmentCredentialsBypassUnavailableKeyring(t *testing.T) {
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
 	keyring.MockInitWithError(errors.New("D-Bus session is unavailable"))
 	t.Cleanup(keyring.MockInit)
-	var out, diagnostics bytes.Buffer
 	queries := 0
-	root := NewRoot(Dependencies{
-		Out: &out, ErrOut: &diagnostics,
+	out, diagnostics, err := runCommandWith(t, Dependencies{
 		Getenv: func(name string) string {
 			switch name {
 			case "SCOPEDB_ENDPOINT":
@@ -137,7 +134,7 @@ func TestQueryEnvironmentCredentialsBypassUnavailableKeyring(t *testing.T) {
 			}
 			return ""
 		},
-		HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			queries++
 			require.Equal(t, "https://data.example.com/v1/statements", r.URL.String())
 			require.Equal(t, "Bearer machine-secret", r.Header.Get("Authorization"))
@@ -148,12 +145,11 @@ func TestQueryEnvironmentCredentialsBypassUnavailableKeyring(t *testing.T) {
 				Request:    r,
 			}, nil
 		})},
-	})
-	root.SetArgs([]string{"query", "SELECT 1 AS ready", "--format", "json"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
+	}, "query", "SELECT 1 AS ready", "--format", "json")
+	require.NoError(t, err)
 	require.Equal(t, 1, queries)
-	require.JSONEq(t, `[{"ready":1}]`, out.String())
-	require.Empty(t, diagnostics.String())
+	require.JSONEq(t, `[{"ready":1}]`, out)
+	require.Empty(t, diagnostics)
 }
 
 func TestDeviceLoginWithExplicitPlaintextBypassesUnavailableKeyring(t *testing.T) {
@@ -368,10 +364,7 @@ func TestRefreshFailureDoesNotMoveKeyringLoginToPlaintext(t *testing.T) {
 	state := saveLogin(t, plaintext, fake.URL, "", time.Now().Add(-time.Minute), time.Now().Add(time.Hour))
 	require.NoError(t, credential.NewKeyringStore().Save(fake.URL, state))
 	require.NoError(t, plaintext.Delete(fake.URL))
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		Out: &out, ErrOut: &diagnostics,
-		Getenv: func(string) string { return "" },
+	_, diagnostics, err := runCommandWith(t, Dependencies{
 		CredentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
 			store, err := credential.New(kind, paths)
 			if kind == credential.SourceKeyring {
@@ -379,12 +372,10 @@ func TestRefreshFailureDoesNotMoveKeyringLoginToPlaintext(t *testing.T) {
 			}
 			return store, err
 		},
-	})
-	root.SetArgs([]string{"auth", "status"})
-	err := root.ExecuteContext(t.Context())
+	}, "auth", "status")
 	require.ErrorContains(t, err, "save refreshed credentials")
 	require.Equal(t, 1, fake.Refreshes)
-	require.NotContains(t, diagnostics.String(), "falling back")
+	require.NotContains(t, diagnostics, "falling back")
 	_, err = plaintext.Load(fake.URL)
 	require.ErrorIs(t, err, credential.ErrNotFound)
 }
