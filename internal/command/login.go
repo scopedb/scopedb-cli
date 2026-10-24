@@ -66,18 +66,18 @@ func (a *app) newLoginCommand() *cobra.Command {
 			}
 			paths, cfg, err := a.loadConfig(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			runtime, err := a.newRuntime(paths, cfg)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			runtime.credentials.InsecureStorage = insecureStorage
 			if _, stored, err := runtime.auth.RenewableLogin(); err != nil {
-				return NormalizeError(clierror.Wrap(clierror.ExitGeneral, "existing credentials could not be read", err))
+				return clierror.Wrap(clierror.ExitGeneral, "existing credentials could not be read", err)
 			} else if stored {
 				if err := refuseSecondLogin(cmd.Context(), runtime); err != nil {
-					return NormalizeError(err)
+					return err
 				}
 			}
 			client, err := runtime.oauthClient(cmd.Context())
@@ -89,7 +89,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 						"upgrade the platform, or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY for non-interactive access",
 					)
 				}
-				return NormalizeError(err)
+				return err
 			}
 
 			var tokens controlplane.TokenSet
@@ -99,15 +99,15 @@ func (a *app) newLoginCommand() *cobra.Command {
 				tokens, err = a.loopbackLogin(cmd.Context(), client, !noBrowser)
 			}
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if err := runtime.persistLogin(cmd.Context(), tokens); err != nil {
-				return NormalizeError(err)
+				return err
 			}
 
 			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, workspace)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, selection.result())
@@ -118,7 +118,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				_, err = fmt.Fprintln(a.out, "Logged in.")
 			}
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			return a.renderLoginSelection(selection)
 		},
@@ -134,7 +134,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 // A second login would leave the first grant active in ScopeDB with no local credential left to end it.
 func refuseSecondLogin(ctx context.Context, runtime *runtimeContext) error {
 	accountCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	account, err := runtime.auth.Account(accountCtx)
+	account, _, err := runtime.auth.Account(accountCtx)
 	cancel()
 	if err == nil {
 		return clierror.WithHint(clierror.New(clierror.ExitAuth, "already logged in as "+account.User.Email), "run 'scope auth logout' first")
@@ -173,7 +173,7 @@ func (s loginSelection) result() loginResult {
 // effort, because a login that is already stored must not fail when only the account check did.
 func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext, requested string) (loginSelection, error) {
 	accountCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	account, err := runtime.auth.Account(accountCtx)
+	account, _, err := runtime.auth.Account(accountCtx)
 	cancel()
 	if err != nil {
 		if ctx.Err() != nil {
@@ -239,14 +239,19 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 	return selection, nil
 }
 
+type loginWorkspaceError struct {
+	requested string
+	err       error
+}
+
+func (e *loginWorkspaceError) Error() string {
+	return fmt.Sprintf("login saved, but workspace %s was not selected: %s", e.requested, e.err)
+}
+
+func (e *loginWorkspaceError) Unwrap() error { return e.err }
+
 func workspaceSelectionError(err error, requested string) error {
-	result := NormalizeError(err)
-	var cliErr *clierror.Error
-	if errors.As(result, &cliErr) {
-		cliErr.Message = fmt.Sprintf("login saved, but workspace %s was not selected: %s", requested, cliErr.Message)
-		cliErr.Hint = fmt.Sprintf("run 'scope workspace use %s'", requested)
-	}
-	return result
+	return &loginWorkspaceError{requested: requested, err: err}
 }
 
 func (a *app) renderLoginSelection(selection loginSelection) error {
@@ -258,7 +263,7 @@ func (a *app) renderLoginSelection(selection loginSelection) error {
 		verb = "Keeping"
 	}
 	_, err := fmt.Fprintf(a.out, "%s workspace %s (%s).\n", verb, selection.workspace.Name(), selection.workspace.ID)
-	return NormalizeError(err)
+	return err
 }
 
 func (a *app) loopbackLogin(ctx context.Context, client *controlplane.OAuth, openBrowser bool) (controlplane.TokenSet, error) {
@@ -540,10 +545,10 @@ func (a *app) newLogoutCommand() *cobra.Command {
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if _, active, machineErr := runtime.auth.MachineAccess(); machineErr != nil {
-				return NormalizeError(machineErr)
+				return machineErr
 			} else if active {
 				return clierror.WithHint(clierror.New(clierror.ExitUsage, "environment-provided API keys cannot be logged out"), "unset SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 			}
@@ -554,26 +559,17 @@ func (a *app) newLogoutCommand() *cobra.Command {
 					return writeJSON(a.out, logoutResult{Changed: false})
 				}
 				_, writeErr := fmt.Fprintln(a.out, "Not logged in.")
-				return NormalizeError(writeErr)
+				return writeErr
 			}
-			var cleanup *auth.LogoutCleanupError
-			if errors.As(err, &cleanup) {
-				result := NormalizeError(cleanup.Err)
-				var cliErr *clierror.Error
-				if errors.As(result, &cliErr) {
-					cliErr.Message = cleanup.Error()
-					cliErr.Hint = "the login stays valid until it expires or is revoked in the Console"
-				}
-				return result
-			}
+
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, logoutResult{Changed: true})
 			}
 			_, writeErr := fmt.Fprintln(a.out, "Logged out.")
-			return NormalizeError(writeErr)
+			return writeErr
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")

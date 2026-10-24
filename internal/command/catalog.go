@@ -72,7 +72,7 @@ func (a *app) newCatalogGetCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use: "get", Short: "Export a resource definition", Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return NormalizeError(a.readCatalogResource(cmd, "", options))
+			return a.readCatalogResource(cmd, "", options)
 		},
 	}
 	options.addFlags(command)
@@ -84,7 +84,7 @@ func (a *app) newCatalogListCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use: "list <databases|schemas|tables|views>", Short: "List fully qualified resource names", Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return NormalizeError(a.readCatalogResource(cmd, args[0], options))
+			return a.readCatalogResource(cmd, args[0], options)
 		},
 	}
 	options.addFlags(command)
@@ -96,7 +96,7 @@ func (a *app) newCatalogPlanCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use: "plan", Short: "Preview changes and write a reusable plan to stdout", Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return NormalizeError(a.changeCatalog(cmd, "plan", options))
+			return a.changeCatalog(cmd, "plan", options)
 		},
 	}
 	options.addFlags(command)
@@ -109,7 +109,7 @@ func (a *app) newCatalogApplyCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use: "apply", Short: "Review and apply a definition or saved plan", Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return NormalizeError(a.changeCatalog(cmd, "apply", options))
+			return a.changeCatalog(cmd, "apply", options)
 		},
 	}
 	options.addFlags(command)
@@ -125,7 +125,7 @@ func (a *app) newCatalogDropCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use: "drop", Short: "Delete an object or clear the tenant", Args: exactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return NormalizeError(a.changeCatalog(cmd, "drop", options))
+			return a.changeCatalog(cmd, "drop", options)
 		},
 	}
 	options.addFlags(command)

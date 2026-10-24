@@ -105,7 +105,7 @@ func runQueryWithWriter(t *testing.T, transport doctorTransport, out io.Writer, 
 		HTTPClient: &http.Client{Transport: transport},
 	})
 	root.SetArgs(append([]string{"query", "SELECT 1 AS ready"}, args...))
-	err := root.ExecuteContext(t.Context())
+	err := NormalizeError(root.ExecuteContext(t.Context()))
 	require.NotContains(t, diagnostics.String()+clierror.Render(err), "fixture-secret")
 	return err
 }

@@ -15,7 +15,7 @@ scope query 'SELECT 1 AS ready'
 
 Login opens your browser by default and waits for a callback on the same device. The CLI prints the approval URL before opening the browser, so you can open it manually if the browser does not launch. A browser-launch failure does not switch authorization flows. `--no-browser` skips the automatic launch and keeps the same-device callback.
 
-After approval, the browser shows the ScopeDB logo and a compact card containing a pale green message box with a check mark. Its text confirms receipt of authorization and directs you back to your terminal. You can close the window; the CLI finishes signing in and reports the result in the terminal. A pale red message box with a cross explains that authorization could not be completed and directs you to the terminal for details before trying again.
+After approval, the browser acknowledges receipt of authorization. Return to your terminal for the final login result or error details; you can close the browser window.
 
 For SSH, containers, or approval from another device, select device authorization explicitly:
 

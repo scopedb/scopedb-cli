@@ -173,6 +173,10 @@ func (f *fakeControlPlane) serveWorkspace(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if len(parts) == 2 && strings.HasPrefix(parts[1], "api-keys/") {
+		if !assert.Equal(f.t, http.MethodDelete, r.Method) {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		f.mu.Lock()
 		f.RevokedAPIKeys = append(f.RevokedAPIKeys, strings.TrimPrefix(parts[1], "api-keys/"))
 		f.mu.Unlock()
@@ -390,7 +394,7 @@ func runFakeCommand(t *testing.T, fake *fakeControlPlane, args ...string) (strin
 		OpenURL: fake.authorizationURL(t),
 	})
 	root.SetArgs(append([]string{"--control-url", fake.URL}, args...))
-	err := root.ExecuteContext(t.Context())
+	err := NormalizeError(root.ExecuteContext(t.Context()))
 	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
 		require.NotContains(t, out.String()+diagnostics.String(), secret)
 	}
@@ -408,7 +412,7 @@ func runCommand(t *testing.T, args ...string) (string, string, error) {
 		Sleep:  func(time.Duration) {},
 	})
 	root.SetArgs(args)
-	err := root.ExecuteContext(t.Context())
+	err := NormalizeError(root.ExecuteContext(t.Context()))
 	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated"} {
 		require.NotContains(t, out.String()+diagnostics.String(), secret)
 	}
@@ -452,7 +456,7 @@ func runLoginScenario(t *testing.T, fake *fakeControlPlane, scenario loginScenar
 		args = append([]string{"auth", "login", "--insecure-storage"}, args...)
 	}
 	root.SetArgs(append([]string{"--control-url", fake.URL}, args...))
-	err := root.ExecuteContext(t.Context())
+	err := NormalizeError(root.ExecuteContext(t.Context()))
 	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
 		require.NotContains(t, out.String()+diagnostics.String(), secret)
 	}
@@ -472,7 +476,7 @@ func runInteractiveCommand(t *testing.T, args ...string) (string, string, error)
 		IsErrorTerminal: func() bool { return true },
 	})
 	root.SetArgs(args)
-	err := root.ExecuteContext(t.Context())
+	err := NormalizeError(root.ExecuteContext(t.Context()))
 	return out.String(), diagnostics.String(), err
 }
 

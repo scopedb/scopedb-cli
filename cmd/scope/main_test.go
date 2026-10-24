@@ -17,6 +17,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -30,6 +31,69 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCommandErrorsAtProcessBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		cause   error
+		code    int
+		message string
+	}{
+		{name: "forbidden", status: http.StatusForbidden, code: clierror.ExitAuth, message: "access denied"},
+		{name: "missing", status: http.StatusNotFound, code: clierror.ExitNotFound, message: "access denied"},
+		{name: "unavailable", status: http.StatusServiceUnavailable, code: clierror.ExitTemporary, message: "access denied"},
+		{name: "timeout", cause: context.DeadlineExceeded, code: clierror.ExitTemporary, message: "operation timed out"},
+		{name: "transport", cause: errors.New("connection refused"), code: clierror.ExitTemporary, message: "connection refused"},
+	} {
+		for _, args := range [][]string{
+			{"workspace", "list"},
+			{"query", "SELECT 1 AS ready", "--timeout", "1m"},
+			{"catalog", "get", "--request-timeout", "1m"},
+		} {
+			t.Run(tc.name+"/"+args[0], func(t *testing.T) {
+				t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+				const controlURL = "https://control.example.com"
+				store := credential.NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
+				require.NoError(t, store.Save(controlURL, credential.State{
+					AccessToken: "fixture-token", AccessTokenExpiresAt: time.Now().Add(time.Hour),
+					RefreshToken: "fixture-refresh", WorkspaceID: "ws-1",
+				}))
+				var out, diagnostics bytes.Buffer
+				code := execute(t.Context(), command.Dependencies{
+					Out: &out, ErrOut: &diagnostics, Getenv: func(string) string { return "" },
+					CredentialStore: func(string, config.Paths) (credential.Store, error) { return store, nil },
+					HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+						if tc.cause != nil {
+							return nil, tc.cause
+						}
+						return &http.Response{
+							StatusCode: tc.status, Request: r,
+							Header: http.Header{"X-Request-Id": []string{"request-1"}},
+							Body:   io.NopCloser(strings.NewReader(`{"error":{"message":"access denied"}}`)),
+						}, nil
+					})},
+				}, append([]string{"--control-url", controlURL}, args...))
+				require.Equal(t, tc.code, code)
+				require.Empty(t, out.String())
+				require.Equal(t, 1, strings.Count(diagnostics.String(), "Error:"))
+				require.Contains(t, diagnostics.String(), tc.message)
+				if tc.cause == nil {
+					require.Contains(t, diagnostics.String(), "request-1")
+				}
+				if tc.code == clierror.ExitAuth {
+					require.Equal(t, 1, strings.Count(diagnostics.String(), "scope auth login"))
+				}
+				if errors.Is(tc.cause, context.DeadlineExceeded) {
+					require.NotContains(t, diagnostics.String(), "--timeout")
+					require.NotContains(t, diagnostics.String(), "--request-timeout")
+				}
+				require.NotContains(t, diagnostics.String(), "fixture-token")
+				require.NotContains(t, diagnostics.String(), "fixture-refresh")
+			})
+		}
+	}
+}
 
 func TestInterruptedInputExitsQuietly(t *testing.T) {
 	for _, args := range []string{"query", "query --file -", "api-key revoke automation", "catalog plan -f -", "catalog apply -f -", "catalog apply --plan -"} {

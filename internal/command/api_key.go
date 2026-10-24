@@ -59,15 +59,15 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			state, err := runtime.auth.LoadWorkspaceAccess(cmd.Context())
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			keys, err := runtime.control.ListAPIKeys(cmd.Context(), state.AccessToken, state.WorkspaceID)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			keys = limitedResults(keys, limit)
 			if format == structuredFormatJSON {
@@ -136,11 +136,11 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			state, err := runtime.auth.LoadWorkspaceAccess(cmd.Context())
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			created, err := runtime.control.CreateAPIKey(cmd.Context(), state.AccessToken, state.WorkspaceID, controlplane.CreateAPIKeyRequest{
 				Name:      name,
@@ -148,19 +148,19 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 				ExpiresAt: expiresAt,
 			})
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if created.Key == "" {
-				return NormalizeError(fmt.Errorf("ScopeDB did not return the newly created API key"))
+				return fmt.Errorf("ScopeDB did not return the newly created API key")
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, created)
 			}
 			if _, err := fmt.Fprintln(a.out, created.Key); err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if _, err := fmt.Fprintf(a.errOut, "Created API key %s. This secret is shown only once.\n", created.Name); err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			return nil
 		},
@@ -219,15 +219,15 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			state, err := runtime.auth.LoadWorkspaceAccess(cmd.Context())
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			keys, err := runtime.control.ListAPIKeys(cmd.Context(), state.AccessToken, state.WorkspaceID)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			key, err := resolveAPIKey(keys, value)
 			if err != nil {
@@ -236,24 +236,30 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			if !yes {
 				answer, err := a.readLine(cmd.Context(), fmt.Sprintf("Revoke API key %s (%s)? [y/N] ", key.Name, key.ID))
 				if err != nil {
-					return NormalizeError(err)
+					return err
 				}
 				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
 					if format == structuredFormatJSON {
 						return writeJSON(a.out, apiKeyRevokeResult{ID: key.ID, Name: key.Name, Revoked: false})
 					}
 					_, err := fmt.Fprintln(a.out, "Cancelled.")
-					return NormalizeError(err)
+					return err
 				}
+				refreshed, err := runtime.auth.LoadAccess(cmd.Context())
+				if err != nil {
+					return err
+				}
+				// Waiting for confirmation may expire the token; keep the confirmed target.
+				state.AccessToken = refreshed.AccessToken
 			}
 			if err := runtime.control.RevokeAPIKey(cmd.Context(), state.AccessToken, state.WorkspaceID, key.ID); err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, apiKeyRevokeResult{ID: key.ID, Name: key.Name, Revoked: true})
 			}
 			_, err = fmt.Fprintf(a.out, "Revoked API key %s (%s).\n", key.Name, key.ID)
-			return NormalizeError(err)
+			return err
 		},
 	}
 	command.Flags().BoolVarP(&yes, "yes", "y", false, "skip confirmation")
@@ -277,9 +283,12 @@ func resolveAPIKey(keys []controlplane.APIKey, value string) (controlplane.APIKe
 	case 1:
 		return matches[0], nil
 	case 0:
-		return controlplane.APIKey{}, clierror.New(clierror.ExitNotFound, fmt.Sprintf("API key %q was not found", value))
+		return controlplane.APIKey{}, clierror.WithHint(
+			clierror.New(clierror.ExitNotFound, "API key was not found"),
+			"use an ID from 'scope api-key list'",
+		)
 	default:
-		return controlplane.APIKey{}, usageError(fmt.Sprintf("API key name %q is ambiguous; use its ID", value))
+		return controlplane.APIKey{}, usageError("API key name is ambiguous; use its ID from 'scope api-key list'")
 	}
 }
 

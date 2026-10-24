@@ -62,7 +62,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			report := doctorReport{OK: true, Checks: []doctorCheck{
 				{Name: "configuration", Status: "pass", Details: runtime.paths.Config},
@@ -101,7 +101,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					}
 					report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: source})
 					accountCtx, accountCancel := timeoutContext(cmd.Context(), timeout)
-					account, accountErr := runtime.auth.Account(accountCtx)
+					account, _, accountErr := runtime.auth.Account(accountCtx)
 					accountCancel()
 					if accountErr != nil {
 						report.OK = false
@@ -119,10 +119,10 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			}
 
 			if err := cmd.Context().Err(); err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if err := renderDoctor(a.out, format, report); err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if !report.OK {
 				return clierror.New(clierror.ExitGeneral, "one or more checks failed")
@@ -146,8 +146,9 @@ func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext,
 	if err != nil {
 		report.OK = false
 		check.Status = "fail"
-		check.Details = clierror.Compact(NormalizeError(err))
-		if clierror.ExitCode(NormalizeError(err)) == clierror.ExitAuth && access.Mode == "api_key" {
+		err = NormalizeError(err)
+		check.Details = clierror.Compact(err)
+		if clierror.ExitCode(err) == clierror.ExitAuth && access.Mode == "api_key" {
 			check.Details += "; check SCOPEDB_ENDPOINT and SCOPEDB_API_KEY belong to the same workspace and the key has not expired or been revoked"
 		}
 	}

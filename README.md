@@ -3,7 +3,7 @@
 `scope` is the command-line interface for [ScopeDB](https://www.scopedb.io/).
 
 > [!IMPORTANT]
-> ScopeDB CLI is in public preview. Review the release notes before upgrading.
+> ScopeDB CLI is in public preview. Compatibility changes increment the minor version; patch releases contain backward-compatible fixes. Review the [changelog](CHANGELOG.md) before upgrading.
 
 ## Install
 
@@ -13,12 +13,12 @@ Download the most recently published release, including release candidates, from
 
 | Platform               | Archive pattern                       |
 | ---------------------- | ------------------------------------- |
-| macOS on Apple silicon | `scope_<version>_darwin_arm64.tar.gz`   |
-| macOS on Intel         | `scope_<version>_darwin_amd64.tar.gz`   |
-| Linux on x86-64         | `scope_<version>_linux_amd64.tar.gz`    |
-| Linux on ARM64          | `scope_<version>_linux_arm64.tar.gz`    |
-| Windows on x86-64       | `scope_<version>_windows_amd64.zip`     |
-| Windows on ARM64        | `scope_<version>_windows_arm64.zip`     |
+| macOS on Apple silicon | `scope_<version>_darwin_arm64.tar.gz` |
+| macOS on Intel         | `scope_<version>_darwin_amd64.tar.gz` |
+| Linux on x86-64        | `scope_<version>_linux_amd64.tar.gz`  |
+| Linux on ARM64         | `scope_<version>_linux_arm64.tar.gz`  |
+| Windows on x86-64      | `scope_<version>_windows_amd64.zip`   |
+| Windows on ARM64       | `scope_<version>_windows_arm64.zip`   |
 
 Compare the archive's SHA-256 digest with its entry in `checksums.txt`, extract it, and place `scope` (`scope.exe` on Windows) in a directory on your `PATH`.
 
@@ -56,13 +56,13 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-`scope auth login` opens your browser, asks you to approve the request in the ScopeDB Console, and stores the login in the operating system keyring. Upgrading from an older CLI asks you to log in again. If the browser does not open, open the printed URL on the same device. For approval from another device, such as when using SSH or a container, run `scope auth login --use-device-code`. Add `--no-browser` to either flow to skip opening the browser automatically. A browser-launch failure leaves the selected flow waiting for approval.
+`scope auth login` opens your browser and asks you to approve the request in the ScopeDB Console. If the browser does not open, open the printed URL on the same device. For approval from another device, such as when using SSH or a container, run `scope auth login --use-device-code`. Add `--no-browser` to either flow to skip opening the browser automatically. A browser-launch failure leaves the selected flow waiting for approval.
 
-Login does not require an interactive terminal. Authorization instructions and progress go to stderr; `--format text|json` selects the result format on stdout. For unattended access, use `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; `scope auth status --format json` and `scope workspace list --format json` report machine-readable state.
+Login does not require an interactive terminal. Authorization instructions and progress go to stderr; `--format text|json` selects the result format on stdout.
 
 Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves credentials unencrypted in a file (`0600` on Unix); `scope auth status` shows its location. `--insecure-storage` selects plaintext for that login only. For servers and CI, set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or use device authorization for a CLI login. See [headless Linux setup](docs/connect.md#use-headless-linux).
 
-Pass `--workspace <id-or-name>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account can still access it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. The text and JSON results report the selected workspace name and ID. Use `scope workspace use <id-or-name>` to switch afterwards.
+Pass `--workspace <id-or-name>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account can still access it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. Use `scope workspace use <id-or-name>` to switch afterwards.
 
 A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status and create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
@@ -118,7 +118,7 @@ scope catalog apply --plan plan.yaml
 scope catalog apply --table scopedb.public.events -f events.yaml --yes --format json > applied.json
 ```
 
-`plan` writes the plan to stdout and the diff to stderr. A plan contains the original request, normalized before/after definitions, a `destructive` risk flag, connection identity, and catalog version. Machine-authenticated plans bind to the API key through a hash without including the key itself. Plans can contain custom storage credentials from the source definition; protect them like the source configuration.
+`plan` writes the plan to stdout and the diff to stderr. A plan contains the requested change, its preview, and the target connection and catalog version. Machine-authenticated plans are bound to the API key used to create them. Plans can contain custom storage credentials from the source definition; protect them like the source configuration.
 
 `apply --plan` submits the saved request without another preview or prompt; destructive plans require `--allow-destructive`. If the catalog or connection has changed, apply fails. Regenerate and review the plan after editing its source or changing the target. `--plan -` reads a saved plan from stdin.
 
@@ -147,7 +147,7 @@ scope console --format json
 
 Results go to stdout; prompts, warnings, and errors go to stderr. `scope doctor --format json` prints its report and exits nonzero if checks fail. `scope version --format json` prints machine-readable version information; `--json` is also supported.
 
-Use the ID from `scope api-key list` when revoking a key in a script. `scope api-key revoke` also accepts a unique name, but rejects ambiguous names; an exact ID takes precedence over a matching name. Interactive confirmation identifies the resolved name and ID. JSON results contain `id`, `name`, and `revoked`, including when you decline confirmation. Revocation requires Control Plane 0.25.0 or newer.
+API-key revocation requires Control Plane 0.25.0 or newer. Use an ID from `scope api-key list` in scripts; unique names are accepted, and ID matches take precedence. JSON results contain `id`, `name`, and `revoked`, including when you decline confirmation. See [API key management](docs/connect.md#get-application-credentials) for permissions and interactive use.
 
 `scope workspace list` and `scope api-key list` accept `--limit N` to show at most N items. The default and `--limit 0` show all items. This limits displayed results without reducing the amount fetched.
 

@@ -61,11 +61,11 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
-			account, err := runtime.auth.Account(cmd.Context())
+			account, _, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			workspaces := limitedResults(account.Workspaces, limit)
 			// Choosing a workspace is what this command enables, so a missing
@@ -143,14 +143,14 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
-			account, err := runtime.auth.Account(cmd.Context())
+			account, _, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if len(account.Workspaces) == 0 {
-				return NormalizeError(auth.RequireWorkspace(account))
+				return auth.RequireWorkspace(account)
 			}
 			workspace, err := resolveWorkspace(account.Workspaces, args[0])
 			if err != nil {
@@ -165,16 +165,16 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 			changed := workspace.ID != account.SelectedWorkspaceID
 			if changed {
 				if err := runtime.auth.SelectWorkspace(cmd.Context(), workspace.ID); err != nil {
-					return NormalizeError(err)
+					return err
 				}
 			}
 			if _, active, machineErr := runtime.auth.MachineAccess(); machineErr != nil {
 				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands require both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY; set both or unset both to use your login workspace."); err != nil {
-					return NormalizeError(err)
+					return err
 				}
 			} else if active {
 				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands still use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY from the environment; unset both to use your login workspace."); err != nil {
-					return NormalizeError(err)
+					return err
 				}
 			}
 			if format == structuredFormatJSON {
@@ -182,10 +182,10 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 			}
 			if !changed {
 				_, err := fmt.Fprintf(a.out, "Already using workspace %s (%s) for this login.\n", workspace.Name(), workspace.ID)
-				return NormalizeError(err)
+				return err
 			}
 			_, err = fmt.Fprintf(a.out, "Now using workspace %s (%s) for this login.\n", workspace.Name(), workspace.ID)
-			return NormalizeError(err)
+			return err
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
@@ -229,22 +229,15 @@ func (a *app) newWorkspaceGetCommand() *cobra.Command {
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
-			account, err := runtime.auth.Account(cmd.Context())
+			state, err := runtime.auth.LoadWorkspaceAccess(cmd.Context())
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
-			if err := auth.RequireWorkspace(account); err != nil {
-				return NormalizeError(err)
-			}
-			state, err := runtime.auth.LoadAccess(cmd.Context())
+			details, err := runtime.control.GetWorkspace(cmd.Context(), state.AccessToken, state.WorkspaceID)
 			if err != nil {
-				return NormalizeError(err)
-			}
-			details, err := runtime.control.GetWorkspace(cmd.Context(), state.AccessToken, account.SelectedWorkspaceID)
-			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if format == structuredFormatJSON {
 				var view workspaceView

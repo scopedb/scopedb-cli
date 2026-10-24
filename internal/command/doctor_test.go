@@ -97,7 +97,7 @@ func TestDoctorChecksOAuthDataAccess(t *testing.T) {
 				})},
 			})
 			root.SetArgs([]string{"--control-url", fake.URL, "doctor", "--format", "json"})
-			err := root.ExecuteContext(t.Context())
+			err := NormalizeError(root.ExecuteContext(t.Context()))
 			var report doctorReport
 			require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 			require.Empty(t, diagnostics.String())
@@ -173,7 +173,7 @@ func TestDoctorMachineCredentials(t *testing.T) {
 				},
 			})
 			root.SetArgs([]string{"doctor", "--format", "json"})
-			err := root.ExecuteContext(t.Context())
+			err := NormalizeError(root.ExecuteContext(t.Context()))
 			var report doctorReport
 			require.NoError(t, json.Unmarshal(out.Bytes(), &report))
 			require.NotContains(t, out.String()+diagnostics.String(), "machine-secret")
@@ -273,7 +273,7 @@ func TestDoctorTimeoutAndCancellation(t *testing.T) {
 				})},
 			})
 			root.SetArgs([]string{"doctor", "--format", "json", "--timeout", "20ms"})
-			err := root.ExecuteContext(ctx)
+			err := NormalizeError(root.ExecuteContext(ctx))
 			if interrupt {
 				require.Equal(t, clierror.ExitInterrupted, clierror.ExitCode(err))
 				require.Empty(t, out.String())
@@ -291,7 +291,7 @@ func TestDoctorRejectsInvalidTimeout(t *testing.T) {
 		var out bytes.Buffer
 		root := NewRoot(Dependencies{Out: &out, In: strings.NewReader("")})
 		root.SetArgs([]string{"doctor", "--timeout", timeout})
-		err := root.ExecuteContext(t.Context())
+		err := NormalizeError(root.ExecuteContext(t.Context()))
 		require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
 		require.Empty(t, out.String())
 	}

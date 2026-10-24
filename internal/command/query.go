@@ -56,18 +56,18 @@ func (a *app) newQueryCommand() *cobra.Command {
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			access, err := runtime.auth.ResolveDataAccess(cmd.Context())
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 
 			queryContext, cancel := timeoutContext(cmd.Context(), timeout)
 			defer cancel()
 			result, err := a.query.Execute(queryContext, access, statement)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if err := output.RenderResult(a.out, result.ResultSet, format); err != nil {
 				return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, fmt.Sprintf("query %s completed, but its results could not be written", result.StatementID), err), "use the statement ID to retrieve its result; do not rerun a statement with side effects")
@@ -109,7 +109,7 @@ func (a *app) readStatement(args []string, statementFile string) (string, error)
 		return "", usageError("provide a ScopeQL statement, --file, or piped stdin")
 	}
 	if err != nil {
-		return "", NormalizeError(err)
+		return "", err
 	}
 	statement := strings.TrimSpace(string(data))
 	if statement == "" {
