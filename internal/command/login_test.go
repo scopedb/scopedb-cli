@@ -486,7 +486,7 @@ func TestLoginReportsWorkspaceSetup(t *testing.T) {
 	require.Contains(t, diagnostics, "scope console --open")
 }
 
-func TestLoginSelectsTheOnlyOwnedWorkspace(t *testing.T) {
+func TestLoginSelectsTheOnlyWorkspace(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
 	out, diagnostics, err := runInteractiveLogin(t, fake, "")

@@ -419,7 +419,7 @@ func TestRequireWorkspace(t *testing.T) {
 		{"no workspaces", Account{User: controlplane.User{Status: "active"}}, ErrNoWorkspaces},
 		{"no selection", Account{User: controlplane.User{Status: "active"}, Workspaces: []controlplane.Workspace{{ID: "ws-1"}}}, ErrNoWorkspaceSelected},
 		{"selected", Account{User: controlplane.User{Status: "active"}, Workspaces: []controlplane.Workspace{{ID: "ws-1"}}, SelectedWorkspaceID: "ws-1"}, nil},
-		{"selection not owned", Account{User: controlplane.User{Status: "active"}, Workspaces: []controlplane.Workspace{{ID: "ws-2"}}, SelectedWorkspaceID: "ws-1"}, ErrWorkspaceUnavailable},
+		{"selection not accessible", Account{User: controlplane.User{Status: "active"}, Workspaces: []controlplane.Workspace{{ID: "ws-2"}}, SelectedWorkspaceID: "ws-1"}, ErrWorkspaceUnavailable},
 		{"selection scheduled", Account{User: controlplane.User{Status: "active"}, Workspaces: []controlplane.Workspace{{ID: "ws-1", ScheduledForDeletionAt: func() *time.Time { now := time.Now().Add(time.Hour); return &now }()}}, SelectedWorkspaceID: "ws-1"}, ErrWorkspaceUnavailable},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

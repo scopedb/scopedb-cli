@@ -19,12 +19,15 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/command"
+	"github.com/scopedb/scopedb-cli/internal/config"
+	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,16 +40,51 @@ func TestInterruptedInputExitsQuietly(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var out, diagnostics bytes.Buffer
+			deps := command.Dependencies{
+				In: reader, Out: &out, ErrOut: &diagnostics,
+				IsInputTerminal: func() bool { return strings.HasPrefix(args, "api-key") },
+			}
+			commandArgs := strings.Fields(args)
+			if strings.HasPrefix(args, "api-key") {
+				t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+				const controlURL = "https://control.example.com"
+				store := credential.NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
+				require.NoError(t, store.Save(controlURL, credential.State{
+					AccessToken: "fixture-token", AccessTokenExpiresAt: time.Now().Add(time.Hour),
+					RefreshToken: "fixture-refresh-token",
+					WorkspaceID:  "ws-1",
+				}))
+				deps.CredentialStore = func(string, config.Paths) (credential.Store, error) { return store, nil }
+				deps.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					require.Equal(t, http.MethodGet, r.Method)
+					body, ok := map[string]string{
+						"/api/user":                     `{"id":"user-1","status":"active"}`,
+						"/api/workspaces":               `{"workspaces":[{"id":"ws-1"}]}`,
+						"/api/workspaces/ws-1/api-keys": `[{"id":"key-1","name":"automation","status":"active"}]`,
+					}[r.URL.Path]
+					require.True(t, ok, "unexpected request: %s", r.URL.Path)
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+				})}
+				commandArgs = append([]string{"--control-url", controlURL}, commandArgs...)
+			}
 			done := make(chan int, 1)
 			go func() {
-				done <- execute(ctx, command.Dependencies{
-					In: reader, Out: &out, ErrOut: &diagnostics,
-					IsInputTerminal: func() bool { return strings.HasPrefix(args, "api-key") },
-				}, strings.Fields(args))
+				done <- execute(ctx, deps, commandArgs)
 			}()
 			// Write returns only after the command starts reading; keep the pipe open without a newline or EOF.
-			_, err := io.WriteString(writer, "SELECT 1 AS ready")
-			require.NoError(t, err)
+			writeDone := make(chan error, 1)
+			go func() {
+				_, err := io.WriteString(writer, "SELECT 1 AS ready")
+				writeDone <- err
+			}()
+			select {
+			case err := <-writeDone:
+				require.NoError(t, err)
+			case code := <-done:
+				t.Fatalf("command exited before reading input: code=%d, diagnostics=%s", code, diagnostics.String())
+			case <-time.After(5 * time.Second):
+				t.Fatal("command did not begin reading input")
+			}
 			cancel()
 			select {
 			case code := <-done:
@@ -58,7 +96,7 @@ func TestInterruptedInputExitsQuietly(t *testing.T) {
 			}
 			require.Empty(t, out.String())
 			if strings.HasPrefix(args, "api-key") {
-				require.Equal(t, "Revoke API key automation? [y/N] \n", diagnostics.String())
+				require.Equal(t, "Revoke API key automation (key-1)? [y/N] \n", diagnostics.String())
 			} else {
 				require.Equal(t, "\n", diagnostics.String())
 			}

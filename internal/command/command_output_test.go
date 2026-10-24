@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
@@ -56,6 +55,7 @@ func TestCommandsReportTableWriteFailures(t *testing.T) {
 func TestCommandJSONOutput(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+	fake.APIKeys = []controlplane.APIKey{{ID: "key-1", Name: "automation", Status: "active"}}
 	saveStoredLogin(t, store, fake.URL, "ws-1")
 
 	for _, step := range []struct {
@@ -65,7 +65,7 @@ func TestCommandJSONOutput(t *testing.T) {
 		{"workspace list --limit 1", `[{"id":"ws-1","display_name":"Alpha","status":"ready","current":true}]`},
 		{"workspace use Beta", `{"id":"ws-2","display_name":"Beta","changed":true}`},
 		{"workspace use ws-2", `{"id":"ws-2","display_name":"Beta","changed":false}`},
-		{"api-key revoke automation --yes", `{"name":"automation","revoked":true}`},
+		{"api-key revoke automation --yes", `{"id":"key-1","name":"automation","revoked":true}`},
 		{"auth logout", `{"changed":true}`},
 	} {
 		args := append([]string{"--control-url", fake.URL}, strings.Fields(step.args)...)
@@ -75,25 +75,26 @@ func TestCommandJSONOutput(t *testing.T) {
 		require.Empty(t, diagnostics, step.args)
 		require.JSONEq(t, step.json, out, step.args)
 	}
-	require.Equal(t, []string{"automation"}, fake.RevokedAPIKeys)
+	require.Equal(t, []string{"key-1"}, fake.RevokedAPIKeys)
 	_, err := store.Load(fake.URL)
 	require.ErrorIs(t, err, credential.ErrNotFound)
 }
 
 func TestRevokeJSONCancellation(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+	fake.APIKeys = []controlplane.APIKey{{ID: "key-1", Name: "automation", Status: "active"}}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
 		In: strings.NewReader("n\n"), Out: &out, ErrOut: &diagnostics,
 		IsInputTerminal: func() bool { return true },
-		CredentialStore: func(string, config.Paths) (credential.Store, error) {
-			t.Fatal("cancellation must not access credentials or call the service")
-			return nil, nil
-		},
 	})
-	root.SetArgs([]string{"api-key", "revoke", "automation", "--format", "json"})
+	root.SetArgs([]string{"--control-url", fake.URL, "api-key", "revoke", "key-1", "--format", "json"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.JSONEq(t, `{"name":"automation","revoked":false}`, out.String())
-	require.Contains(t, diagnostics.String(), "Revoke API key")
+	require.JSONEq(t, `{"id":"key-1","name":"automation","revoked":false}`, out.String())
+	require.Contains(t, diagnostics.String(), "Revoke API key automation (key-1)?")
+	require.Empty(t, fake.RevokedAPIKeys)
 }
 
 func TestWorkspaceUseTextOutput(t *testing.T) {

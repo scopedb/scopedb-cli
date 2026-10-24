@@ -4,8 +4,13 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Breaking changes
+
+* `scope api-key revoke` now requires ScopeDB Control Plane 0.25.0 or newer and revokes by key ID. Use the ID from `scope api-key list` in scripts. A unique name remains a shorthand; duplicate names fail without a deletion, and an exact ID takes precedence over another key's name. Interactive confirmation shows the resolved name and ID; both completed and cancelled JSON results include `id`, `name`, and `revoked`. This command no longer supports the older name-based API.
+
 ### Improvements
 
+* `scope api-key list` shows each key's creator in the default table so workspace owners can distinguish members' keys with the same name.
 * `scope auth login` shows a compact browser callback page with the ScopeDB logo, a green check or red cross message box explaining the authorization outcome, and guidance to return to the terminal, in light and dark appearances.
 
 ## v0.1.0 (2026-10-23)

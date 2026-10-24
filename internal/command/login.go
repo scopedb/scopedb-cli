@@ -188,7 +188,7 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 		a.warnAccountUnchecked()
 		return loginSelection{}, nil
 	}
-	if workspace, owned := workspaceByID(account.Workspaces, account.SelectedWorkspaceID); account.SelectedWorkspaceID != "" && (!owned || workspace.ScheduledForDeletion()) {
+	if workspace, accessible := workspaceByID(account.Workspaces, account.SelectedWorkspaceID); account.SelectedWorkspaceID != "" && (!accessible || workspace.ScheduledForDeletion()) {
 		if err := runtime.auth.SelectWorkspace(ctx, ""); err != nil {
 			return loginSelection{}, err
 		}

@@ -96,6 +96,20 @@ func TestClientEscapesWorkspacePath(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestClientRevokesAPIKeyByID(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, http.MethodDelete, request.Method)
+		assert.Equal(t, "/api/workspaces/ws-1/api-keys/sk_abc", request.URL.EscapedPath())
+		assert.Equal(t, "Bearer session-secret", request.Header.Get("Authorization"))
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(server.URL, "", server.Client())
+	require.NoError(t, err)
+	require.NoError(t, client.RevokeAPIKey(t.Context(), "session-secret", "ws-1", "sk_abc"))
+}
+
 func TestDiscoverOAuthValidatesMetadata(t *testing.T) {
 	metadata := func(writer http.ResponseWriter, issuuer, token string) {
 		writer.Header().Set("Content-Type", "application/json")
