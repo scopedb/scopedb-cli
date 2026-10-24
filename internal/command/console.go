@@ -49,19 +49,19 @@ Add --open to also open the page in your browser.`,
 			}
 			_, cfg, err := a.loadConfig(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			target := strings.TrimRight(cfg.ConsoleURL, "/") + "/" + page
 			if openBrowser {
 				if err := a.openURL(target); err != nil {
-					return NormalizeError(err)
+					return err
 				}
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, consoleResult{Page: page, URL: target, Opened: openBrowser})
 			}
 			_, err = fmt.Fprintln(a.out, target)
-			return NormalizeError(err)
+			return err
 		},
 	}
 	command.Flags().BoolVar(&openBrowser, "open", false, "open the URL in the default browser")

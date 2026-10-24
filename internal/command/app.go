@@ -333,6 +333,26 @@ func NormalizeError(err error) error {
 	if err == nil {
 		return nil
 	}
+	var selection *loginWorkspaceError
+	if errors.As(err, &selection) {
+		result := NormalizeError(selection.err)
+		var failure *clierror.Error
+		if errors.As(result, &failure) {
+			failure.Message = fmt.Sprintf("login saved, but workspace %s was not selected: %s", selection.requested, failure.Message)
+			failure.Hint = fmt.Sprintf("run 'scope workspace use %s'", selection.requested)
+		}
+		return result
+	}
+	var cleanup *auth.LogoutCleanupError
+	if errors.As(err, &cleanup) {
+		result := NormalizeError(cleanup.Err)
+		var failure *clierror.Error
+		if errors.As(result, &failure) {
+			failure.Message = cleanup.Error()
+			failure.Hint = "the login stays valid until it expires or is revoked in the Console"
+		}
+		return result
+	}
 	var ready *clierror.Error
 	var keyringErr *credential.KeyringError
 	if errors.As(err, &ready) {

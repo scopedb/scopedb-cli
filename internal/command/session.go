@@ -40,7 +40,7 @@ func workspaceSetupError(err error) *clierror.Error {
 func (a *app) writeWorkspaceSetup(account auth.Account) error {
 	if err := workspaceSetupError(auth.RequireWorkspace(account)); err != nil {
 		_, writeErr := fmt.Fprintf(a.errOut, "%s; %s.\n", err.Message, err.Hint)
-		return NormalizeError(writeErr)
+		return writeErr
 	}
 	return nil
 }

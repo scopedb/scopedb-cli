@@ -78,7 +78,7 @@ func TestCatalogPlanApply(t *testing.T) {
 			}, IsInputTerminal: func() bool { return false },
 		})
 		root.SetArgs(args)
-		return root.ExecuteContext(t.Context())
+		return NormalizeError(root.ExecuteContext(t.Context()))
 	}
 	require.NoError(t, run("name: a/b\ncomment: yes\nstorage:\n  secret_access_key: storage-secret\n", "catalog", "plan", "--table", "db.public.`a/b`", "-f", "-"))
 	saved := out.String()
@@ -162,7 +162,7 @@ func TestCatalogApplyConfirmation(t *testing.T) {
 				args = append(args, "--allow-destructive")
 			}
 			root.SetArgs(args)
-			err := root.ExecuteContext(t.Context())
+			err := NormalizeError(root.ExecuteContext(t.Context()))
 			if tc.wantWrites == 0 {
 				require.Equal(t, tc.wantCode, clierror.ExitCode(err))
 			} else {
@@ -252,7 +252,7 @@ func TestCatalogRequestFailures(t *testing.T) {
 		t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
 		root := NewRoot(Dependencies{Out: io.Discard, ErrOut: io.Discard})
 		root.SetArgs([]string{"catalog", "get"})
-		err := root.ExecuteContext(t.Context())
+		err := NormalizeError(root.ExecuteContext(t.Context()))
 		require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
 	})
 	for _, tc := range []struct {
@@ -317,7 +317,7 @@ func TestCatalogRequestFailures(t *testing.T) {
 				args = append(args, "--yes")
 			}
 			root.SetArgs(args)
-			err := root.ExecuteContext(t.Context())
+			err := NormalizeError(root.ExecuteContext(t.Context()))
 			require.Equal(t, tc.code, clierror.ExitCode(err))
 			require.Empty(t, out.String())
 			if tc.cause != nil {
@@ -487,7 +487,7 @@ func TestCatalogOutput(t *testing.T) {
 		diagnostics.Reset()
 		root := NewRoot(Dependencies{In: strings.NewReader("databases: [{name: db}]\n"), Out: writer, ErrOut: &diagnostics, HTTPClient: client})
 		root.SetArgs(append([]string{"catalog"}, args...))
-		return root.ExecuteContext(t.Context())
+		return NormalizeError(root.ExecuteContext(t.Context()))
 	}
 	require.NoError(t, run(&out, "plan", "-f", "-", "--format", "json"))
 	var plan catalogPlan
@@ -555,7 +555,7 @@ func TestCatalogRequestTimeout(t *testing.T) {
 				})},
 			})
 			root.SetArgs(append([]string{"catalog"}, tc.args...))
-			err := root.ExecuteContext(t.Context())
+			err := NormalizeError(root.ExecuteContext(t.Context()))
 			if tc.requests == 0 {
 				require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
 			} else {

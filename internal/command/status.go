@@ -54,11 +54,11 @@ func (a *app) newStatusCommand() *cobra.Command {
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if access, active, machineErr := runtime.auth.MachineAccess(); active || machineErr != nil {
 				if machineErr != nil {
-					return NormalizeError(machineErr)
+					return machineErr
 				}
 				return renderStatus(a.out, format, statusView{
 					CredentialSource: "environment", Endpoint: access.Endpoint,
@@ -67,20 +67,20 @@ func (a *app) newStatusCommand() *cobra.Command {
 
 			account, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			if account.SelectedWorkspaceID != "" && errors.Is(auth.RequireWorkspace(account), auth.ErrWorkspaceUnavailable) {
 				if err := runtime.auth.SelectWorkspace(cmd.Context(), ""); err != nil {
-					return NormalizeError(err)
+					return err
 				}
 				account.SelectedWorkspaceID = ""
 				if _, err := fmt.Fprintln(a.errOut, "The selected workspace is no longer available; no workspace is selected."); err != nil {
-					return NormalizeError(err)
+					return err
 				}
 			}
 			state, err := runtime.auth.LoadAccess(cmd.Context())
 			if err != nil {
-				return NormalizeError(err)
+				return err
 			}
 			view := statusView{
 				ControlURL:            runtime.config.ControlURL,
@@ -96,7 +96,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 			if account.SelectedWorkspaceID != "" {
 				details, err := runtime.control.GetWorkspace(cmd.Context(), state.AccessToken, account.SelectedWorkspaceID)
 				if err != nil {
-					return NormalizeError(err)
+					return err
 				}
 				view.WorkspaceName = details.Workspace.Name()
 				view.Endpoint = details.Connection.APIBaseURL
