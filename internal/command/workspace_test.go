@@ -15,7 +15,6 @@
 package command
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -55,28 +54,27 @@ func TestCommandsKeepTheirLoginSnapshot(t *testing.T) {
 			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
 			fake.Details["ws-1"] = controlplane.WorkspaceDetails{Workspace: fake.Workspaces[0]}
 			var detailToken string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/workspaces" {
-					// Another process replaces the login after the account lookup has started.
-					if err := store.Save(fake.URL, credential.State{
-						AccessToken: "another-login", AccessTokenExpiresAt: time.Now().Add(time.Hour),
-						RefreshToken: "another-refresh", WorkspaceID: "ws-2",
-					}); err != nil {
-						t.Error(err)
-					}
-				}
-				if r.URL.Path == "/api/workspaces/ws-1" {
-					detailToken = r.Header.Get("Authorization")
-				}
-				fake.serve(w, r)
-			}))
-			t.Cleanup(server.Close)
-			fake.URL = server.URL
 			saveStoredLogin(t, store, fake.URL, "ws-1")
 
 			commandArgs := append([]string{"--control-url", fake.URL}, args...)
 			commandArgs = append(commandArgs, "--format", "json")
-			out, _, err := runCommand(t, commandArgs...)
+			out, _, err := runCommandWith(t, Dependencies{
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					if r.URL.Path == "/api/workspaces" {
+						// Replace the saved login while the command is reading its original account.
+						if err := store.Save(fake.URL, credential.State{
+							AccessToken: "another-login", AccessTokenExpiresAt: time.Now().Add(time.Hour),
+							RefreshToken: "another-refresh", WorkspaceID: "ws-2",
+						}); err != nil {
+							return nil, err
+						}
+					}
+					if r.URL.Path == "/api/workspaces/ws-1" {
+						detailToken = r.Header.Get("Authorization")
+					}
+					return http.DefaultTransport.RoundTrip(r)
+				})},
+			}, commandArgs...)
 			require.NoError(t, err)
 			if args[0] == "workspace" {
 				var view workspaceView
@@ -154,9 +152,7 @@ func TestStatusWithoutLogin(t *testing.T) {
 }
 
 func TestStatusMachineCredentialsSkipTheLogin(t *testing.T) {
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		Out: &out, ErrOut: &diagnostics,
+	out, diagnostics, err := runCommandWith(t, Dependencies{
 		Sleep: func(time.Duration) {},
 		Getenv: func(name string) string {
 			switch name {
@@ -167,11 +163,10 @@ func TestStatusMachineCredentialsSkipTheLogin(t *testing.T) {
 			}
 			return ""
 		},
-	})
-	root.SetArgs([]string{"auth", "status", "--format", "json"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.JSONEq(t, `{"credential_source":"environment","endpoint":"https://data.example.com"}`, out.String())
-	require.NotContains(t, out.String()+diagnostics.String(), "machine-secret")
+	}, "auth", "status", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"credential_source":"environment","endpoint":"https://data.example.com"}`, out)
+	require.NotContains(t, out+diagnostics, "machine-secret")
 }
 
 func TestStatusRefreshesExpiredLogin(t *testing.T) {

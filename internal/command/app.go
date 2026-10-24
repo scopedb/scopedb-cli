@@ -25,7 +25,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"sync"
 	"time"
 
 	scopedb "github.com/scopedb/goscopedb"
@@ -82,13 +81,10 @@ type runtimeContext struct {
 	credentials *credential.Stores
 	auth        *auth.Manager
 
-	oauthMu sync.Mutex
-	oauth   *controlplane.OAuth
+	oauth *controlplane.OAuth
 }
 
 func (r *runtimeContext) oauthClient(ctx context.Context) (*controlplane.OAuth, error) {
-	r.oauthMu.Lock()
-	defer r.oauthMu.Unlock()
 	if r.oauth != nil {
 		return r.oauth, nil
 	}
@@ -332,16 +328,6 @@ const keyringAccessHint = "restore OS keyring access; for queries without a keyr
 func NormalizeError(err error) error {
 	if err == nil {
 		return nil
-	}
-	var selection *loginWorkspaceError
-	if errors.As(err, &selection) {
-		result := NormalizeError(selection.err)
-		var failure *clierror.Error
-		if errors.As(result, &failure) {
-			failure.Message = fmt.Sprintf("login saved, but workspace %s was not selected: %s", selection.requested, failure.Message)
-			failure.Hint = fmt.Sprintf("run 'scope workspace use %s'", selection.requested)
-		}
-		return result
 	}
 	var cleanup *auth.LogoutCleanupError
 	if errors.As(err, &cleanup) {

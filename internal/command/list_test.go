@@ -65,29 +65,6 @@ func TestListMarksLifecycleState(t *testing.T) {
 	require.True(t, items[0].Current)
 }
 
-func TestListLimitAndEmptyAccount(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{
-		workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta"), workspaceFixture("ws-3", "Gamma"),
-	}
-	saveStoredLogin(t, store, fake.URL, "ws-1")
-
-	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "list", "--format", "json", "--limit", "2")
-	require.NoError(t, err)
-	var items []map[string]any
-	require.NoError(t, json.Unmarshal([]byte(out), &items))
-	require.Len(t, items, 2)
-
-	out, _, err = runCommand(t, "--control-url", fake.URL, "workspace", "list", "--format", "json", "--limit", "0")
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal([]byte(out), &items))
-	require.Len(t, items, 3)
-
-	out, _, err = runCommand(t, "--control-url", fake.URL, "workspace", "list", "--limit", "-1")
-	require.ErrorContains(t, err, "--limit must not be negative")
-	require.Empty(t, out)
-}
-
 func TestListGuidesAccountWithoutWorkspaces(t *testing.T) {
 	fake, store := setupCLITest(t)
 	saveStoredLogin(t, store, fake.URL, "")

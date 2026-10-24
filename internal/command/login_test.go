@@ -518,14 +518,8 @@ func TestLoginKeepsTheStoredSelectionWithoutWritingCredentials(t *testing.T) {
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
 	saveExpiredLogin(t, store, fake.URL, "ws-1")
 	counting := &countingStore{Store: store}
-
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
+	out, _, err := runCommandWith(t, Dependencies{
 		In:      strings.NewReader("\r"),
-		Out:     &out,
-		ErrOut:  &diagnostics,
-		Getenv:  func(string) string { return "" },
-		Sleep:   func(time.Duration) {},
 		OpenURL: fake.authorizationURL(t),
 		CredentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
 			if kind == credential.SourcePlaintext {
@@ -535,10 +529,9 @@ func TestLoginKeepsTheStoredSelectionWithoutWritingCredentials(t *testing.T) {
 		},
 		IsInputTerminal: func() bool { return true },
 		IsErrorTerminal: func() bool { return true },
-	})
-	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login", "--insecure-storage"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.Contains(t, out.String(), "Keeping workspace Alpha (ws-1).")
+	}, "--control-url", fake.URL, "auth", "login", "--insecure-storage")
+	require.NoError(t, err)
+	require.Contains(t, out, "Keeping workspace Alpha (ws-1).")
 	require.Equal(t, 1, counting.saves)
 }
 
@@ -901,10 +894,7 @@ func TestLogoutKeepsLocalRemovalWhenRevocationFails(t *testing.T) {
 }
 
 func TestLogoutRejectsEnvironmentCredentials(t *testing.T) {
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		Out: &out, ErrOut: &diagnostics,
-		Sleep: func(time.Duration) {},
+	out, diagnostics, err := runCommandWith(t, Dependencies{
 		Getenv: func(name string) string {
 			switch name {
 			case "SCOPEDB_ENDPOINT":
@@ -914,12 +904,10 @@ func TestLogoutRejectsEnvironmentCredentials(t *testing.T) {
 			}
 			return ""
 		},
-	})
-	root.SetArgs([]string{"auth", "logout", "--format", "json"})
-	err := root.ExecuteContext(t.Context())
+	}, "auth", "logout", "--format", "json")
 	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Empty(t, out.String())
-	require.NotContains(t, diagnostics.String(), "machine-secret")
+	require.Empty(t, out)
+	require.NotContains(t, diagnostics, "machine-secret")
 }
 
 func TestLoginReportsUnreachableControlPlane(t *testing.T) {
@@ -1015,32 +1003,19 @@ func TestLoginSelectsFirstAvailableWorkspace(t *testing.T) {
 	require.Equal(t, "ws-1", state.WorkspaceID)
 }
 
-func TestLoginSelectsRequestedWorkspaceByName(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-
-	out, _, err := runLoginScenario(t, fake, loginScenario{
-		args: []string{"auth", "login", "--insecure-storage", "--workspace", "beta"},
-	})
-	require.NoError(t, err)
-	require.Contains(t, out, "Using workspace Beta (ws-2).")
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ws-2", state.WorkspaceID)
-}
-
-func TestLoginSelectsRequestedWorkspaceByID(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-
-	out, _, err := runLoginScenario(t, fake, loginScenario{
-		args: []string{"auth", "login", "--insecure-storage", "--workspace", "ws-2"},
-	})
-	require.NoError(t, err)
-	require.Contains(t, out, "Using workspace Beta (ws-2).")
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ws-2", state.WorkspaceID)
+func TestLoginSelectsRequestedWorkspace(t *testing.T) {
+	for _, value := range []string{"beta", "ws-2"} {
+		t.Run(value, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+			out, _, err := runLoginScenario(t, fake, loginScenario{args: []string{"--workspace", value}})
+			require.NoError(t, err)
+			require.Contains(t, out, "Using workspace Beta (ws-2).")
+			state, err := store.Load(fake.URL)
+			require.NoError(t, err)
+			require.Equal(t, "ws-2", state.WorkspaceID)
+		})
+	}
 }
 
 func TestLoginRejectsUnknownRequestedWorkspace(t *testing.T) {

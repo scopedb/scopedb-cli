@@ -85,15 +85,12 @@ func TestRevokeJSONCancellation(t *testing.T) {
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
 	fake.APIKeys = []controlplane.APIKey{{ID: "key-1", Name: "automation", Status: "active"}}
 	saveStoredLogin(t, store, fake.URL, "ws-1")
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		In: strings.NewReader("n\n"), Out: &out, ErrOut: &diagnostics,
-		IsInputTerminal: func() bool { return true },
-	})
-	root.SetArgs([]string{"--control-url", fake.URL, "api-key", "revoke", "key-1", "--format", "json"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.JSONEq(t, `{"id":"key-1","name":"automation","revoked":false}`, out.String())
-	require.Contains(t, diagnostics.String(), "Revoke API key automation (key-1)?")
+	out, diagnostics, err := runCommandWith(t, Dependencies{
+		In: strings.NewReader("n\n"), IsInputTerminal: func() bool { return true },
+	}, "--control-url", fake.URL, "api-key", "revoke", "key-1", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"id":"key-1","name":"automation","revoked":false}`, out)
+	require.Contains(t, diagnostics, "Revoke API key automation (key-1)?")
 	require.Empty(t, fake.RevokedAPIKeys)
 }
 
@@ -127,10 +124,7 @@ func TestWorkspaceUseWarnsAboutEnvironmentCredentials(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
 	saveStoredLogin(t, store, fake.URL, "")
-
-	var out, diagnostics bytes.Buffer
-	root := NewRoot(Dependencies{
-		Out: &out, ErrOut: &diagnostics,
+	_, diagnostics, err := runCommandWith(t, Dependencies{
 		Sleep: func(time.Duration) {},
 		Getenv: func(name string) string {
 			switch name {
@@ -141,11 +135,10 @@ func TestWorkspaceUseWarnsAboutEnvironmentCredentials(t *testing.T) {
 			}
 			return ""
 		},
-	})
-	root.SetArgs([]string{"--control-url", fake.URL, "workspace", "use", "Alpha"})
-	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.Contains(t, diagnostics.String(), "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
-	require.NotContains(t, diagnostics.String(), "machine-secret")
+	}, "--control-url", fake.URL, "workspace", "use", "Alpha")
+	require.NoError(t, err)
+	require.Contains(t, diagnostics, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
+	require.NotContains(t, diagnostics, "machine-secret")
 }
 
 func TestConsoleOutput(t *testing.T) {

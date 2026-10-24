@@ -75,7 +75,7 @@ func TestQueryFailureDoesNotWriteResults(t *testing.T) {
 	require.Empty(t, out)
 }
 
-func runQueryWithTransport(t *testing.T, transport doctorTransport, args ...string) (string, error) {
+func runQueryWithTransport(t *testing.T, transport roundTripFunc, args ...string) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
 	err := runQueryWithWriter(t, transport, &out, args...)
@@ -83,7 +83,7 @@ func runQueryWithTransport(t *testing.T, transport doctorTransport, args ...stri
 	return out.String(), err
 }
 
-func runQueryWithWriter(t *testing.T, transport doctorTransport, out io.Writer, args ...string) error {
+func runQueryWithWriter(t *testing.T, transport roundTripFunc, out io.Writer, args ...string) error {
 	t.Helper()
 	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 	t.Setenv("SCOPEDB_CONTROL_URL", "")

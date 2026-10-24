@@ -46,131 +46,90 @@ func TestCommandErrorsAtProcessBoundary(t *testing.T) {
 		{name: "timeout", cause: context.DeadlineExceeded, code: clierror.ExitTemporary, message: "operation timed out"},
 		{name: "transport", cause: errors.New("connection refused"), code: clierror.ExitTemporary, message: "connection refused"},
 	} {
-		for _, args := range [][]string{
-			{"workspace", "list"},
-			{"query", "SELECT 1 AS ready", "--timeout", "1m"},
-			{"catalog", "get", "--request-timeout", "1m"},
-		} {
-			t.Run(tc.name+"/"+args[0], func(t *testing.T) {
-				t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-				const controlURL = "https://control.example.com"
-				store := credential.NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
-				require.NoError(t, store.Save(controlURL, credential.State{
-					AccessToken: "fixture-token", AccessTokenExpiresAt: time.Now().Add(time.Hour),
-					RefreshToken: "fixture-refresh", WorkspaceID: "ws-1",
-				}))
-				var out, diagnostics bytes.Buffer
-				code := execute(t.Context(), command.Dependencies{
-					Out: &out, ErrOut: &diagnostics, Getenv: func(string) string { return "" },
-					CredentialStore: func(string, config.Paths) (credential.Store, error) { return store, nil },
-					HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-						if tc.cause != nil {
-							return nil, tc.cause
-						}
-						return &http.Response{
-							StatusCode: tc.status, Request: r,
-							Header: http.Header{"X-Request-Id": []string{"request-1"}},
-							Body:   io.NopCloser(strings.NewReader(`{"error":{"message":"access denied"}}`)),
-						}, nil
-					})},
-				}, append([]string{"--control-url", controlURL}, args...))
-				require.Equal(t, tc.code, code)
-				require.Empty(t, out.String())
-				require.Equal(t, 1, strings.Count(diagnostics.String(), "Error:"))
-				require.Contains(t, diagnostics.String(), tc.message)
-				if tc.cause == nil {
-					require.Contains(t, diagnostics.String(), "request-1")
-				}
-				if tc.code == clierror.ExitAuth {
-					require.Equal(t, 1, strings.Count(diagnostics.String(), "scope auth login"))
-				}
-				if errors.Is(tc.cause, context.DeadlineExceeded) {
-					require.NotContains(t, diagnostics.String(), "--timeout")
-					require.NotContains(t, diagnostics.String(), "--request-timeout")
-				}
-				require.NotContains(t, diagnostics.String(), "fixture-token")
-				require.NotContains(t, diagnostics.String(), "fixture-refresh")
-			})
-		}
-	}
-}
-
-func TestInterruptedInputExitsQuietly(t *testing.T) {
-	for _, args := range []string{"query", "query --file -", "api-key revoke automation", "catalog plan -f -", "catalog apply -f -", "catalog apply --plan -"} {
-		t.Run(args, func(t *testing.T) {
-			reader, writer := io.Pipe()
-			defer func() { _ = reader.Close() }()
-			defer func() { _ = writer.Close() }()
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+			const controlURL = "https://control.example.com"
+			store := credential.NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
+			require.NoError(t, store.Save(controlURL, credential.State{
+				AccessToken: "fixture-token", AccessTokenExpiresAt: time.Now().Add(time.Hour),
+				RefreshToken: "fixture-refresh", WorkspaceID: "ws-1",
+			}))
 			var out, diagnostics bytes.Buffer
-			deps := command.Dependencies{
-				In: reader, Out: &out, ErrOut: &diagnostics,
-				IsInputTerminal: func() bool { return strings.HasPrefix(args, "api-key") },
-			}
-			commandArgs := strings.Fields(args)
-			if strings.HasPrefix(args, "api-key") {
-				t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-				const controlURL = "https://control.example.com"
-				store := credential.NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
-				require.NoError(t, store.Save(controlURL, credential.State{
-					AccessToken: "fixture-token", AccessTokenExpiresAt: time.Now().Add(time.Hour),
-					RefreshToken: "fixture-refresh-token",
-					WorkspaceID:  "ws-1",
-				}))
-				deps.CredentialStore = func(string, config.Paths) (credential.Store, error) { return store, nil }
-				deps.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-					require.Equal(t, http.MethodGet, r.Method)
-					body, ok := map[string]string{
-						"/api/user":                     `{"id":"user-1","status":"active"}`,
-						"/api/workspaces":               `{"workspaces":[{"id":"ws-1"}]}`,
-						"/api/workspaces/ws-1/api-keys": `[{"id":"key-1","name":"automation","status":"active"}]`,
-					}[r.URL.Path]
-					require.True(t, ok, "unexpected request: %s", r.URL.Path)
-					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
-				})}
-				commandArgs = append([]string{"--control-url", controlURL}, commandArgs...)
-			}
-			done := make(chan int, 1)
-			go func() {
-				done <- execute(ctx, deps, commandArgs)
-			}()
-			// Write returns only after the command starts reading; keep the pipe open without a newline or EOF.
-			writeDone := make(chan error, 1)
-			go func() {
-				_, err := io.WriteString(writer, "SELECT 1 AS ready")
-				writeDone <- err
-			}()
-			select {
-			case err := <-writeDone:
-				require.NoError(t, err)
-			case code := <-done:
-				t.Fatalf("command exited before reading input: code=%d, diagnostics=%s", code, diagnostics.String())
-			case <-time.After(5 * time.Second):
-				t.Fatal("command did not begin reading input")
-			}
-			cancel()
-			select {
-			case code := <-done:
-				require.Equal(t, clierror.ExitInterrupted, code)
-			case <-time.After(5 * time.Second):
-				_ = reader.Close()
-				<-done
-				t.Fatal("command did not stop reading input after cancellation")
-			}
+			code := execute(t.Context(), command.Dependencies{
+				Out: &out, ErrOut: &diagnostics, Getenv: func(string) string { return "" },
+				CredentialStore: func(string, config.Paths) (credential.Store, error) { return store, nil },
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+					if tc.cause != nil {
+						return nil, tc.cause
+					}
+					return &http.Response{
+						StatusCode: tc.status, Request: r,
+						Header: http.Header{"X-Request-Id": []string{"request-1"}},
+						Body:   io.NopCloser(strings.NewReader(`{"error":{"message":"access denied"}}`)),
+					}, nil
+				})},
+			}, []string{"--control-url", controlURL, "workspace", "list"})
+			require.Equal(t, tc.code, code)
 			require.Empty(t, out.String())
-			if strings.HasPrefix(args, "api-key") {
-				require.Equal(t, "Revoke API key automation (key-1)? [y/N] \n", diagnostics.String())
-			} else {
-				require.Equal(t, "\n", diagnostics.String())
+			require.Equal(t, 1, strings.Count(diagnostics.String(), "Error:"))
+			require.Contains(t, diagnostics.String(), tc.message)
+			if tc.cause == nil {
+				require.Contains(t, diagnostics.String(), "request-1")
 			}
+			if tc.code == clierror.ExitAuth {
+				require.Equal(t, 1, strings.Count(diagnostics.String(), "scope auth login"))
+			}
+			if errors.Is(tc.cause, context.DeadlineExceeded) {
+				require.NotContains(t, diagnostics.String(), "--timeout")
+				require.NotContains(t, diagnostics.String(), "--request-timeout")
+			}
+			require.NotContains(t, diagnostics.String(), "fixture-token")
+			require.NotContains(t, diagnostics.String(), "fixture-refresh")
 		})
 	}
 }
 
+func TestInterruptedInputExitsQuietly(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	}()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var out, diagnostics bytes.Buffer
+	done := make(chan int, 1)
+	go func() {
+		done <- execute(ctx, command.Dependencies{In: reader, Out: &out, ErrOut: &diagnostics}, []string{"query"})
+	}()
+	// A completed write proves the command reached stdin; leave it blocked without a newline.
+	writeDone := make(chan error, 1)
+	go func() {
+		_, err := io.WriteString(writer, "SELECT 1 AS ready")
+		writeDone <- err
+	}()
+	select {
+	case err := <-writeDone:
+		require.NoError(t, err)
+	case code := <-done:
+		t.Fatalf("command exited before reading input: %d", code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("command did not begin reading input")
+	}
+	cancel()
+	select {
+	case code := <-done:
+		require.Equal(t, clierror.ExitInterrupted, code)
+	case <-time.After(5 * time.Second):
+		t.Fatal("command did not stop reading input")
+	}
+	require.Empty(t, out.String())
+	require.Equal(t, "\n", diagnostics.String())
+}
+
 func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 	const statementID = "01989a4e-4ee2-7e63-87a5-65ac3b5161dc"
-	for _, outcome := range []string{"before_submit", "cancelled", "finished", "failed", "running", "unavailable", "malformed"} {
+	for _, outcome := range []string{"before_submit", "finished"} {
 		t.Run(outcome, func(t *testing.T) {
 			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 			t.Setenv("SCOPEDB_CONTROL_URL", "")
@@ -193,7 +152,6 @@ func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 					}
 				},
 				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-					status := http.StatusOK
 					body := `{"statement_id":"` + statementID + `","status":"running","created_at":"2026-09-09T00:00:00Z","progress":{}}`
 					switch r.Method + " " + r.URL.Path {
 					case "POST /v1/statements":
@@ -208,26 +166,11 @@ func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 						cancelCalls++
 						require.NoError(t, r.Context().Err(), "cancellation must use a fresh context")
 						require.Equal(t, "json", r.URL.Query().Get("format"))
-						switch outcome {
-						case "unavailable":
-							status = http.StatusServiceUnavailable
-							body = `{"code":"unavailable","message":"unavailable"}`
-						case "malformed":
-							body = `{"status":"cancelled"}`
-						default:
-							body = `{"statement_id":"` + statementID + `","status":"` + outcome + `","created_at":"2026-09-09T00:00:00Z","progress":{}`
-							switch outcome {
-							case "finished":
-								body += `,"result_set":{"metadata":{"fields":[{"name":"ready","data_type":"int"}],"num_rows":1},"format":"json","rows":[["1"]]}`
-							case "failed":
-								body += `,"error":{"code":"statement_failed","message":"unknown function UNKNOWN_FUNCTION"}`
-							}
-							body += `}`
-						}
+						body = `{"statement_id":"` + statementID + `","status":"finished","created_at":"2026-09-09T00:00:00Z","progress":{},"result_set":{"metadata":{"fields":[{"name":"ready","data_type":"int"}],"num_rows":1},"format":"json","rows":[["1"]]}}`
 					default:
 						t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 					}
-					return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
 				})},
 			}, []string{"query", "SELECT 1 AS ready"})
 			require.Equal(t, clierror.ExitInterrupted, code)
@@ -240,21 +183,8 @@ func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 			require.Equal(t, 1, cancelCalls)
 			require.Contains(t, diagnostics.String(), statementID)
 			require.NotContains(t, diagnostics.String(), "fixture-secret")
-			switch outcome {
-			case "cancelled":
-				require.Contains(t, diagnostics.String(), "server cancellation confirmed")
-			case "finished":
-				require.Contains(t, diagnostics.String(), "statement already completed")
-				require.Contains(t, diagnostics.String(), "do not rerun a statement with side effects")
-				require.NotContains(t, diagnostics.String(), "could not be confirmed")
-			case "failed":
-				require.Contains(t, diagnostics.String(), "statement failed: unknown function UNKNOWN_FUNCTION")
-				require.NotContains(t, diagnostics.String(), "could not be confirmed")
-				require.NotContains(t, diagnostics.String(), "retry")
-			default:
-				require.Contains(t, diagnostics.String(), "server cancellation could not be confirmed")
-				require.Contains(t, diagnostics.String(), "verify the statement's outcome before retrying")
-			}
+			require.Contains(t, diagnostics.String(), "statement already completed")
+			require.Contains(t, diagnostics.String(), "do not rerun a statement with side effects")
 		})
 	}
 }

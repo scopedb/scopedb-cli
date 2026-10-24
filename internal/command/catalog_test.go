@@ -39,7 +39,7 @@ func TestCatalogPlanApply(t *testing.T) {
 	writes, plans := 0, 0
 	stale := false
 	apiKey := "fixture-secret"
-	client := &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		require.Equal(t, "Bearer fixture-secret", r.Header.Get("Authorization"))
 		require.Equal(t, "/prefix/v1/catalog/databases/db/schemas/public/tables/a%2Fb", r.URL.EscapedPath())
 		require.Equal(t, http.MethodPut, r.Method)
@@ -144,7 +144,7 @@ func TestCatalogApplyConfirmation(t *testing.T) {
 					}
 					return ""
 				},
-				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					if r.URL.Query().Get("dry_run") != "true" {
 						writes++
 						require.Equal(t, tc.destructive, r.URL.Query().Get("allow_destructive") == "true")
@@ -199,7 +199,7 @@ func TestCatalogDrop(t *testing.T) {
 					}
 					return ""
 				},
-				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					requests++
 					require.Equal(t, tc.method, r.Method)
 					require.Equal(t, tc.path, r.URL.Path)
@@ -287,7 +287,7 @@ func TestCatalogRequestFailures(t *testing.T) {
 					}
 					return ""
 				},
-				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					requests++
 					if apply && requests == 1 {
 						return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(`{"before":null,"after":{"name":"t","columns":[]},"destructive":false}`)), Request: r}, nil
@@ -365,7 +365,7 @@ func TestCatalogBrowse(t *testing.T) {
 		out.Reset()
 		diagnostics.Reset()
 		requests := 0
-		root := NewRoot(Dependencies{Out: &out, ErrOut: &diagnostics, HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+		root := NewRoot(Dependencies{Out: &out, ErrOut: &diagnostics, HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			requests++
 			require.Equal(t, http.MethodGet, r.Method)
 			response, ok := responses[r.URL.Path]
@@ -422,7 +422,7 @@ func TestCatalogTenantApply(t *testing.T) {
 	var out, diagnostics bytes.Buffer
 	requests := 0
 	root := NewRoot(Dependencies{In: strings.NewReader("databases: []\n"), Out: &out, ErrOut: &diagnostics,
-		HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 			requests++
 			require.Equal(t, http.MethodPut, r.Method)
 			require.Equal(t, "/v1/catalog", r.URL.Path)
@@ -473,7 +473,7 @@ func TestCatalogOutput(t *testing.T) {
 	var out, diagnostics bytes.Buffer
 	writes := 0
 	result := `{"before":{"databases":[]},"after":{"databases":[{"name":"db"}]},"destructive":false}`
-	client := &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		body := result
 		if r.Method == http.MethodGet {
 			body = `{"databases":[{"name":"db"}]}`
@@ -537,7 +537,7 @@ func TestCatalogRequestTimeout(t *testing.T) {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			requests := 0
 			root := NewRoot(Dependencies{In: strings.NewReader("databases: []\n"), Out: io.Discard, ErrOut: io.Discard,
-				HTTPClient: &http.Client{Transport: doctorTransport(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					requests++
 					deadline, ok := r.Context().Deadline()
 					if tc.timeout == 0 {

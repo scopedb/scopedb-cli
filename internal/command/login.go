@@ -239,19 +239,14 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 	return selection, nil
 }
 
-type loginWorkspaceError struct {
-	requested string
-	err       error
-}
-
-func (e *loginWorkspaceError) Error() string {
-	return fmt.Sprintf("login saved, but workspace %s was not selected: %s", e.requested, e.err)
-}
-
-func (e *loginWorkspaceError) Unwrap() error { return e.err }
-
 func workspaceSelectionError(err error, requested string) error {
-	return &loginWorkspaceError{requested: requested, err: err}
+	result := NormalizeError(err)
+	var failure *clierror.Error
+	if errors.As(result, &failure) {
+		failure.Message = fmt.Sprintf("login saved, but workspace %s was not selected: %s", requested, failure.Message)
+		failure.Hint = fmt.Sprintf("run 'scope workspace use %s'", requested)
+	}
+	return result
 }
 
 func (a *app) renderLoginSelection(selection loginSelection) error {
