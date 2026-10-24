@@ -101,7 +101,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					}
 					report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: source})
 					accountCtx, accountCancel := timeoutContext(cmd.Context(), timeout)
-					account, accountErr := runtime.auth.Account(accountCtx)
+					account, _, accountErr := runtime.auth.Account(accountCtx)
 					accountCancel()
 					if accountErr != nil {
 						report.OK = false

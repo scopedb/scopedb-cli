@@ -134,7 +134,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 // A second login would leave the first grant active in ScopeDB with no local credential left to end it.
 func refuseSecondLogin(ctx context.Context, runtime *runtimeContext) error {
 	accountCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	account, err := runtime.auth.Account(accountCtx)
+	account, _, err := runtime.auth.Account(accountCtx)
 	cancel()
 	if err == nil {
 		return clierror.WithHint(clierror.New(clierror.ExitAuth, "already logged in as "+account.User.Email), "run 'scope auth logout' first")
@@ -173,7 +173,7 @@ func (s loginSelection) result() loginResult {
 // effort, because a login that is already stored must not fail when only the account check did.
 func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext, requested string) (loginSelection, error) {
 	accountCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	account, err := runtime.auth.Account(accountCtx)
+	account, _, err := runtime.auth.Account(accountCtx)
 	cancel()
 	if err != nil {
 		if ctx.Err() != nil {

@@ -12,7 +12,7 @@ All significant changes to this project will be documented in this file.
 
 ### Bug fixes
 
-* `scope workspace get` keeps its resolved login and workspace together if another process replaces the stored credentials during the command.
+* `scope workspace get` and `scope auth status` keep their resolved login and workspace together if another process replaces the stored credentials during the command.
 
 ### Improvements
 

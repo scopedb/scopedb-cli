@@ -63,7 +63,7 @@ func (a *app) newWorkspaceListCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			account, err := runtime.auth.Account(cmd.Context())
+			account, _, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -145,7 +145,7 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			account, err := runtime.auth.Account(cmd.Context())
+			account, _, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return err
 			}

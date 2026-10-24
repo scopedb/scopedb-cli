@@ -65,7 +65,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 				})
 			}
 
-			account, err := runtime.auth.Account(cmd.Context())
+			account, state, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return err
 			}
@@ -77,10 +77,6 @@ func (a *app) newStatusCommand() *cobra.Command {
 				if _, err := fmt.Fprintln(a.errOut, "The selected workspace is no longer available; no workspace is selected."); err != nil {
 					return err
 				}
-			}
-			state, err := runtime.auth.LoadAccess(cmd.Context())
-			if err != nil {
-				return err
 			}
 			view := statusView{
 				ControlURL:            runtime.config.ControlURL,

@@ -243,7 +243,7 @@ func TestAccountClearsARevokedGrant(t *testing.T) {
 	}}
 	manager := newManager(t, store, control, &fakeOAuth{rejectAll: true}, now)
 
-	_, err := manager.Account(t.Context())
+	_, _, err := manager.Account(t.Context())
 	require.ErrorIs(t, err, ErrLoginExpired)
 	require.False(t, store.stored())
 }
@@ -260,7 +260,7 @@ func TestAccountRetriesAfterRefreshingARejectedAccessToken(t *testing.T) {
 	oauth := &fakeOAuth{results: []tokenOutcome{{tokens: accessTokens("oat_new", "ort_new")}}}
 	manager := newManager(t, store, control, oauth, now)
 
-	account, err := manager.Account(t.Context())
+	account, _, err := manager.Account(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, "dev@example.com", account.User.Email)
 	require.Equal(t, 1, oauth.refreshCalls())
@@ -277,7 +277,7 @@ func TestAccountKeepsACredentialRejectedWithForbidden(t *testing.T) {
 	oauth := &fakeOAuth{}
 	manager := newManager(t, store, control, oauth, now)
 
-	_, err := manager.Account(t.Context())
+	_, _, err := manager.Account(t.Context())
 	require.Error(t, err)
 	require.Zero(t, oauth.refreshCalls())
 	require.True(t, store.stored())

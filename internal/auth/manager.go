@@ -239,7 +239,7 @@ type WorkspaceAccess struct {
 
 // LoadWorkspaceAccess resolves the account credential and workspace together for control-plane commands.
 func (m *Manager) LoadWorkspaceAccess(ctx context.Context) (WorkspaceAccess, error) {
-	account, state, err := m.account(ctx)
+	account, state, err := m.Account(ctx)
 	if err != nil {
 		return WorkspaceAccess{}, err
 	}
@@ -249,12 +249,8 @@ func (m *Manager) LoadWorkspaceAccess(ctx context.Context) (WorkspaceAccess, err
 	return WorkspaceAccess{AccessToken: state.AccessToken, WorkspaceID: account.SelectedWorkspaceID}, nil
 }
 
-func (m *Manager) Account(ctx context.Context) (Account, error) {
-	account, _, err := m.account(ctx)
-	return account, err
-}
-
-func (m *Manager) account(ctx context.Context) (Account, credential.State, error) {
+// Account returns account details and the credential used to read them as one snapshot.
+func (m *Manager) Account(ctx context.Context) (Account, credential.State, error) {
 	state, err := m.LoadAccess(ctx)
 	if err != nil {
 		return Account{}, credential.State{}, err
@@ -379,7 +375,7 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 		return access, err
 	}
 
-	account, state, err := m.account(ctx)
+	account, state, err := m.Account(ctx)
 	if err != nil {
 		return Access{}, err
 	}

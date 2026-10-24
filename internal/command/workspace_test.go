@@ -48,39 +48,53 @@ func TestWorkspaceGetShowsSelectedWorkspace(t *testing.T) {
 	require.Equal(t, "ready", view.Provisioning.Status)
 }
 
-func TestWorkspaceGetKeepsItsLoginSnapshot(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
-	fake.Details["ws-1"] = controlplane.WorkspaceDetails{Workspace: fake.Workspaces[0]}
-	var detailToken string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/workspaces" {
-			// Another process replaces the login after the account lookup has started.
-			if err := store.Save(fake.URL, credential.State{
-				AccessToken: "another-login", AccessTokenExpiresAt: time.Now().Add(time.Hour),
-				RefreshToken: "another-refresh", WorkspaceID: "ws-2",
-			}); err != nil {
-				t.Error(err)
-			}
-		}
-		if r.URL.Path == "/api/workspaces/ws-1" {
-			detailToken = r.Header.Get("Authorization")
-		}
-		fake.serve(w, r)
-	}))
-	t.Cleanup(server.Close)
-	fake.URL = server.URL
-	saveStoredLogin(t, store, fake.URL, "ws-1")
+func TestCommandsKeepTheirLoginSnapshot(t *testing.T) {
+	for _, args := range [][]string{{"workspace", "get"}, {"auth", "status"}} {
+		t.Run(args[0], func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+			fake.Details["ws-1"] = controlplane.WorkspaceDetails{Workspace: fake.Workspaces[0]}
+			var detailToken string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/workspaces" {
+					// Another process replaces the login after the account lookup has started.
+					if err := store.Save(fake.URL, credential.State{
+						AccessToken: "another-login", AccessTokenExpiresAt: time.Now().Add(time.Hour),
+						RefreshToken: "another-refresh", WorkspaceID: "ws-2",
+					}); err != nil {
+						t.Error(err)
+					}
+				}
+				if r.URL.Path == "/api/workspaces/ws-1" {
+					detailToken = r.Header.Get("Authorization")
+				}
+				fake.serve(w, r)
+			}))
+			t.Cleanup(server.Close)
+			fake.URL = server.URL
+			saveStoredLogin(t, store, fake.URL, "ws-1")
 
-	out, _, err := runCommand(t, "--control-url", fake.URL, "workspace", "get", "--format", "json")
-	require.NoError(t, err)
-	var view workspaceView
-	require.NoError(t, json.Unmarshal([]byte(out), &view))
-	require.Equal(t, "ws-1", view.Workspace.ID)
-	require.Equal(t, "Bearer "+fake.AccessToken, detailToken)
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
-	require.Equal(t, "ws-2", state.WorkspaceID)
+			commandArgs := append([]string{"--control-url", fake.URL}, args...)
+			commandArgs = append(commandArgs, "--format", "json")
+			out, _, err := runCommand(t, commandArgs...)
+			require.NoError(t, err)
+			if args[0] == "workspace" {
+				var view workspaceView
+				require.NoError(t, json.Unmarshal([]byte(out), &view))
+				require.Equal(t, "ws-1", view.Workspace.ID)
+			} else {
+				var view statusView
+				require.NoError(t, json.Unmarshal([]byte(out), &view))
+				require.Equal(t, "ws-1", view.WorkspaceID)
+				require.Equal(t, fake.User.Email, view.Email)
+				require.NotEmpty(t, view.RefreshTokenExpiresAt)
+			}
+			require.Equal(t, "Bearer "+fake.AccessToken, detailToken)
+			state, err := store.Load(fake.URL)
+			require.NoError(t, err)
+			require.Equal(t, "ws-2", state.WorkspaceID)
+		})
+	}
 }
 
 func TestStatusReportsOAuthLogin(t *testing.T) {
