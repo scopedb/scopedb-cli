@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
@@ -82,19 +81,20 @@ func TestCommandJSONOutput(t *testing.T) {
 }
 
 func TestRevokeJSONCancellation(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+	fake.APIKeys = []controlplane.APIKey{{ID: "key-1", Name: "automation", Status: "active"}}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
 	var out, diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
 		In: strings.NewReader("n\n"), Out: &out, ErrOut: &diagnostics,
 		IsInputTerminal: func() bool { return true },
-		CredentialStore: func(string, config.Paths) (credential.Store, error) {
-			t.Fatal("cancellation must not access credentials or call the service")
-			return nil, nil
-		},
 	})
-	root.SetArgs([]string{"api-key", "revoke", "automation", "--format", "json"})
+	root.SetArgs([]string{"--control-url", fake.URL, "api-key", "revoke", "key-1", "--format", "json"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
-	require.JSONEq(t, `{"name":"automation","revoked":false}`, out.String())
-	require.Contains(t, diagnostics.String(), "Revoke API key")
+	require.JSONEq(t, `{"id":"key-1","name":"automation","revoked":false}`, out.String())
+	require.Contains(t, diagnostics.String(), "Revoke API key automation (key-1)?")
+	require.Empty(t, fake.RevokedAPIKeys)
 }
 
 func TestWorkspaceUseTextOutput(t *testing.T) {

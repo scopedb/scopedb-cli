@@ -74,7 +74,7 @@ scope api-key create my-app --expires-in 720h
 
 The key is shown only once on stdout. Store it in your application's secret manager. The command requires a CLI login; an existing API key cannot manage keys through the CLI. The workspace owner sees every key in the workspace, while a member sees and manages only keys they created. Use separate keys for development, staging, and production.
 
-Revoke a key by ID or unique name with `scope api-key revoke <id-or-name>`. When several keys share a name, use the ID from `scope api-key list`.
+Revoke a key with `scope api-key revoke <id>`, using the ID from `scope api-key list`. A unique name also works, but repeated names require an ID; if an ID also matches another key's name, the ID wins. The confirmation shows the selected name and ID, and declining it sends no deletion. Revocation requires Control Plane 0.25.0 or newer.
 
 Copy the workspace's data-plane endpoint, without appending `/v1/statements`. Set both values in your application environment or local shell:
 

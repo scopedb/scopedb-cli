@@ -213,21 +213,8 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			if value == "" {
 				return usageError("API key ID or name must not be empty")
 			}
-			if !yes {
-				if !a.isInputTerminal() {
-					return usageError("--yes is required when input is not interactive")
-				}
-				answer, err := a.readLine(cmd.Context(), fmt.Sprintf("Revoke API key %s? [y/N] ", value))
-				if err != nil {
-					return NormalizeError(err)
-				}
-				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
-					if format == structuredFormatJSON {
-						return writeJSON(a.out, apiKeyRevokeResult{Name: value, Revoked: false})
-					}
-					_, err := fmt.Fprintln(a.out, "Cancelled.")
-					return NormalizeError(err)
-				}
+			if !yes && !a.isInputTerminal() {
+				return usageError("--yes is required when input is not interactive")
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
@@ -244,6 +231,19 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 			key, err := resolveAPIKey(keys, value)
 			if err != nil {
 				return err
+			}
+			if !yes {
+				answer, err := a.readLine(cmd.Context(), fmt.Sprintf("Revoke API key %s (%s)? [y/N] ", key.Name, key.ID))
+				if err != nil {
+					return NormalizeError(err)
+				}
+				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
+					if format == structuredFormatJSON {
+						return writeJSON(a.out, apiKeyRevokeResult{ID: key.ID, Name: key.Name, Revoked: false})
+					}
+					_, err := fmt.Fprintln(a.out, "Cancelled.")
+					return NormalizeError(err)
+				}
 			}
 			if err := runtime.control.RevokeAPIKey(cmd.Context(), state.AccessToken, state.WorkspaceID, key.ID); err != nil {
 				return NormalizeError(err)
@@ -283,7 +283,7 @@ func resolveAPIKey(keys []controlplane.APIKey, value string) (controlplane.APIKe
 }
 
 type apiKeyRevokeResult struct {
-	ID      string `json:"id,omitempty"`
+	ID      string `json:"id"`
 	Name    string `json:"name"`
 	Revoked bool   `json:"revoked"`
 }

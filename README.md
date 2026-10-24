@@ -141,13 +141,13 @@ Business commands support `--format json` for scripts while keeping their usual 
 ```sh
 scope auth status --format json
 scope workspace use <id-or-name> --format json
-scope api-key revoke <id-or-name> --yes --format json
+scope api-key revoke <id> --yes --format json
 scope console --format json
 ```
 
 Results go to stdout; prompts, warnings, and errors go to stderr. `scope doctor --format json` prints its report and exits nonzero if checks fail. `scope version --format json` prints machine-readable version information; `--json` is also supported.
 
-`scope api-key revoke` accepts an API key ID or a unique name. When several keys share a name, pass the ID shown by `scope api-key list`.
+Use the ID from `scope api-key list` when revoking a key in a script. `scope api-key revoke` also accepts a unique name, but rejects ambiguous names; an exact ID takes precedence over a matching name. Interactive confirmation identifies the resolved name and ID. JSON results contain `id`, `name`, and `revoked`, including when you decline confirmation. Revocation requires Control Plane 0.25.0 or newer.
 
 `scope workspace list` and `scope api-key list` accept `--limit N` to show at most N items. The default and `--limit 0` show all items. This limits displayed results without reducing the amount fetched.
 

@@ -32,6 +32,8 @@ func TestAPIKeyRevokeResolvesIDOrUniqueName(t *testing.T) {
 		wantMessage string
 	}{
 		{name: "id", input: "key-2", wantID: "key-2", wantName: "ci"},
+		{name: "id selects one duplicate", input: "key-3", wantID: "key-3", wantName: "duplicate"},
+		{name: "id takes precedence over a matching name", input: "key-4", wantID: "key-4", wantName: "duplicate"},
 		{name: "unique name", input: "ci", wantID: "key-2", wantName: "ci"},
 		{name: "padded name", input: " ci ", wantID: "key-2", wantName: "ci"},
 		{name: "ambiguous name", input: "duplicate", wantCode: clierror.ExitUsage, wantMessage: "ambiguous"},
@@ -45,6 +47,7 @@ func TestAPIKeyRevokeResolvesIDOrUniqueName(t *testing.T) {
 				{ID: "key-2", Name: "ci", Status: "active"},
 				{ID: "key-3", Name: "duplicate", Status: "active"},
 				{ID: "key-4", Name: "duplicate", Status: "active"},
+				{ID: "key-5", Name: "key-4", Status: "active"},
 			}
 			saveStoredLogin(t, store, fake.URL, "ws-1")
 

@@ -4,9 +4,9 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
-### Bug fixes
+### Breaking changes
 
-* `scope api-key revoke` works with ScopeDB Control Plane 0.25.0 or newer, which identifies API keys by ID. It accepts an ID or a unique name, reports an ambiguous name instead of revoking multiple keys, and includes the revoked key's ID in text and JSON output.
+* `scope api-key revoke` now requires ScopeDB Control Plane 0.25.0 or newer and revokes by key ID. Use the ID from `scope api-key list` in scripts. A unique name remains a shorthand; duplicate names fail without a deletion, and an exact ID takes precedence over another key's name. Interactive confirmation shows the resolved name and ID; both completed and cancelled JSON results include `id`, `name`, and `revoked`. This command no longer supports the older name-based API.
 
 ### Improvements
 
