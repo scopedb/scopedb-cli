@@ -81,13 +81,14 @@ func (a *app) newAPIKeyListCommand() *cobra.Command {
 				}
 				return writeJSON(a.out, items)
 			}
-			t := output.NewTable("NAME", "ID", "STATUS", "TAGS", "CREATED", "EXPIRES")
+			t := output.NewTable("NAME", "ID", "STATUS", "TAGS", "CREATED BY", "CREATED", "EXPIRES")
 			for _, key := range keys {
 				t.AppendRow(table.Row{
 					key.Name,
 					key.ID,
 					key.Status,
 					joinTags(key.Tags),
+					key.CreatedBy,
 					key.CreatedAt.UTC().Format(time.RFC3339),
 					optionalTime(key.ExpiresAt),
 				})

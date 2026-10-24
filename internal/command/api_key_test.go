@@ -15,12 +15,40 @@
 package command
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/stretchr/testify/require"
 )
+
+func TestAPIKeyListIdentifiesDuplicateNamesByCreator(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Shared")}
+	fake.APIKeys = []controlplane.APIKey{
+		{ID: "key-1", Name: "automation", CreatedBy: "alice@example.com", Key: "alice-key-secret"},
+		{ID: "key-2", Name: "automation", CreatedBy: "bob@example.com", Key: "bob-key-secret"},
+	}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, diagnostics, err := runCommand(t, "--control-url", fake.URL, "api-key", "list")
+	require.NoError(t, err)
+	require.Empty(t, diagnostics)
+	for _, key := range fake.APIKeys {
+		var row string
+		for _, line := range strings.Split(out, "\n") {
+			if strings.Contains(line, key.ID) {
+				row = line
+				break
+			}
+		}
+		require.NotEmpty(t, row, "missing API key %s", key.ID)
+		require.Contains(t, row, key.Name)
+		require.Contains(t, row, key.CreatedBy)
+		require.NotContains(t, out+diagnostics, key.Key)
+	}
+}
 
 func TestAPIKeyRevokeResolvesIDOrUniqueName(t *testing.T) {
 	for _, tc := range []struct {

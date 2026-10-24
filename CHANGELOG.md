@@ -10,6 +10,7 @@ All significant changes to this project will be documented in this file.
 
 ### Improvements
 
+* `scope api-key list` shows each key's creator in the default table so workspace owners can distinguish members' keys with the same name.
 * `scope auth login` shows a compact browser callback page with the ScopeDB logo, a green check or red cross message box explaining the authorization outcome, and guidance to return to the terminal, in light and dark appearances.
 
 ## v0.1.0 (2026-10-23)
