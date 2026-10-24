@@ -173,6 +173,10 @@ func (f *fakeControlPlane) serveWorkspace(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if len(parts) == 2 && strings.HasPrefix(parts[1], "api-keys/") {
+		if !assert.Equal(f.t, http.MethodDelete, r.Method) {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 		f.mu.Lock()
 		f.RevokedAPIKeys = append(f.RevokedAPIKeys, strings.TrimPrefix(parts[1], "api-keys/"))
 		f.mu.Unlock()

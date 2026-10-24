@@ -245,6 +245,12 @@ func (a *app) newAPIKeyRevokeCommand() *cobra.Command {
 					_, err := fmt.Fprintln(a.out, "Cancelled.")
 					return err
 				}
+				refreshed, err := runtime.auth.LoadAccess(cmd.Context())
+				if err != nil {
+					return err
+				}
+				// Waiting for confirmation may expire the token; keep the confirmed target.
+				state.AccessToken = refreshed.AccessToken
 			}
 			if err := runtime.control.RevokeAPIKey(cmd.Context(), state.AccessToken, state.WorkspaceID, key.ID); err != nil {
 				return err
@@ -277,9 +283,12 @@ func resolveAPIKey(keys []controlplane.APIKey, value string) (controlplane.APIKe
 	case 1:
 		return matches[0], nil
 	case 0:
-		return controlplane.APIKey{}, clierror.New(clierror.ExitNotFound, fmt.Sprintf("API key %q was not found", value))
+		return controlplane.APIKey{}, clierror.WithHint(
+			clierror.New(clierror.ExitNotFound, "API key was not found"),
+			"use an ID from 'scope api-key list'",
+		)
 	default:
-		return controlplane.APIKey{}, usageError(fmt.Sprintf("API key name %q is ambiguous; use its ID", value))
+		return controlplane.APIKey{}, usageError("API key name is ambiguous; use its ID from 'scope api-key list'")
 	}
 }
 
