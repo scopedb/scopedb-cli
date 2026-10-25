@@ -52,7 +52,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 			"does not open, open the printed URL on the same device. Use --use-device-code to approve\n" +
 			"from another device, or --no-browser to skip opening a browser automatically in either flow.\n\n" +
 			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
-			"name and ID. Use 'scope workspace use <id-or-name>' to switch afterwards.\n" +
+			"name and ID. Use 'scope workspace use <id>' to switch afterwards.\n" +
 			"Login does not require an interactive terminal.\n\n" +
 			"Prefers the OS keyring, with a warning and plaintext fallback if storage fails.\n" +
 			"On Linux, keyring access requires a D-Bus session and Secret Service.\n" +
@@ -124,7 +124,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
-	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace; defaults to the first available workspace by ID")
+	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace by ID; defaults to the first available workspace by ID")
 	command.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open the browser automatically")
 	command.Flags().BoolVar(&useDeviceCode, "use-device-code", false, "use a device code to approve login from any device")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store this login's credentials unencrypted in a file")
@@ -198,7 +198,7 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 	selection := loginSelection{email: account.User.Email}
 	switch {
 	case strings.TrimSpace(requested) != "":
-		workspace, err := resolveWorkspace(account.Workspaces, requested)
+		workspace, err := resolveWorkspaceID(account.Workspaces, requested)
 		if err != nil {
 			return loginSelection{}, workspaceSelectionError(err, requested)
 		}
@@ -244,7 +244,9 @@ func workspaceSelectionError(err error, requested string) error {
 	var failure *clierror.Error
 	if errors.As(result, &failure) {
 		failure.Message = fmt.Sprintf("login saved, but workspace %s was not selected: %s", requested, failure.Message)
-		failure.Hint = fmt.Sprintf("run 'scope workspace use %s'", requested)
+		if failure.Hint == "" {
+			failure.Hint = fmt.Sprintf("run 'scope workspace use %s'", requested)
+		}
 	}
 	return result
 }

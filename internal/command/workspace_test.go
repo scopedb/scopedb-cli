@@ -27,6 +27,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestWorkspaceUseRequiresAnAccessibleWorkspaceID(t *testing.T) {
+	for _, value := range []string{"missing", "Beta", "beta"} {
+		t.Run(value, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+			saveStoredLogin(t, store, fake.URL, "ws-1")
+
+			out, _, err := runCommand(t, "workspace", "use", value)
+			require.Equal(t, clierror.ExitNotFound, clierror.ExitCode(err))
+			require.Contains(t, clierror.Render(err), "scope workspace list")
+			require.Empty(t, out)
+			state, err := store.Load(fake.URL)
+			require.NoError(t, err)
+			require.Equal(t, "ws-1", state.WorkspaceID)
+		})
+	}
+}
+
 func TestWorkspaceGetShowsSelectedWorkspace(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}

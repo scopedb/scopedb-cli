@@ -27,11 +27,11 @@ func workspaceSetupError(err error) *clierror.Error {
 	case errors.Is(err, auth.ErrApprovalRequired):
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, fmt.Sprint(err), err), "run 'scope console --open' to check approval status in the Console")
 	case errors.Is(err, auth.ErrNoWorkspaces):
-		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "open the Console with 'scope console --open' to create your first workspace, then run 'scope workspace list' and 'scope workspace use <id-or-name>'")
+		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "open the Console with 'scope console --open' to create your first workspace, then run 'scope workspace list' and 'scope workspace use <id>'")
 	case errors.Is(err, auth.ErrNoWorkspaceSelected):
-		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "run 'scope workspace list' and 'scope workspace use <id-or-name>'")
+		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "run 'scope workspace list' and 'scope workspace use <id>'")
 	case errors.Is(err, auth.ErrWorkspaceUnavailable):
-		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "run 'scope workspace list' and 'scope workspace use <id-or-name>', or restore it in the Console")
+		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, fmt.Sprint(err), err), "run 'scope workspace list' and 'scope workspace use <id>', or restore it in the Console")
 	default:
 		return nil
 	}

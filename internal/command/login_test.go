@@ -1004,34 +1004,35 @@ func TestLoginSelectsFirstAvailableWorkspace(t *testing.T) {
 }
 
 func TestLoginSelectsRequestedWorkspace(t *testing.T) {
-	for _, value := range []string{"beta", "ws-2"} {
-		t.Run(value, func(t *testing.T) {
-			fake, store := setupCLITest(t)
-			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
-			out, _, err := runLoginScenario(t, fake, loginScenario{args: []string{"--workspace", value}})
-			require.NoError(t, err)
-			require.Contains(t, out, "Using workspace Beta (ws-2).")
-			state, err := store.Load(fake.URL)
-			require.NoError(t, err)
-			require.Equal(t, "ws-2", state.WorkspaceID)
-		})
-	}
-}
-
-func TestLoginRejectsUnknownRequestedWorkspace(t *testing.T) {
 	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
-
-	out, _, err := runLoginScenario(t, fake, loginScenario{
-		args: []string{"auth", "login", "--insecure-storage", "--workspace", "missing"},
-	})
-	require.Equal(t, clierror.ExitNotFound, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "login saved, but workspace missing was not selected")
-	require.Contains(t, clierror.Render(err), "scope workspace use missing")
-	require.Empty(t, out)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha"), workspaceFixture("ws-2", "Beta")}
+	out, _, err := runLoginScenario(t, fake, loginScenario{args: []string{"--workspace", "ws-2"}})
+	require.NoError(t, err)
+	require.Contains(t, out, "Using workspace Beta (ws-2).")
 	state, err := store.Load(fake.URL)
 	require.NoError(t, err)
-	require.Empty(t, state.WorkspaceID)
+	require.Equal(t, "ws-2", state.WorkspaceID)
+}
+
+func TestLoginRequiresAnAccessibleWorkspaceID(t *testing.T) {
+	for _, value := range []string{"missing", "Alpha", "alpha"} {
+		t.Run(value, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+
+			out, _, err := runLoginScenario(t, fake, loginScenario{
+				args: []string{"auth", "login", "--insecure-storage", "--workspace", value},
+			})
+			require.Equal(t, clierror.ExitNotFound, clierror.ExitCode(err))
+			require.Contains(t, clierror.Render(err), "login saved, but workspace "+value+" was not selected")
+			require.Contains(t, clierror.Render(err), "scope workspace list")
+			require.Empty(t, out)
+			state, err := store.Load(fake.URL)
+			require.NoError(t, err)
+			require.NotEmpty(t, state.AccessToken)
+			require.Empty(t, state.WorkspaceID)
+		})
+	}
 }
 
 func TestLoginRejectsScheduledRequestedWorkspace(t *testing.T) {
