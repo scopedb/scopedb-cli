@@ -28,6 +28,8 @@ import (
 )
 
 type statusView struct {
+	Profile               string `json:"profile,omitempty"`
+	UserID                string `json:"user_id,omitempty"`
 	ControlURL            string `json:"control_url,omitempty"`
 	Email                 string `json:"email,omitempty"`
 	CredentialSource      string `json:"credential_source"`
@@ -79,6 +81,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 				}
 			}
 			view := statusView{
+				Profile: runtime.config.ProfileName, UserID: account.User.ID,
 				ControlURL:            runtime.config.ControlURL,
 				Email:                 account.User.Email,
 				CredentialSource:      state.Source,
@@ -124,6 +127,8 @@ func renderStatus(out io.Writer, format string, view statusView) error {
 		t.AppendRow(table.Row{"Credential file", view.CredentialFile})
 	}
 	t.AppendRows([]table.Row{
+		{"Profile", emptyDash(view.Profile)},
+		{"User ID", emptyDash(view.UserID)},
 		{"Email", emptyDash(view.Email)},
 		{"User status", emptyDash(view.UserStatus)},
 		{"Refresh token expires", emptyDash(view.RefreshTokenExpiresAt)},

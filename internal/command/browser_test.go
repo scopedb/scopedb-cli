@@ -27,7 +27,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,7 +70,7 @@ func TestLoginContinuesWhenBrowserLauncherExitsUnsuccessfully(t *testing.T) {
 	require.Len(t, fake.TokenForms, 1)
 	require.Equal(t, "authorization_code", fake.TokenForms[0].Get("grant_type"))
 	require.Zero(t, fake.DevicePolls)
-	state, err := credential.NewKeyringStore().Load(fake.URL)
+	state, err := testKeyring(t).Load(fake.URL)
 	require.NoError(t, err)
 	require.Equal(t, fake.RefreshToken, state.RefreshToken)
 }

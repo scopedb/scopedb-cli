@@ -25,13 +25,13 @@ import (
 func TestKeyringStoreReplacesInvalidEntry(t *testing.T) {
 	keyring.MockInit()
 	t.Cleanup(keyring.MockInit)
-	store := NewKeyringStore()
+	store := NewKeyringStore("")
 	const controlURL = "https://control.example.com"
 	for _, encoded := range []string{
 		`{"access_token":"private-secret"`,
 		`{"data_token_expires_at":"private-secret"}`,
 	} {
-		require.NoError(t, keyring.Set(keyringService, profileKey(controlURL), encoded))
+		require.NoError(t, keyring.Set(keyringService, profileKey(controlURL, ""), encoded))
 		_, err := store.Load(controlURL)
 		require.ErrorIs(t, err, ErrInvalidState)
 		require.NotContains(t, err.Error(), "private-secret")
@@ -45,7 +45,7 @@ func TestKeyringStoreReplacesInvalidEntry(t *testing.T) {
 func TestKeyringStorePreservesAccessErrors(t *testing.T) {
 	keyring.MockInitWithError(os.ErrPermission)
 	t.Cleanup(keyring.MockInit)
-	store := NewKeyringStore()
+	store := NewKeyringStore("")
 	const controlURL = "https://control.example.com"
 	for _, operation := range []struct {
 		name string

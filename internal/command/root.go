@@ -43,8 +43,10 @@ func NewRoot(deps Dependencies) *cobra.Command {
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return clierror.Wrap(clierror.ExitUsage, err.Error(), err)
 	})
+	root.PersistentFlags().StringVar(&a.profileFlag, "profile", "", "use this saved profile for this command")
 	root.PersistentFlags().StringVar(&a.controlURLFlag, "control-url", "", "ScopeDB control-plane URL")
 	root.PersistentFlags().StringVar(&a.consoleURLFlag, "console-url", "", "ScopeDB console URL")
+	_ = root.RegisterFlagCompletionFunc("profile", a.completeProfiles)
 	// Keep service URL overrides available for troubleshooting without advertising them.
 	_ = root.PersistentFlags().MarkHidden("control-url")
 	_ = root.PersistentFlags().MarkHidden("console-url")
@@ -52,6 +54,7 @@ func NewRoot(deps Dependencies) *cobra.Command {
 	root.AddCommand(
 		a.newAuthCommand(),
 		a.newWorkspaceCommand(),
+		a.newProfileCommand(),
 		a.newAPIKeyCommand(),
 		a.newQueryCommand(),
 		a.newCatalogCommand(),
@@ -60,6 +63,7 @@ func NewRoot(deps Dependencies) *cobra.Command {
 		newVersionCommand(a.out),
 		newCompletionCommand(root),
 	)
+	a.bindProfileErrors(root)
 	return root
 }
 

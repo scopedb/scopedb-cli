@@ -6,8 +6,14 @@ All significant changes to this project will be documented in this file.
 
 ### Breaking changes
 
+* `scope auth login` no longer selects the first workspace when several are available. It keeps an accessible saved binding, selects the only eligible workspace, or prompts on an interactive terminal. Non-interactive login with multiple workspaces saves the login without a target; pass `--workspace <id>` or run `scope workspace use <id>` before workspace-dependent commands.
 * `scope workspace use <id>` and `scope auth login --workspace <id>` now require a workspace ID. Display names are no longer accepted; use `scope workspace list` to find the ID and update commands and scripts that select workspaces by name.
-* Rename the CLI configuration directory override from `SCOPEDB_CONFIG_DIR` to `SCOPEDB_HOME`. Set `SCOPEDB_HOME` to the same directory and remove the old variable from your environment. The CLI no longer reads the old name. Default storage locations, existing configuration files, and credential storage are unchanged; connection variables retain their existing `SCOPEDB_` names.
+* Rename the CLI configuration directory override from `SCOPEDB_CONFIG_DIR` to `SCOPEDB_HOME`. Set `SCOPEDB_HOME` to the same directory and remove the old variable from your environment. The CLI no longer reads the old name. Default storage locations and connection variable names are unchanged; existing logins migrate to profiles as described below.
+
+### New features
+
+* Named profiles retain independent accounts, workspace defaults, credentials, and refresh lifecycles. Create them with `scope auth login --profile <name>`, inspect them with `scope profile list`, and change the saved default with `scope profile use <name>`. Selection precedence is `--profile`, `SCOPEDB_PROFILE`, then the saved default. Logout affects only the selected profile and retains its workspace binding. Existing OAuth credentials migrate to `default` with their storage backend; configuration directories have isolated credentials. Explicit `--profile` conflicts with machine credentials for data and connection-status commands.
+* `scope workspace use` without an ID offers an interactive picker showing workspace names and IDs. Workspace IDs and profile names support shell completion. Non-interactive workspace selection requires an explicit ID.
 
 ### Improvements
 

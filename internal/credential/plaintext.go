@@ -33,11 +33,12 @@ type plaintextDocument struct {
 // PlaintextStore is a fallback for hosts without a usable keyring.
 // The file is permission-restricted but is not encrypted.
 type PlaintextStore struct {
-	path string
+	path      string
+	reference string
 }
 
-func NewPlaintextStore(path string) *PlaintextStore {
-	return &PlaintextStore{path: path}
+func NewPlaintextStore(path, reference string) *PlaintextStore {
+	return &PlaintextStore{path: path, reference: reference}
 }
 
 func (s *PlaintextStore) Load(controlURL string) (State, error) {
@@ -45,11 +46,11 @@ func (s *PlaintextStore) Load(controlURL string) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	state, ok := document.Profiles[profileKey(controlURL)]
+	state, ok := document.Profiles[profileKey(controlURL, s.reference)]
 	if !ok {
 		return State{}, ErrNotFound
 	}
-	if err := validate(controlURL, state); err != nil {
+	if err := validate(controlURL, s.reference, state); err != nil {
 		return State{}, err
 	}
 	return state, nil
@@ -65,7 +66,7 @@ func (s *PlaintextStore) Save(controlURL string, state State) error {
 	if document.Profiles == nil {
 		document.Profiles = map[string]State{}
 	}
-	document.Profiles[profileKey(controlURL)] = prepare(controlURL, state)
+	document.Profiles[profileKey(controlURL, s.reference)] = prepare(controlURL, s.reference, state)
 	return s.write(document)
 }
 
@@ -74,7 +75,7 @@ func (s *PlaintextStore) Delete(controlURL string) error {
 	if err != nil {
 		return err
 	}
-	key := profileKey(controlURL)
+	key := profileKey(controlURL, s.reference)
 	if _, ok := document.Profiles[key]; !ok {
 		return ErrNotFound
 	}

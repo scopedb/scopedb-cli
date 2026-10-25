@@ -37,12 +37,12 @@ func (e *KeyringError) Error() string {
 func (e *KeyringError) Unwrap() error { return e.Err }
 
 // KeyringStore persists credentials in the operating system's secret store.
-type KeyringStore struct{}
+type KeyringStore struct{ reference string }
 
-func NewKeyringStore() *KeyringStore { return &KeyringStore{} }
+func NewKeyringStore(reference string) *KeyringStore { return &KeyringStore{reference: reference} }
 
 func (s *KeyringStore) Load(controlURL string) (State, error) {
-	encoded, err := keyring.Get(keyringService, profileKey(controlURL))
+	encoded, err := keyring.Get(keyringService, profileKey(controlURL, s.reference))
 	if errors.Is(err, keyring.ErrNotFound) {
 		return State{}, ErrNotFound
 	}
@@ -53,26 +53,26 @@ func (s *KeyringStore) Load(controlURL string) (State, error) {
 	if err := json.Unmarshal([]byte(encoded), &state); err != nil {
 		return State{}, fmt.Errorf("%w: cannot decode credentials from OS keyring", ErrInvalidState)
 	}
-	if err := validate(controlURL, state); err != nil {
+	if err := validate(controlURL, s.reference, state); err != nil {
 		return State{}, err
 	}
 	return state, nil
 }
 
 func (s *KeyringStore) Save(controlURL string, state State) error {
-	state = prepare(controlURL, state)
+	state = prepare(controlURL, s.reference, state)
 	encoded, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("encode credentials: %w", err)
 	}
-	if err := keyring.Set(keyringService, profileKey(controlURL), string(encoded)); err != nil {
+	if err := keyring.Set(keyringService, profileKey(controlURL, s.reference), string(encoded)); err != nil {
 		return &KeyringError{Op: "write", Err: err}
 	}
 	return nil
 }
 
 func (s *KeyringStore) Delete(controlURL string) error {
-	err := keyring.Delete(keyringService, profileKey(controlURL))
+	err := keyring.Delete(keyringService, profileKey(controlURL, s.reference))
 	if errors.Is(err, keyring.ErrNotFound) {
 		return ErrNotFound
 	}

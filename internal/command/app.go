@@ -39,7 +39,7 @@ import (
 	"golang.org/x/term"
 )
 
-type credentialFactory func(string, config.Paths) (credential.Store, error)
+type credentialFactory func(string, config.Paths, string) (credential.Store, error)
 
 // Dependencies configures the process boundaries used by the command tree.
 type Dependencies struct {
@@ -57,6 +57,7 @@ type Dependencies struct {
 }
 
 type app struct {
+	machineMode       bool
 	in                io.Reader
 	input             *bufio.Reader
 	out               io.Writer
@@ -72,6 +73,8 @@ type app struct {
 	getenv            func(string) string
 	controlURLFlag    string
 	consoleURLFlag    string
+	profileFlag       string
+	resolvedProfile   string
 }
 
 type runtimeContext struct {
@@ -161,11 +164,36 @@ func newApp(deps Dependencies) *app {
 }
 
 func (a *app) loadConfig(cmd *cobra.Command) (config.Paths, config.Config, error) {
+	a.machineMode = usesDataCredentials(cmd) && (strings.TrimSpace(a.getenv("SCOPEDB_ENDPOINT")) != "" || strings.TrimSpace(a.getenv("SCOPEDB_API_KEY")) != "")
 	paths, err := config.ResolvePaths()
 	if err != nil {
 		return config.Paths{}, config.Config{}, err
 	}
-	overrides := config.Overrides{}
+	// Migrate the old default before creating a named profile, so changing the
+	// requested name cannot transfer an existing grant to that new environment.
+	saved, err := config.Read(paths)
+	if err != nil {
+		return config.Paths{}, config.Config{}, err
+	}
+	if len(saved.Profiles) == 0 && !a.machineMode && cmd.CommandPath() != "scope console" {
+		legacy, err := config.Load(paths, config.Overrides{})
+		if err != nil {
+			return config.Paths{}, config.Config{}, err
+		}
+		if _, err := a.newRuntime(cmd.Context(), paths, legacy); err != nil {
+			if cmd.Name() == "login" {
+				return config.Paths{}, config.Config{}, clierror.Wrap(clierror.ExitGeneral, "existing credentials could not be read", err)
+			}
+			return config.Paths{}, config.Config{}, err
+		}
+	}
+	overrides := config.Overrides{Profile: strings.TrimSpace(a.getenv("SCOPEDB_PROFILE")), AllowCreate: cmd.Name() == "login"}
+	if cmd.Root().PersistentFlags().Changed("profile") {
+		if err := config.ValidateProfileName(a.profileFlag); err != nil {
+			return config.Paths{}, config.Config{}, usageError(err.Error())
+		}
+		overrides.Profile = a.profileFlag
+	}
 	flags := cmd.Root().PersistentFlags()
 	if flags.Changed("control-url") {
 		overrides.ControlURL = a.controlURLFlag
@@ -177,20 +205,21 @@ func (a *app) loadConfig(cmd *cobra.Command) (config.Paths, config.Config, error
 	if err != nil {
 		return config.Paths{}, config.Config{}, err
 	}
+	a.resolvedProfile = cfg.ProfileName
 	return paths, cfg, nil
 }
 
-func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext, error) {
+func (a *app) newRuntime(ctx context.Context, paths config.Paths, cfg config.Config) (*runtimeContext, error) {
 	build := version.Current()
 	control, err := controlplane.NewClient(cfg.ControlURL, "scope/"+build.Version, a.httpClient)
 	if err != nil {
 		return nil, err
 	}
-	keyring, err := a.credentialFactory(credential.SourceKeyring, paths)
+	keyring, err := a.credentialFactory(credential.SourceKeyring, paths, config.CredentialReference(paths, cfg.ProfileName))
 	if err != nil {
 		return nil, err
 	}
-	plaintext, err := a.credentialFactory(credential.SourcePlaintext, paths)
+	plaintext, err := a.credentialFactory(credential.SourcePlaintext, paths, config.CredentialReference(paths, cfg.ProfileName))
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +242,15 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 		control:     control,
 		credentials: credentials,
 	}
+	if !cfg.ProfileExists && !a.machineMode {
+		if err := a.migrateProfile(ctx, runtime); err != nil {
+			return nil, err
+		}
+	}
 	runtime.auth = &auth.Manager{
+		ProfileName: runtime.config.ProfileName,
+		Profile:     &runtime.config.SelectedProfile,
+		Paths:       paths,
 		ControlURL:  cfg.ControlURL,
 		Control:     control,
 		OAuth:       runtime,
@@ -231,7 +268,22 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	return a.newRuntime(paths, cfg)
+	runtime, err := a.newRuntime(cmd.Context(), paths, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if usesDataCredentials(cmd) {
+		runtime.auth.ExplicitProfile = cmd.Root().PersistentFlags().Changed("profile")
+	}
+	return runtime, nil
+}
+
+func usesDataCredentials(cmd *cobra.Command) bool {
+	switch cmd.CommandPath() {
+	case "scope auth status", "scope doctor", "scope query":
+		return true
+	}
+	return strings.HasPrefix(cmd.CommandPath(), "scope catalog ")
 }
 
 // A zero timeout preserves parent cancellation without adding a deadline.
@@ -324,10 +376,60 @@ const keyringAccessHint = "restore OS keyring access; for queries without a keyr
 	"or explicitly use 'scope auth login --insecure-storage' to store login credentials unencrypted in a 0600 file " +
 	"(add --use-device-code --no-browser on headless hosts)"
 
+type profileError struct {
+	name string
+	err  error
+}
+
+func (e *profileError) Error() string { return e.err.Error() }
+func (e *profileError) Unwrap() error { return e.err }
+
+// Keep follow-up commands on the same profile, particularly logout instructions.
+func (a *app) bindProfileErrors(cmd *cobra.Command) {
+	for _, child := range cmd.Commands() {
+		a.bindProfileErrors(child)
+	}
+	if run := cmd.RunE; run != nil {
+		cmd.RunE = func(command *cobra.Command, args []string) error {
+			err := run(command, args)
+			if err == nil || a.resolvedProfile == "" {
+				return err
+			}
+			if a.resolvedProfile == "default" && !command.Root().PersistentFlags().Changed("profile") && a.getenv("SCOPEDB_PROFILE") == "" {
+				return err
+			}
+			return &profileError{name: a.resolvedProfile, err: err}
+		}
+	}
+}
+
 // NormalizeError maps domain and HTTP errors to the public CLI exit contract.
 func NormalizeError(err error) error {
 	if err == nil {
 		return nil
+	}
+	var scoped *profileError
+	if errors.As(err, &scoped) {
+		normalized := NormalizeError(scoped.err)
+		var failure *clierror.Error
+		if errors.As(normalized, &failure) {
+			copy := *failure
+			parts := strings.Split(copy.Hint, "'")
+			for i := 1; i < len(parts); i += 2 {
+				if strings.HasPrefix(parts[i], "scope ") && !strings.Contains(parts[i], "--profile") {
+					parts[i] = "scope --profile " + scoped.name + strings.TrimPrefix(parts[i], "scope")
+				}
+			}
+			copy.Hint = strings.Join(parts, "'")
+			if errors.Is(scoped.err, auth.ErrNotLoggedIn) {
+				copy.Message = fmt.Sprintf("not logged in to profile %q", scoped.name)
+			}
+			return &copy
+		}
+		return normalized
+	}
+	if errors.Is(err, config.ErrUnknownProfile) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, err.Error(), err), "run 'scope profile list' or create the profile with 'scope auth login --profile <name>'")
 	}
 	var cleanup *auth.LogoutCleanupError
 	if errors.As(err, &cleanup) {
@@ -338,6 +440,10 @@ func NormalizeError(err error) error {
 			failure.Hint = "the login stays valid until it expires or is revoked in the Console"
 		}
 		return result
+	}
+	var migrationKeyring *credential.KeyringError
+	if errors.Is(err, errLegacyMigration) && errors.As(err, &migrationKeyring) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "could not check or migrate legacy credentials", err), "restore OS keyring access and retry; for queries without migrating, set both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 	}
 	var ready *clierror.Error
 	var keyringErr *credential.KeyringError

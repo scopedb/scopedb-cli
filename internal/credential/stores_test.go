@@ -57,8 +57,8 @@ func (s *faultStore) Delete(origin string) error {
 // be injected without changing the machine's keyring.
 func testStores(t *testing.T) (*Stores, *faultStore, *faultStore) {
 	t.Helper()
-	keyring := &faultStore{Store: NewPlaintextStore(filepath.Join(t.TempDir(), "keyring.json"))}
-	plaintext := &faultStore{Store: NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))}
+	keyring := &faultStore{Store: NewPlaintextStore(filepath.Join(t.TempDir(), "keyring.json"), "")}
+	plaintext := &faultStore{Store: NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"), "")}
 	return &Stores{Keyring: keyring, Plaintext: plaintext}, keyring, plaintext
 }
 

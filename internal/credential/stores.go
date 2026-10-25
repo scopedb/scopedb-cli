@@ -36,7 +36,7 @@ func (s *Stores) Load(controlURL string) (State, error) {
 	// keyring recovers with an old entry still in it.
 	state, err := s.Plaintext.Load(controlURL)
 	if err == nil {
-		if state.Cleared {
+		if state.Cleared || state.MigratedTo != "" {
 			return State{}, ErrNotFound
 		}
 		state.Source = SourcePlaintext
@@ -47,6 +47,9 @@ func (s *Stores) Load(controlURL string) (State, error) {
 	}
 	state, err = s.Keyring.Load(controlURL)
 	state.Source = SourceKeyring
+	if err == nil && (state.Cleared || state.MigratedTo != "") {
+		return State{}, ErrNotFound
+	}
 	return state, err
 }
 

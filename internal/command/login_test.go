@@ -294,7 +294,7 @@ func TestLoginAuthorizationModes(t *testing.T) {
 				require.NotEmpty(t, fake.TokenForms[0].Get("code_verifier"))
 				require.Zero(t, fake.DevicePolls)
 			}
-			state, err := credential.NewKeyringStore().Load(fake.URL)
+			state, err := testKeyring(t).Load(fake.URL)
 			require.NoError(t, err)
 			require.Equal(t, fake.RefreshToken, state.RefreshToken)
 		})
@@ -521,11 +521,11 @@ func TestLoginKeepsTheStoredSelectionWithoutWritingCredentials(t *testing.T) {
 	out, _, err := runCommandWith(t, Dependencies{
 		In:      strings.NewReader("\r"),
 		OpenURL: fake.authorizationURL(t),
-		CredentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
+		CredentialStore: func(kind string, paths config.Paths, reference string) (credential.Store, error) {
 			if kind == credential.SourcePlaintext {
 				return counting, nil
 			}
-			return credential.New(kind, paths)
+			return credential.New(kind, paths, reference)
 		},
 		IsInputTerminal: func() bool { return true },
 		IsErrorTerminal: func() bool { return true },
@@ -796,9 +796,9 @@ func TestLoginRollsBackFailedPersistence(t *testing.T) {
 		OpenURL:         fake.authorizationURL(t),
 		IsInputTerminal: func() bool { return true },
 		IsErrorTerminal: func() bool { return true },
-		CredentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
+		CredentialStore: func(kind string, paths config.Paths, reference string) (credential.Store, error) {
 			if kind != credential.SourcePlaintext {
-				return credential.New(kind, paths)
+				return credential.New(kind, paths, reference)
 			}
 			return &interruptSaveStore{Store: store, afterSave: func() error { return os.Mkdir(paths.Config, 0o700) }}, nil
 		},
@@ -925,7 +925,7 @@ func TestLoginReportsUnreachableControlPlane(t *testing.T) {
 	require.Contains(t, rendered, connectionError.Error())
 }
 
-func TestLoginWithoutAnInteractiveTerminalSelectsFirstWorkspace(t *testing.T) {
+func TestLoginWithoutAnInteractiveTerminalLeavesMultipleWorkspacesUnselected(t *testing.T) {
 	for _, flow := range []struct {
 		name  string
 		flags []string
@@ -951,15 +951,15 @@ func TestLoginWithoutAnInteractiveTerminalSelectsFirstWorkspace(t *testing.T) {
 					args:          flow.flags,
 				})
 				require.NoError(t, err)
-				require.Equal(t, "Logged in as dev@example.com.\nUsing workspace Alpha (ws-1).\n", out)
-				require.NotContains(t, diagnostics, "no workspace is selected")
+				require.Equal(t, "Logged in as dev@example.com.\n", out)
+				require.Contains(t, diagnostics, "no workspace is selected")
 				if !terminal.diagnostics {
 					require.NotContains(t, diagnostics, "\x1b")
 				}
 				state, err := store.Load(fake.URL)
 				require.NoError(t, err)
 				require.Equal(t, "ort_refresh", state.RefreshToken)
-				require.Equal(t, "ws-1", state.WorkspaceID)
+				require.Empty(t, state.WorkspaceID)
 			})
 		}
 	}
@@ -988,14 +988,14 @@ func TestLoginDefaultsToBrowserInRemoteEnvironments(t *testing.T) {
 	}
 }
 
-func TestLoginSelectsFirstAvailableWorkspace(t *testing.T) {
+func TestLoginPromptsAmongEligibleWorkspaces(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{
 		scheduledForDeletionFixture("ws-3", "Deleted"),
 		workspaceFixture("ws-2", "Beta"),
 		workspaceFixture("ws-1", "Alpha"),
 	}
-	out, _, err := runInteractiveLogin(t, fake, "")
+	out, _, err := runInteractiveLogin(t, fake, "2\n")
 	require.NoError(t, err)
 	require.Contains(t, out, "Using workspace Alpha (ws-1).")
 	state, err := store.Load(fake.URL)
@@ -1056,7 +1056,7 @@ func TestLoginReportsSelectedWorkspaceAsJSON(t *testing.T) {
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta"), workspaceFixture("ws-1", "Alpha")}
 
 	out, _, err := runLoginScenario(t, fake, loginScenario{
-		args: []string{"auth", "login", "--insecure-storage", "--format", "json"},
+		args: []string{"auth", "login", "--insecure-storage", "--format", "json", "--workspace", "ws-1"},
 	})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"email":"dev@example.com","workspace":{"id":"ws-1","display_name":"Alpha","status":"ready","current":true}}`, out)

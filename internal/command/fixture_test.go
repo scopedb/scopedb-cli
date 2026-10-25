@@ -361,7 +361,7 @@ func setupCLITest(t *testing.T) (*fakeControlPlane, *credential.PlaintextStore) 
 	t.Cleanup(keyring.MockInit)
 	paths, err := config.ResolvePaths()
 	require.NoError(t, err)
-	return fake, credential.NewPlaintextStore(paths.CredentialsFile)
+	return fake, credential.NewPlaintextStore(paths.CredentialsFile, config.CredentialReference(paths, "default"))
 }
 
 func saveStoredLogin(t *testing.T, store *credential.PlaintextStore, controlURL, workspaceID string) credential.State {
@@ -384,6 +384,9 @@ func saveLogin(t *testing.T, store *credential.PlaintextStore, controlURL, works
 		WorkspaceID:           workspaceID,
 	}
 	require.NoError(t, store.Save(controlURL, state))
+	paths, err := config.ResolvePaths()
+	require.NoError(t, err)
+	require.NoError(t, config.SaveProfile(paths, "default", config.Profile{ControlURL: controlURL, ConsoleURL: config.DefaultConsoleURL, WorkspaceID: workspaceID}, true))
 	return state
 }
 
@@ -428,7 +431,7 @@ type loginScenario struct {
 	inputTerminal   bool
 	errorTerminal   bool
 	getenv          func(string) string
-	credentialStore func(string, config.Paths) (credential.Store, error)
+	credentialStore func(string, config.Paths, string) (credential.Store, error)
 	openURL         func(string) error
 	args            []string
 }
@@ -478,4 +481,11 @@ func runInteractiveLogin(t *testing.T, fake *fakeControlPlane, input string, fla
 		errorTerminal: true,
 		args:          args,
 	})
+}
+
+func testKeyring(t *testing.T) *credential.KeyringStore {
+	t.Helper()
+	paths, err := config.ResolvePaths()
+	require.NoError(t, err)
+	return credential.NewKeyringStore(config.CredentialReference(paths, "default"))
 }

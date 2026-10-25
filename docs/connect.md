@@ -25,13 +25,40 @@ scope auth login --use-device-code --no-browser
 
 Open the printed verification link on any device and approve the request. `--use-device-code` selects device authorization; `--no-browser` independently disables automatic browser opening. Omit `--no-browser` to also open the verification link in a local browser. Neither flow requires an interactive terminal.
 
-Login keeps a valid workspace selection or automatically selects the first workspace that is not scheduled for deletion, and prints its name and ID. Workspaces shared with you are listed and selected the same way as workspaces you own. Use `scope workspace use <id>` to switch, or `scope auth login --workspace <id>` to select a workspace during login. Both commands require an ID from `scope workspace list`; display names are not accepted.
+Login keeps an accessible saved workspace or selects the only workspace not scheduled for deletion, and prints its name and ID. With multiple eligible workspaces, an interactive terminal shows a picker; without interaction, login succeeds without selecting a workspace. Use `scope workspace use` for the picker, `scope workspace use <id>` to switch directly, or `scope auth login --workspace <id>` during login. Explicit arguments accept IDs only. The picker displays names and IDs, so repeated or missing names remain distinguishable. Cancelling it never selects a default row. Workspace IDs also support shell completion.
+
+A failed explicit workspace selection reports that the login was saved and exits unsuccessfully; select an accessible ID afterwards. A non-interactive login without a target returns success, but workspace-dependent commands fail until you select one. Workspaces shared with you are selected the same way as workspaces you own.
 
 If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id>`.
 
 `scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`, and the credential file path when using plaintext. In login mode it verifies your login against ScopeDB and reports when the login expires; in environment mode it displays the configured endpoint without validating the API key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
 
 `scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
+
+## Manage profiles
+
+Each profile has its own login, service addresses, and default workspace. Use separate profiles for different accounts, or for development and production workspaces under the same account:
+
+```sh
+scope auth login --profile development --workspace <development-workspace-id>
+scope auth login --profile production --workspace <production-workspace-id>
+scope profile list --format json
+scope profile use development
+scope --profile production auth status
+scope --profile production workspace use <workspace-id>
+```
+
+Profiles resolve from `--profile`, then `SCOPEDB_PROFILE`, then the saved current profile. To keep one terminal on production, set `SCOPEDB_PROFILE=production` in that terminal. Per-command and environment selection never change the saved default. `profile use` changes only that default and does not require a valid login. It can select a logged-out profile; commands then require login instead of falling back to another profile.
+
+An unqualified first login creates `default`. The first configured profile becomes current, while creating another profile leaves the current choice unchanged. Names contain 1 to 64 letters, digits, dots, underscores, or hyphens. Unknown profiles fail except when created by `auth login`. Login refuses to overwrite a renewable login; log out of that profile first or use a new profile.
+
+`profile list` shows saved service addresses, workspace bindings, and last known identity information. Its `current` marker identifies the saved default and `effective` identifies the resolved profile. It does not check token validity. `auth status` verifies the selected login and reports the profile, user ID and email, workspace name and ID, endpoint, and storage source. A profile's workspace is a default target, not an authorization restriction.
+
+`scope --profile production auth logout` revokes only that profile's grant and clears its credentials and data-token cache. The profile and workspace binding remain for a later login. Other profiles and browser sign-in remain usable. Changing a workspace clears only that profile's data-token cache. Terminals using the same profile share its saved workspace; a command already running retains its resolved identity and target.
+
+Existing OAuth credentials migrate to `default`, preserving their workspace and storage backend. Older email-session credentials require a new login. Other legacy service records remain available for migration when accessed with `scope auth login --profile NAME --control-url URL`; an existing migrated login is retained instead of authorizing a replacement. Service overrides cannot redirect an existing profile to a different control-plane origin. Use another profile for another service.
+
+Credentials are isolated by profile and configuration directory, including in the OS keyring. Changing `SCOPEDB_HOME` does not share an existing profile's credentials with the new directory. During legacy migration the CLI must retire the old shared keyring record; if keyring access prevents this, restore access and retry. Once migrated, avoid running an older CLI against the same configuration.
 
 ## Use headless Linux
 
@@ -59,9 +86,9 @@ scope query 'SELECT 1 AS ready'
 
 Approve the printed device code in a browser on another device. `--use-device-code` selects that authorization flow, and `--no-browser` skips opening a browser on the host. Add `--insecure-storage` to choose plaintext directly for this login. It does not change future login defaults. Plaintext credentials use permissions `0600` on Unix. On Linux, `credentials.json` and `config.toml` default to `$XDG_CONFIG_HOME/scopedb` or `~/.config/scopedb`; `SCOPEDB_HOME` overrides their directory.
 
-Queries and other commands discover the existing login, and refresh writes back to the same store without automatic downgrade. A fallback file takes precedence over an old keyring entry for the same control-plane URL. Logout revokes the active login and clears both stores. If the keyring cannot be cleared, the command reports the failure and removes local file tokens while retaining a non-secret logout marker so an old keyring entry cannot become active again. Restore keyring access and rerun `scope auth logout` to finish cleanup.
+Queries and other commands discover the existing login, and refresh writes back to the same store without automatic downgrade. A fallback file takes precedence over an old keyring entry for the same profile. Logout revokes the active login and clears both stores. If the keyring cannot be cleared, the command reports the failure and removes local file tokens while retaining a non-secret logout marker so an old keyring entry cannot become active again. Restore keyring access and rerun `scope auth logout` to finish cleanup.
 
-To return to keyring storage, restore keyring access, run `scope auth logout`, then run `scope auth login` without `--insecure-storage`. Each new login tries the keyring again. `config.toml` stores service addresses, not a credential-store preference; legacy `credential_store` entries and `SCOPEDB_CREDENTIAL_STORE` are ignored.
+To return to keyring storage, restore keyring access, run `scope auth logout`, then run `scope auth login` without `--insecure-storage`. Each new login tries the keyring again. `config.toml` stores profiles, service addresses, and workspace defaults, not a credential-store preference; legacy `credential_store` entries and `SCOPEDB_CREDENTIAL_STORE` are ignored.
 
 ## Get application credentials
 
@@ -86,7 +113,7 @@ scope doctor --timeout 15s
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-`scope auth status` reports `environment` as the credential source when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login session and warns when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
+`scope auth status` reports `environment` as the credential source when both variables are set. Queries and connection checks then use those credentials even if `SCOPEDB_PROFILE` or the saved default selects another workspace. An explicit `--profile` conflicts with machine credentials for `query`, `catalog`, `auth status`, and `doctor`; unset both variables to use that profile. `scope workspace use` and `scope profile use` change saved defaults and warn when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
 
 ```sh
 unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY

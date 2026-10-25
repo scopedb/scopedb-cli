@@ -159,7 +159,7 @@ func TestDoctorMachineCredentials(t *testing.T) {
 					}
 					return ""
 				},
-				CredentialStore: func(string, config.Paths) (credential.Store, error) {
+				CredentialStore: func(string, config.Paths, string) (credential.Store, error) {
 					return doctorUnusedStore{t: t}, nil
 				},
 			}, "doctor", "--format", "json")

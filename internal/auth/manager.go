@@ -16,6 +16,7 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/scopedb/scopedb-cli/internal/filelock"
@@ -38,6 +40,7 @@ var (
 	ErrWorkspaceUnavailable  = errors.New("selected workspace is no longer available")
 	ErrLoginExpired          = errors.New("login is no longer valid")
 	ErrCredentialsUnreadable = errors.New("existing credentials could not be read")
+	ErrConfigurationWrite    = errors.New("configuration could not be stored")
 )
 
 const (
@@ -73,14 +76,21 @@ type CredentialStore interface {
 }
 
 type Manager struct {
-	ControlURL  string
-	Control     ControlPlane
-	OAuth       OAuthClient
-	Credentials CredentialStore
-	LockFile    string
-	Now         func() time.Time
-	Sleep       func(time.Duration)
-	Getenv      func(string) string
+	ProfileName     string
+	Profile         *config.Profile
+	Paths           config.Paths
+	ExplicitProfile bool
+	loginID         string
+	loginPinned     bool
+	workspaces      []controlplane.Workspace
+	ControlURL      string
+	Control         ControlPlane
+	OAuth           OAuthClient
+	Credentials     CredentialStore
+	LockFile        string
+	Now             func() time.Time
+	Sleep           func(time.Duration)
+	Getenv          func(string) string
 }
 
 // Access contains everything needed to connect to the data plane.
@@ -126,6 +136,9 @@ func (m *Manager) MachineAccess() (Access, bool, error) {
 	if endpoint == "" && apiKey == "" {
 		return Access{}, false, nil
 	}
+	if m.ExplicitProfile {
+		return Access{}, false, fmt.Errorf("%w: --profile conflicts with SCOPEDB_ENDPOINT or SCOPEDB_API_KEY; unset the environment credentials or omit --profile", ErrInvalidMachineEnv)
+	}
 	if endpoint == "" || apiKey == "" {
 		return Access{}, false, fmt.Errorf("%w: SCOPEDB_ENDPOINT and SCOPEDB_API_KEY must be set together", ErrInvalidMachineEnv)
 	}
@@ -163,7 +176,7 @@ func (m *Manager) LoadAccess(ctx context.Context) (credential.State, error) {
 	return m.refresh(ctx, state)
 }
 
-func (m *Manager) load() (credential.State, error) {
+func (m *Manager) loadCredential() (credential.State, error) {
 	state, err := m.Credentials.Load(m.ControlURL)
 	if errors.Is(err, credential.ErrNotFound) || errors.Is(err, credential.ErrInvalidState) {
 		return credential.State{}, ErrNotLoggedIn
@@ -171,15 +184,27 @@ func (m *Manager) load() (credential.State, error) {
 	if err != nil {
 		return credential.State{}, err
 	}
+	if m.loginPinned && state.LoginID != m.loginID {
+		return credential.State{}, ErrLoginExpired
+	}
+	m.loginID, m.loginPinned = state.LoginID, true
 	return state, nil
+}
+
+func (m *Manager) load() (credential.State, error) {
+	state, err := m.loadCredential()
+	if m.Profile != nil {
+		state.WorkspaceID = m.Profile.WorkspaceID
+	}
+	return state, err
 }
 
 // The selection survives a login, because signing in again does not change which workspace the profile uses.
 // The lock serializes login with refresh and prevents replacing a concurrent login.
-func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (credential.State, bool, string, error) {
+func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) error {
 	lock, err := filelock.Acquire(ctx, m.LockFile)
 	if err != nil {
-		return credential.State{}, false, "", err
+		return err
 	}
 	defer func() { _ = lock.Close() }()
 
@@ -190,46 +215,47 @@ func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (
 	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState), errors.As(err, &keyringErr):
 		previous = credential.State{}
 	case err != nil:
-		return credential.State{}, false, "", fmt.Errorf("%w: %w", ErrCredentialsUnreadable, err)
+		return fmt.Errorf("%w: %w", ErrCredentialsUnreadable, err)
 	}
 	if previousFound && (previous.RefreshTokenExpiresAt.IsZero() || previous.RefreshTokenExpiresAt.After(m.now())) {
-		return credential.State{}, false, "", ErrAlreadyLoggedIn
+		return ErrAlreadyLoggedIn
 	}
 	state, err := m.tokenState(credential.State{}, tokens)
 	if err != nil {
-		return credential.State{}, false, "", err
+		return err
 	}
 	state.WorkspaceID = previous.WorkspaceID
+	state.LoginID = rand.Text()
+	if m.Profile != nil {
+		cfg, err := config.Read(m.Paths)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrConfigurationWrite, err)
+		}
+		if saved, ok := cfg.Profiles[m.ProfileName]; ok {
+			if saved.ControlURL != m.ControlURL {
+				return fmt.Errorf("profile service changed during login")
+			}
+			*m.Profile = saved
+		}
+		state.WorkspaceID = m.Profile.WorkspaceID
+	}
 	if err := m.Credentials.Replace(m.ControlURL, state); err != nil {
-		return credential.State{}, false, "", err
-	}
-	return previous, previousFound, state.AccessToken, nil
-}
-
-// RestoreLogin puts back the login SaveLogin replaced, under the same lock, when the surrounding
-// configuration write fails. It only acts while the record still holds the login SaveLogin wrote, so
-// a concurrent logout or newer login is never overwritten or deleted.
-func (m *Manager) RestoreLogin(ctx context.Context, state credential.State, found bool, writtenAccessToken string) error {
-	lock, err := filelock.Acquire(ctx, m.LockFile)
-	if err != nil {
 		return err
 	}
-	defer func() { _ = lock.Close() }()
-
-	current, err := m.Credentials.Load(m.ControlURL)
-	switch {
-	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState):
-		return nil
-	case err != nil:
-		return err
+	if m.Profile != nil {
+		m.Profile.UserID, m.Profile.Email = "", ""
+		if err := config.SaveProfile(m.Paths, m.ProfileName, *m.Profile, true); err != nil {
+			var rollback error
+			if previousFound {
+				rollback = m.Credentials.Replace(m.ControlURL, previous)
+			} else {
+				rollback = m.deleteIgnoringMissing()
+			}
+			return fmt.Errorf("%w: %w", ErrConfigurationWrite, errors.Join(err, rollback))
+		}
 	}
-	if current.AccessToken != writtenAccessToken {
-		return nil
-	}
-	if found {
-		return m.Credentials.Replace(m.ControlURL, state)
-	}
-	return m.deleteIgnoringMissing()
+	m.loginID, m.loginPinned = state.LoginID, true
+	return nil
 }
 
 type WorkspaceAccess struct {
@@ -281,7 +307,52 @@ func (m *Manager) readAccount(ctx context.Context, state credential.State) (Acco
 	if err != nil {
 		return Account{}, err
 	}
-	return Account{User: user, Workspaces: workspaces, SelectedWorkspaceID: state.WorkspaceID}, nil
+	m.workspaces = workspaces
+	selected := state.WorkspaceID
+	if m.Profile != nil {
+		selected = m.Profile.WorkspaceID
+		if err := m.rememberIdentity(ctx, state, user, workspaces); err != nil {
+			return Account{}, err
+		}
+	}
+	return Account{User: user, Workspaces: workspaces, SelectedWorkspaceID: selected}, nil
+}
+
+func (m *Manager) rememberIdentity(ctx context.Context, state credential.State, user controlplane.User, workspaces []controlplane.Workspace) error {
+	lock, err := filelock.Acquire(ctx, m.LockFile)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+	current, err := m.Credentials.Load(m.ControlURL)
+	if errors.Is(err, credential.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if current.LoginID != state.LoginID {
+		return ErrLoginExpired
+	}
+	cfg, err := config.Read(m.Paths)
+	if err != nil {
+		return err
+	}
+	profile, ok := cfg.Profiles[m.ProfileName]
+	if !ok {
+		return nil
+	}
+	updated := profile
+	updated.UserID, updated.Email = user.ID, user.Email
+	for _, workspace := range workspaces {
+		if workspace.ID == profile.WorkspaceID {
+			updated.WorkspaceName = workspace.Name()
+		}
+	}
+	if updated == profile {
+		return nil
+	}
+	return config.SaveProfile(m.Paths, m.ProfileName, updated, false)
 }
 
 func isControlUnauthorized(err error) bool {
@@ -297,20 +368,45 @@ func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error
 		return err
 	}
 	defer func() { _ = lock.Close() }()
-
-	state, err := m.load()
+	state, err := m.loadCredential()
 	if err != nil {
 		return err
 	}
-	if state.WorkspaceID == workspaceID {
+	var profile config.Profile
+	if m.Profile != nil {
+		cfg, err := config.Read(m.Paths)
+		if err != nil {
+			return err
+		}
+		var ok bool
+		profile, ok = cfg.Profiles[m.ProfileName]
+		if !ok {
+			return fmt.Errorf("%w: %q", config.ErrUnknownProfile, m.ProfileName)
+		}
+		// An automatic clear of an obsolete snapshot must not undo another terminal's selection.
+		if workspaceID == "" && profile.WorkspaceID != m.Profile.WorkspaceID {
+			return nil
+		}
+	} else if state.WorkspaceID == workspaceID {
 		return nil
 	}
 	state.WorkspaceID = workspaceID
-	state.DataToken = ""
-	state.DataTokenWorkspaceID = ""
+	state.DataToken, state.DataTokenWorkspaceID = "", ""
 	state.DataTokenExpiresAt = time.Time{}
 	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
 		return fmt.Errorf("save workspace selection: %w", err)
+	}
+	if m.Profile != nil {
+		profile.WorkspaceID, profile.WorkspaceName = workspaceID, ""
+		for _, workspace := range m.workspaces {
+			if workspace.ID == workspaceID {
+				profile.WorkspaceName = workspace.Name()
+			}
+		}
+		if err := config.SaveProfile(m.Paths, m.ProfileName, profile, false); err != nil {
+			return err
+		}
+		*m.Profile = profile
 	}
 	return nil
 }
@@ -438,7 +534,7 @@ func (m *Manager) saveDataToken(ctx context.Context, accessToken, workspaceID st
 	}
 	defer func() { _ = lock.Close() }()
 
-	state, err := m.load()
+	state, err := m.loadCredential()
 	if errors.Is(err, ErrNotLoggedIn) {
 		return nil
 	}
@@ -492,6 +588,9 @@ func (m *Manager) refresh(ctx context.Context, state credential.State) (credenti
 
 	// Another process may have refreshed the login while this one waited for the lock.
 	current, loadErr := m.Credentials.Load(m.ControlURL)
+	if loadErr == nil && current.LoginID != state.LoginID {
+		return credential.State{}, ErrLoginExpired
+	}
 	switch {
 	case loadErr == nil && current.AccessToken != state.AccessToken && current.AccessTokenExpiresAt.After(m.now().Add(accessRefreshAhead)):
 		return current, nil

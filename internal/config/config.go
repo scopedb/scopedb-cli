@@ -41,14 +41,21 @@ type Paths struct {
 
 // Config contains non-secret user configuration.
 type Config struct {
-	ControlURL string `toml:"control_url,omitempty"`
-	ConsoleURL string `toml:"console_url,omitempty"`
+	ControlURL      string             `toml:"control_url,omitempty"`
+	ConsoleURL      string             `toml:"console_url,omitempty"`
+	CurrentProfile  string             `toml:"current_profile,omitempty"`
+	Profiles        map[string]Profile `toml:"profiles,omitempty"`
+	ProfileName     string             `toml:"-"`
+	SelectedProfile Profile            `toml:"-"`
+	ProfileExists   bool               `toml:"-"`
 }
 
 // Overrides contains explicit command-line overrides. Empty fields are ignored.
 type Overrides struct {
-	ControlURL string
-	ConsoleURL string
+	Profile     string
+	AllowCreate bool
+	ControlURL  string
+	ConsoleURL  string
 }
 
 // ResolvePaths returns the platform-native configuration paths.
@@ -73,14 +80,9 @@ func ResolvePaths() (Paths, error) {
 	}, nil
 }
 
-// Load resolves configuration in increasing precedence: defaults, file,
-// environment, and explicit command-line overrides.
-func Load(paths Paths, overrides Overrides) (Config, error) {
-	cfg := Config{
-		ControlURL: DefaultControlURL,
-		ConsoleURL: DefaultConsoleURL,
-	}
-
+// Read reads saved configuration without command or environment overrides.
+func Read(paths Paths) (Config, error) {
+	cfg := Config{ControlURL: DefaultControlURL, ConsoleURL: DefaultConsoleURL}
 	data, err := os.ReadFile(paths.Config)
 	if err == nil {
 		if err := toml.Unmarshal(data, &cfg); err != nil {
@@ -88,6 +90,37 @@ func Load(paths Paths, overrides Overrides) (Config, error) {
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return Config{}, fmt.Errorf("read config %s: %w", paths.Config, err)
+	}
+	if err := validate(&cfg); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+// Load selects a profile and applies environment and command-line service overrides.
+func Load(paths Paths, overrides Overrides) (Config, error) {
+	cfg, err := Read(paths)
+	if err != nil {
+		return Config{}, err
+	}
+	name := overrides.Profile
+	if name == "" {
+		name = cfg.CurrentProfile
+	}
+	if name == "" {
+		name = "default"
+	}
+	if err := ValidateProfileName(name); err != nil {
+		return Config{}, err
+	}
+	profile, exists := cfg.Profiles[name]
+	if !exists && !overrides.AllowCreate && (overrides.Profile != "" || len(cfg.Profiles) != 0) {
+		return Config{}, fmt.Errorf("%w: %q", ErrUnknownProfile, name)
+	}
+	if exists {
+		cfg.ControlURL, cfg.ConsoleURL = profile.ControlURL, profile.ConsoleURL
+	} else if current, ok := cfg.Profiles[cfg.CurrentProfile]; ok {
+		cfg.ControlURL, cfg.ConsoleURL = current.ControlURL, current.ConsoleURL
 	}
 	applyEnv(&cfg)
 	if overrides.ControlURL != "" {
@@ -99,6 +132,11 @@ func Load(paths Paths, overrides Overrides) (Config, error) {
 	if err := validate(&cfg); err != nil {
 		return Config{}, err
 	}
+	if exists && cfg.ControlURL != profile.ControlURL {
+		return Config{}, fmt.Errorf("profile %q is bound to %s; use another profile for a different service", name, profile.ControlURL)
+	}
+	profile.ControlURL, profile.ConsoleURL = cfg.ControlURL, cfg.ConsoleURL
+	cfg.ProfileName, cfg.SelectedProfile, cfg.ProfileExists = name, profile, exists
 	return cfg, nil
 }
 
@@ -112,6 +150,24 @@ func applyEnv(cfg *Config) {
 }
 
 func validate(cfg *Config) error {
+	for name, profile := range cfg.Profiles {
+		if err := ValidateProfileName(name); err != nil {
+			return err
+		}
+		var err error
+		if profile.ControlURL, err = normalizeBaseURL(profile.ControlURL); err != nil {
+			return fmt.Errorf("profile %q: invalid control URL: %w", name, err)
+		}
+		if profile.ConsoleURL, err = normalizeBaseURL(profile.ConsoleURL); err != nil {
+			return fmt.Errorf("profile %q: invalid console URL: %w", name, err)
+		}
+		cfg.Profiles[name] = profile
+	}
+	if cfg.CurrentProfile != "" {
+		if _, ok := cfg.Profiles[cfg.CurrentProfile]; !ok {
+			return fmt.Errorf("%w: current profile %q", ErrUnknownProfile, cfg.CurrentProfile)
+		}
+	}
 	var err error
 	if cfg.ControlURL, err = normalizeBaseURL(cfg.ControlURL); err != nil {
 		return fmt.Errorf("invalid control URL: %w", err)
@@ -147,6 +203,9 @@ func Save(paths Paths, cfg Config) error {
 	}
 	if err := os.MkdirAll(paths.Directory, 0o700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
+	}
+	if len(cfg.Profiles) != 0 {
+		cfg.ControlURL, cfg.ConsoleURL = "", ""
 	}
 	data, err := toml.Marshal(cfg)
 	if err != nil {

@@ -64,7 +64,7 @@ Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves 
 
 Set `SCOPEDB_HOME` to override the directory used for configuration and plaintext credentials. Otherwise, the CLI uses a `scopedb` subdirectory of your operating system's user configuration directory.
 
-Pass `--workspace <id>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account can still access it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. Use `scope workspace use <id>` to switch afterwards. Both commands require an ID from `scope workspace list`; display names are not accepted.
+Pass `--workspace <id>` to select a workspace explicitly. Without it, login keeps an accessible saved selection or selects the only eligible workspace. With several eligible workspaces, an interactive terminal prompts you to choose; otherwise login succeeds without a target. Run `scope workspace use` for an interactive picker, or `scope workspace use <id>` for scripts. Explicit workspace arguments accept IDs from `scope workspace list`, not display names.
 
 A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status and create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
@@ -74,9 +74,26 @@ scope workspace use <id>
 scope auth status
 ```
 
-The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. Workspaces shared with you appear in `scope workspace list` alongside the ones you own; select either with `scope workspace use <id>`. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
+The workspace selection is stored locally for the resolved profile and survives logout. Terminals using the same profile share its default; commands already running keep their resolved target. Workspaces shared with you appear in `scope workspace list` alongside the ones you own; select either with `scope workspace use <id>`. `scope auth status` shows the profile, credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
 
 `scope console [page]` provides shortcuts to Console pages: `home` (default), `query`, `data`, `keys`, and `connect`. For example, `scope console query` prints the query page URL; add `--open` to also open it in your browser.
+
+## Switch accounts and environments
+
+Create a profile for each account or independent workspace default:
+
+```sh
+scope auth login --profile development --workspace <development-workspace-id>
+scope auth login --profile production --workspace <production-workspace-id>
+scope profile list
+scope profile use development
+scope --profile production query 'SELECT 1 AS ready'
+scope --profile production auth logout
+```
+
+Selection precedence is `--profile`, `SCOPEDB_PROFILE`, then the saved current profile. The flag and environment variable do not change the saved default. An unqualified first login creates `default`; the first configured profile becomes current, and subsequent logins do not switch it. Each profile has independent credentials and a workspace binding, even when both logins authorize the same account. `profile list` displays saved information; use `auth status` to verify authentication. See [profiles and migration](docs/connect.md#manage-profiles) for details.
+
+Paired `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` continue to override login credentials for data commands. Combining them with an explicit `--profile` on a data or connection-status command fails; unset both variables to use that profile.
 
 ## Query output
 
