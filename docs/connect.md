@@ -35,30 +35,66 @@ If your account is awaiting approval or has no workspace, follow the instruction
 
 `scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
 
-## Manage profiles
+## Manage connections
 
-Each profile has its own login, service addresses, and default workspace. Use separate profiles for different accounts, or for development and production workspaces under the same account:
+A named connection stores an authentication type and its target. OAuth connections hold service URLs and a default workspace; API key connections hold a data endpoint and either a stored key or an explicit environment-variable reference. Secrets are stored separately from `config.toml`.
 
 ```sh
-scope auth login --profile development --workspace <development-workspace-id>
-scope auth login --profile production --workspace <production-workspace-id>
-scope profile list --format json
-scope profile use development
-scope --profile production auth status
-scope --profile production workspace use <workspace-id>
+scope auth login --connection development --workspace <workspace-id>
+scope connection add automation --auth-type api_key --endpoint https://your-workspace.example.com --api-key-env APP_API_KEY
+scope connection list --format json
+scope connection set-default development
+scope --connection automation query 'SELECT 1 AS ready'
+scope --connection development auth status
 ```
 
-Profiles resolve from `--profile`, then `SCOPEDB_PROFILE`, then the saved current profile. To keep one terminal on production, set `SCOPEDB_PROFILE=production` in that terminal. Per-command and environment selection never change the saved default. `profile use` changes only that default and does not require a valid login. It can select a logged-out profile; commands then require login instead of falling back to another profile.
+`connection add NAME` saves an OAuth configuration without logging in. `auth login --connection NAME` can also create an OAuth connection after authorization succeeds. API key connections require `--auth-type api_key`, `--endpoint`, and exactly one of `--api-key-stdin` or `--api-key-env NAME`. The former reads one key from standard input and saves it using the OS keyring with the same warned plaintext fallback as OAuth credentials; `--insecure-storage` explicitly selects plaintext for that key. The latter stores only the variable name and requires that variable to contain a key when the connection is used. Adding an existing connection fails without overwriting its configuration or credentials.
 
-An unqualified first login creates `default`. The first configured profile becomes current, while creating another profile leaves the current choice unchanged. Names contain 1 to 64 letters, digits, dots, underscores, or hyphens. Unknown profiles fail except when created by `auth login`. Login refuses to overwrite a renewable login; log out of that profile first or use a new profile.
+The configuration has this shape:
 
-`profile list` shows saved service addresses, workspace bindings, and last known identity information. Its `current` marker identifies the saved default and `effective` identifies the resolved profile. It does not check token validity. `auth status` verifies the selected login and reports the profile, user ID and email, workspace name and ID, endpoint, and storage source. A profile's workspace is a default target, not an authorization restriction.
+```toml
+default_connection = "development"
 
-`scope --profile production auth logout` revokes only that profile's grant and clears its credentials and data-token cache. The profile and workspace binding remain for a later login. Other profiles and browser sign-in remain usable. Changing a workspace clears only that profile's data-token cache. Terminals using the same profile share its saved workspace; a command already running retains its resolved identity and target.
+[connections.development]
+auth_type = "oauth"
+control_url = "https://control.scopedb.cloud"
+console_url = "https://console.scopedb.cloud"
+workspace_id = "<workspace-id>"
 
-Existing OAuth credentials migrate to `default`, preserving their workspace and storage backend. Older email-session credentials require a new login. Other legacy service records remain available for migration when accessed with `scope auth login --profile NAME --control-url URL`; an existing migrated login is retained instead of authorizing a replacement. Service overrides cannot redirect an existing profile to a different control-plane origin. Use another profile for another service.
+[connections.automation]
+auth_type = "api_key"
+endpoint = "https://your-workspace.example.com"
+api_key_env = "APP_API_KEY"
+```
 
-Credentials are isolated by profile and configuration directory, including in the OS keyring. Changing `SCOPEDB_HOME` does not share an existing profile's credentials with the new directory. During legacy migration the CLI must retire the old shared keyring record; if keyring access prevents this, restore access and retry. Once migrated, avoid running an older CLI against the same configuration.
+Selection precedence is `--connection` (`-c`), `SCOPEDB_CONNECTION`, the generic `SCOPEDB_ENDPOINT`/`SCOPEDB_API_KEY` pair, then `default_connection`. The pair supplies a temporary API key connection and must be complete. Explicit named selection ignores the generic pair, including incomplete values; it never mixes credentials from another connection or falls back when its own credentials are missing. `SCOPEDB_HOME` selects the configuration and plaintext credential directory.
+
+The first added connection becomes the default. An unqualified first OAuth login creates `default`; adding or logging into another connection does not replace an existing default. `connection set-default NAME` changes only that default. Per-command and environment selection do not persist. Unknown names fail except during creation. Names contain 1 to 64 letters, digits, dots, underscores, or hyphens. Removing the default clears the selection; select another explicitly or run `connection set-default NAME` before unqualified commands.
+
+`connection list` reports saved configuration, with `default` and `effective` markers. Identity and workspace names are last known information, not proof of a valid login. `auth status` reports the connection, `auth_type`, target, and credential source. For OAuth it also verifies the login and reports user identity, workspace, and login expiry; for API keys it reports the source and endpoint without validating server access. Use `doctor` to verify data access.
+
+### Select a workspace
+
+`scope --connection development workspace use <id>` validates and saves that connection's default workspace. Two terminals using the same connection share this saved default. For a single command, use `--workspace <id>` with `query`, `catalog`, `workspace get`, `api-key` operations, `auth status`, or `doctor`. The override validates access, keeps the saved workspace unchanged, and never falls back to a different target. `auth login --workspace <id>` instead saves the selection as part of login. API key connections reject workspace overrides and OAuth-only operations such as workspace discovery and API key administration.
+
+Each running OAuth command keeps its resolved identity and target through refresh and concurrent changes. Each connection owns its own login grant, rotating refresh credentials, and data-token cache, including when multiple connections authorize the same account. Workspace selection is a default, not an authorization restriction. Login refuses to overwrite a renewable login; log out of that connection first or use a new name.
+
+### Log out or remove a connection
+
+```sh
+scope --connection development auth logout
+scope connection remove development --yes
+```
+
+`auth logout` revokes the selected OAuth grant and clears its credentials/cache while retaining its configuration and workspace. It does not end other connections or browser sign-in. It does not apply to API key connections.
+
+`connection remove NAME` deletes the selected configuration and local credentials. It first revokes an OAuth connection's existing grant; a revocation failure retains the configuration and credentials for retry. Removing an API key connection does not revoke the service-side key or change an external secret variable. Use `api-key revoke` with an OAuth connection to revoke a key on the service. Removal requires confirmation on an interactive terminal or `--yes` when non-interactive. Cancellation preserves the connection.
+
+### Migrate existing configuration
+
+Existing single-login OAuth credentials migrate into the `default` OAuth connection, retaining their workspace and storage backend. Other legacy service records migrate on access with `scope auth login --connection NAME --control-url URL`. Older email-session credentials require a new login. Existing `[profiles.NAME]` configuration is read as OAuth connections and rewritten as `[connections.NAME]` on the next configuration write; `current_profile` becomes `default_connection`, and existing credential references are retained. Replace `--profile`, `SCOPEDB_PROFILE`, and `profile use` in scripts with `--connection`, `SCOPEDB_CONNECTION`, and `connection set-default`.
+
+Credentials are isolated by connection and configuration directory, including in the OS keyring. Changing `SCOPEDB_HOME` does not share an existing connection's credentials with the new directory. Legacy migration must retire the old shared keyring record; if access prevents this, restore access and retry. Avoid running an older CLI against migrated configuration. Existing connections cannot be redirected to another control-plane origin through service overrides.
 
 ## Use headless Linux
 
@@ -73,7 +109,7 @@ scope doctor
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-With both variables set, `scope query`, `scope auth status`, and `scope doctor` skip the keyring and do not require `scope auth login`. Setting only one variable fails. Workspace and API key management still require a CLI login.
+Without explicit named selection, both variables select a temporary connection: `query`, `auth status`, and `doctor` skip the keyring and do not require login. A partial pair fails. Select an OAuth connection explicitly for workspace and API key management.
 
 For a CLI login on a host without a usable keyring:
 
@@ -86,9 +122,9 @@ scope query 'SELECT 1 AS ready'
 
 Approve the printed device code in a browser on another device. `--use-device-code` selects that authorization flow, and `--no-browser` skips opening a browser on the host. Add `--insecure-storage` to choose plaintext directly for this login. It does not change future login defaults. Plaintext credentials use permissions `0600` on Unix. On Linux, `credentials.json` and `config.toml` default to `$XDG_CONFIG_HOME/scopedb` or `~/.config/scopedb`; `SCOPEDB_HOME` overrides their directory.
 
-Queries and other commands discover the existing login, and refresh writes back to the same store without automatic downgrade. A fallback file takes precedence over an old keyring entry for the same profile. Logout revokes the active login and clears both stores. If the keyring cannot be cleared, the command reports the failure and removes local file tokens while retaining a non-secret logout marker so an old keyring entry cannot become active again. Restore keyring access and rerun `scope auth logout` to finish cleanup.
+Queries and other commands discover the existing login, and refresh writes back to the same store without automatic downgrade. A fallback file takes precedence over an old keyring entry for the same connection. Logout revokes the active login and clears both stores. If the keyring cannot be cleared, the command reports the failure and removes local file tokens while retaining a non-secret logout marker so an old keyring entry cannot become active again. Restore keyring access and rerun `scope auth logout` to finish cleanup.
 
-To return to keyring storage, restore keyring access, run `scope auth logout`, then run `scope auth login` without `--insecure-storage`. Each new login tries the keyring again. `config.toml` stores profiles, service addresses, and workspace defaults, not a credential-store preference; legacy `credential_store` entries and `SCOPEDB_CREDENTIAL_STORE` are ignored.
+To return to keyring storage, restore keyring access, run `scope auth logout`, then run `scope auth login` without `--insecure-storage`. Each new login tries the keyring again. `config.toml` stores connections, service addresses, and workspace defaults, not a credential-store preference; legacy `credential_store` entries and `SCOPEDB_CREDENTIAL_STORE` are ignored.
 
 ## Get application credentials
 
@@ -113,13 +149,13 @@ scope doctor --timeout 15s
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-`scope auth status` reports `environment` as the credential source when both variables are set. Queries and connection checks then use those credentials even if `SCOPEDB_PROFILE` or the saved default selects another workspace. An explicit `--profile` conflicts with machine credentials for `query`, `catalog`, `auth status`, and `doctor`; unset both variables to use that profile. `scope workspace use` and `scope profile use` change saved defaults and warn when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
+`scope auth status` reports `environment` when a temporary API key connection is selected. An explicit `--connection` or `SCOPEDB_CONNECTION` instead uses that named connection's own credentials. A temporary connection cannot perform workspace or API key administration. Unset both generic variables to use the saved default:
 
 ```sh
 unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
 ```
 
-To end your login session, run `scope auth logout` after unsetting both variables. The command refuses to log out while machine credentials are configured; it does not revoke application API keys.
+To end an OAuth login, run `scope --connection NAME auth logout`. Explicit connection selection ignores unrelated machine environment credentials. Logout does not revoke application API keys.
 
 ## Connect an SDK
 

@@ -217,7 +217,7 @@ func TestMachineAccessRequiresCompletePair(t *testing.T) {
 	access, active, err := manager.MachineAccess()
 	require.NoError(t, err)
 	require.True(t, active)
-	require.Equal(t, Access{Endpoint: "https://data.example.com", APIKey: "secret", Mode: "api_key"}, access)
+	require.Equal(t, Access{Endpoint: "https://data.example.com", APIKey: "secret", Mode: "api_key", CredentialSource: "environment"}, access)
 }
 
 func TestLoadAccessReturnsFreshTokenWithoutRefresh(t *testing.T) {

@@ -26,58 +26,58 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type profileListItem struct {
+type connectionListItem struct {
 	Name      string `json:"name"`
-	Current   bool   `json:"current"`
+	Default   bool   `json:"default"`
 	Effective bool   `json:"effective"`
-	config.Profile
+	config.Connection
 }
 
-func (a *app) newProfileCommand() *cobra.Command {
-	command := &cobra.Command{Use: "profile", Short: "Inspect saved profiles or change the default", Args: cobra.NoArgs,
+func (a *app) newConnectionCommand() *cobra.Command {
+	command := &cobra.Command{Use: "connection", Short: "Inspect saved connections or change the default", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
 	}
 	var format string
-	list := &cobra.Command{Use: "list", Short: "List saved profiles and last known identities", Args: cobra.NoArgs,
-		Long: "List saved profiles. Identity and workspace names are last known information; use 'scope --profile NAME auth status' to verify a login.",
+	list := &cobra.Command{Use: "list", Short: "List saved connections and last known identities", Args: cobra.NoArgs,
+		Long: "List saved connections. Identity and workspace names are last known information; use 'scope --connection NAME auth status' to verify a login.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {
 				return err
 			}
-			_, cfg, err := a.loadConfig(cmd)
+			_, cfg, err := a.connectionCatalog(cmd)
 			if err != nil {
 				return err
 			}
-			names := profileNames(cfg)
-			items := make([]profileListItem, 0, len(names))
+			names := connectionNames(cfg)
+			items := make([]connectionListItem, 0, len(names))
 			for _, name := range names {
-				items = append(items, profileListItem{Name: name, Current: name == cfg.CurrentProfile, Effective: name == cfg.ProfileName, Profile: cfg.Profiles[name]})
+				items = append(items, connectionListItem{Name: name, Default: name == cfg.DefaultConnection, Effective: name == cfg.ConnectionName, Connection: cfg.Connections[name]})
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, items)
 			}
-			t := output.NewTable("CURRENT", "EFFECTIVE", "PROFILE", "LAST KNOWN EMAIL", "WORKSPACE ID", "CONTROL URL")
+			t := output.NewTable("DEFAULT", "EFFECTIVE", "CONNECTION", "AUTH TYPE", "LAST KNOWN EMAIL", "WORKSPACE ID", "ENDPOINT / CONTROL URL")
 			for _, item := range items {
 				current, effective := "", ""
-				if item.Current {
+				if item.Default {
 					current = "*"
 				}
 				if item.Effective {
 					effective = "*"
 				}
-				t.AppendRow(table.Row{current, effective, item.Name, emptyDash(item.Email), emptyDash(item.WorkspaceID), item.ControlURL})
+				t.AppendRow(table.Row{current, effective, item.Name, item.AuthType, emptyDash(item.Email), emptyDash(item.WorkspaceID), item.CredentialOrigin()})
 			}
 			return output.WriteTable(a.out, t)
 		},
 	}
 	list.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
 	var useFormat string
-	use := &cobra.Command{Use: "use <name>", Short: "Change the saved default profile without logging in", Args: exactArgs(1), ValidArgsFunction: a.completeProfiles,
+	use := &cobra.Command{Use: "set-default <name>", Short: "Change the saved default connection without logging in", Args: exactArgs(1), ValidArgsFunction: a.completeConnections,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTextFormat(useFormat); err != nil {
 				return err
 			}
-			paths, _, err := a.loadConfig(cmd)
+			paths, _, err := a.connectionCatalog(cmd)
 			if err != nil {
 				return err
 			}
@@ -90,49 +90,49 @@ func (a *app) newProfileCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, ok := cfg.Profiles[args[0]]; !ok {
-				return fmt.Errorf("%w: %q", config.ErrUnknownProfile, args[0])
+			if _, ok := cfg.Connections[args[0]]; !ok {
+				return fmt.Errorf("%w: %q", config.ErrUnknownConnection, args[0])
 			}
-			changed := cfg.CurrentProfile != args[0]
-			cfg.CurrentProfile = args[0]
+			changed := cfg.DefaultConnection != args[0]
+			cfg.DefaultConnection = args[0]
 			if err := config.Save(paths, cfg); err != nil {
 				return err
 			}
 			if err := a.warnMachineOverride(); err != nil {
 				return err
 			}
-			if cmd.Root().PersistentFlags().Changed("profile") || strings.TrimSpace(a.getenv("SCOPEDB_PROFILE")) != "" {
-				if _, err := fmt.Fprintln(a.errOut, "An explicit --profile or SCOPEDB_PROFILE still overrides the saved default."); err != nil {
+			if cmd.Root().PersistentFlags().Changed("connection") || strings.TrimSpace(a.getenv("SCOPEDB_CONNECTION")) != "" {
+				if _, err := fmt.Fprintln(a.errOut, "An explicit --connection or SCOPEDB_CONNECTION still overrides the saved default."); err != nil {
 					return err
 				}
 			}
 			if useFormat == structuredFormatJSON {
-				return writeJSON(a.out, profileUseResult{Name: args[0], Changed: changed})
+				return writeJSON(a.out, connectionUseResult{Name: args[0], Changed: changed})
 			}
-			_, err = fmt.Fprintf(a.out, "Now using profile %s.\n", args[0])
+			_, err = fmt.Fprintf(a.out, "Now using connection %s.\n", args[0])
 			return err
 		},
 	}
 	use.Flags().StringVar(&useFormat, "format", structuredFormatText, "output format: text or json")
-	command.AddCommand(list, use)
+	command.AddCommand(list, use, a.newConnectionAddCommand(), a.newConnectionRemoveCommand())
 	return command
 }
 
-type profileUseResult struct {
+type connectionUseResult struct {
 	Name    string `json:"name"`
 	Changed bool   `json:"changed"`
 }
 
-func profileNames(cfg config.Config) []string {
-	names := make([]string, 0, len(cfg.Profiles))
-	for name := range cfg.Profiles {
+func connectionNames(cfg config.Config) []string {
+	names := make([]string, 0, len(cfg.Connections))
+	for name := range cfg.Connections {
 		names = append(names, name)
 	}
 	slices.Sort(names)
 	return names
 }
 
-func (a *app) completeProfiles(_ *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
+func (a *app) completeConnections(_ *cobra.Command, _ []string, prefix string) ([]string, cobra.ShellCompDirective) {
 	paths, err := config.ResolvePaths()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveError
@@ -142,7 +142,7 @@ func (a *app) completeProfiles(_ *cobra.Command, _ []string, prefix string) ([]s
 		return nil, cobra.ShellCompDirectiveError
 	}
 	var names []string
-	for _, name := range profileNames(cfg) {
+	for _, name := range connectionNames(cfg) {
 		if strings.HasPrefix(name, prefix) {
 			names = append(names, name)
 		}
@@ -151,6 +151,9 @@ func (a *app) completeProfiles(_ *cobra.Command, _ []string, prefix string) ([]s
 }
 
 func (a *app) warnMachineOverride() error {
+	if a.explicitConnection {
+		return nil
+	}
 	endpoint := strings.TrimSpace(a.getenv("SCOPEDB_ENDPOINT"))
 	key := strings.TrimSpace(a.getenv("SCOPEDB_API_KEY"))
 	if endpoint == "" && key == "" {

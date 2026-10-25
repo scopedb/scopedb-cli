@@ -42,7 +42,7 @@ const (
 
 func (a *app) newLoginCommand() *cobra.Command {
 	var insecureStorage, noBrowser, useDeviceCode bool
-	var format, workspace string
+	var format string
 	command := &cobra.Command{
 		Use:   "login",
 		Short: "Log in through the ScopeDB Console",
@@ -64,7 +64,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 			if err := validateTextFormat(format); err != nil {
 				return err
 			}
-			if cmd.Flags().Changed("workspace") && strings.TrimSpace(workspace) == "" {
+			if cmd.Flags().Changed("workspace") && strings.TrimSpace(a.workspaceFlag) == "" {
 				return usageError("--workspace requires a workspace ID")
 			}
 			paths, cfg, err := a.loadConfig(cmd)
@@ -108,7 +108,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return err
 			}
 
-			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, workspace)
+			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, a.workspaceFlag)
 			if err != nil {
 				return err
 			}
@@ -130,11 +130,9 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
-	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace by ID instead of the saved selection or picker")
 	command.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open the browser automatically")
 	command.Flags().BoolVar(&useDeviceCode, "use-device-code", false, "use a device code to approve login from any device")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store this login's credentials unencrypted in a file")
-	_ = command.RegisterFlagCompletionFunc("workspace", a.completeWorkspaces)
 	return command
 }
 
@@ -552,11 +550,6 @@ func (a *app) newLogoutCommand() *cobra.Command {
 			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return err
-			}
-			if _, active, machineErr := runtime.auth.MachineAccess(); machineErr != nil {
-				return machineErr
-			} else if active {
-				return clierror.WithHint(clierror.New(clierror.ExitUsage, "environment-provided API keys cannot be logged out"), "unset SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 			}
 
 			err = runtime.auth.Logout(cmd.Context())

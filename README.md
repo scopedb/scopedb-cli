@@ -74,26 +74,29 @@ scope workspace use <id>
 scope auth status
 ```
 
-The workspace selection is stored locally for the resolved profile and survives logout. Terminals using the same profile share its default; commands already running keep their resolved target. Workspaces shared with you appear in `scope workspace list` alongside the ones you own; select either with `scope workspace use <id>`. `scope auth status` shows the profile, credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
+The workspace selection is stored locally for the resolved connection and survives logout. Terminals using the same connection share its default; commands already running keep their resolved target. Workspaces shared with you appear in `scope workspace list` alongside the ones you own; select either with `scope workspace use <id>`. `scope auth status` shows the connection, credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
 
 `scope console [page]` provides shortcuts to Console pages: `home` (default), `query`, `data`, `keys`, and `connect`. For example, `scope console query` prints the query page URL; add `--open` to also open it in your browser.
 
-## Switch accounts and environments
+## Manage connections
 
-Create a profile for each account or independent workspace default:
+Save OAuth and API key connections, and select one for each command or terminal:
 
 ```sh
-scope auth login --profile development --workspace <development-workspace-id>
-scope auth login --profile production --workspace <production-workspace-id>
-scope profile list
-scope profile use development
-scope --profile production query 'SELECT 1 AS ready'
-scope --profile production auth logout
+scope auth login --connection development --workspace <workspace-id>
+scope connection add automation --auth-type api_key --endpoint https://your-workspace.example.com --api-key-env APP_API_KEY
+scope connection list
+scope connection set-default development
+scope --connection automation query 'SELECT 1 AS ready'
+scope --connection development --workspace <another-workspace-id> query 'SELECT 1 AS ready'
+scope connection remove automation --yes
 ```
 
-Selection precedence is `--profile`, `SCOPEDB_PROFILE`, then the saved current profile. The flag and environment variable do not change the saved default. An unqualified first login creates `default`; the first configured profile becomes current, and subsequent logins do not switch it. Each profile has independent credentials and a workspace binding, even when both logins authorize the same account. `profile list` displays saved information; use `auth status` to verify authentication. See [profiles and migration](docs/connect.md#manage-profiles) for details.
+Selection precedence is `--connection` (`-c`), `SCOPEDB_CONNECTION`, paired `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` as a temporary connection, then the saved default. An explicitly selected connection ignores the generic endpoint/key variables and never falls back to another identity. A partial temporary pair fails. Single-command and environment selection do not change the saved default.
 
-Paired `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` continue to override login credentials for data commands. Combining them with an explicit `--profile` on a data or connection-status command fails; unset both variables to use that profile.
+Each OAuth connection has an independent login and default workspace. `--workspace <id>` overrides the target for one workspace-scoped command; `auth login --workspace <id>` and `workspace use <id>` save it. API key connections have a fixed endpoint and do not support workspace overrides or control-plane management. `auth logout` retains OAuth connection settings; `connection remove` revokes its OAuth login before deleting it, or forgets a local API key without revoking the key on the service. Removing the default leaves no default selected.
+
+Use `--api-key-stdin` instead of `--api-key-env` to save a key in the credential store. `connection list` displays saved information; `auth status` reports the selected authentication source and verifies OAuth logins, and `doctor` tests data access. See [connections and migration](docs/connect.md#manage-connections) for configuration, storage, and migration details.
 
 ## Query output
 
@@ -184,7 +187,7 @@ scope doctor
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-Both variables are required and override the saved login for queries, `auth status`, and connection checks. Setting only one fails instead of falling back to your login. Unset both to return to your logged-in workspace.
+Without an explicit `--connection` or `SCOPEDB_CONNECTION`, these variables select a temporary API key connection ahead of the saved default. Both variables are required; a partial pair fails. Unset both or explicitly select an OAuth connection to return to your logged-in workspace.
 
 For SDK setup, get the endpoint with `scope workspace get` and create an application key with `scope api-key create <name>`. Use the same endpoint and key in your SDK configuration, then run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
 

@@ -183,7 +183,7 @@ func TestStatusMachineCredentialsSkipTheLogin(t *testing.T) {
 		},
 	}, "auth", "status", "--format", "json")
 	require.NoError(t, err)
-	require.JSONEq(t, `{"credential_source":"environment","endpoint":"https://data.example.com"}`, out)
+	require.JSONEq(t, `{"auth_type":"api_key","credential_source":"environment","endpoint":"https://data.example.com"}`, out)
 	require.NotContains(t, out+diagnostics, "machine-secret")
 }
 

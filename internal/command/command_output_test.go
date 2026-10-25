@@ -139,7 +139,7 @@ func TestWorkspaceUseRejectsScheduledWorkspace(t *testing.T) {
 	require.Empty(t, state.WorkspaceID)
 }
 
-func TestWorkspaceUseWarnsAboutEnvironmentCredentials(t *testing.T) {
+func TestExplicitConnectionWorkspaceUseIgnoresEnvironmentCredentials(t *testing.T) {
 	fake, store := setupCLITest(t)
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
 	saveStoredLogin(t, store, fake.URL, "")
@@ -154,9 +154,9 @@ func TestWorkspaceUseWarnsAboutEnvironmentCredentials(t *testing.T) {
 			}
 			return ""
 		},
-	}, "--control-url", fake.URL, "workspace", "use", "ws-1")
+	}, "--connection", "default", "--control-url", fake.URL, "workspace", "use", "ws-1")
 	require.NoError(t, err)
-	require.Contains(t, diagnostics, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
+	require.Empty(t, diagnostics)
 	require.NotContains(t, diagnostics, "machine-secret")
 }
 

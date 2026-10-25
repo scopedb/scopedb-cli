@@ -6,14 +6,18 @@ All significant changes to this project will be documented in this file.
 
 ### Breaking changes
 
+* `scope auth status --format json` adds `auth_type` and reports `connection` for named connections. Update strict JSON schemas to accept these fields.
+* A temporary API key connection cannot perform OAuth-only operations; select an OAuth connection with `--connection` for workspace administration, login, or logout.
 * `scope auth login` no longer selects the first workspace when several are available. It keeps an accessible saved binding, selects the only eligible workspace, or prompts on an interactive terminal. Non-interactive login with multiple workspaces saves the login without a target; pass `--workspace <id>` or run `scope workspace use <id>` before workspace-dependent commands.
 * `scope workspace use <id>` and `scope auth login --workspace <id>` now require a workspace ID. Display names are no longer accepted; use `scope workspace list` to find the ID and update commands and scripts that select workspaces by name.
-* Rename the CLI configuration directory override from `SCOPEDB_CONFIG_DIR` to `SCOPEDB_HOME`. Set `SCOPEDB_HOME` to the same directory and remove the old variable from your environment. The CLI no longer reads the old name. Default storage locations and connection variable names are unchanged; existing logins migrate to profiles as described below.
+* Rename the CLI configuration directory override from `SCOPEDB_CONFIG_DIR` to `SCOPEDB_HOME`. Set `SCOPEDB_HOME` to the same directory and remove the old variable from your environment. The CLI no longer reads the old name. Default storage locations and connection variable names are unchanged; existing logins migrate to connections as described below.
 
 ### New features
 
-* Named profiles retain independent accounts, workspace defaults, credentials, and refresh lifecycles. Create them with `scope auth login --profile <name>`, inspect them with `scope profile list`, and change the saved default with `scope profile use <name>`. Selection precedence is `--profile`, `SCOPEDB_PROFILE`, then the saved default. Logout affects only the selected profile and retains its workspace binding. Existing OAuth credentials migrate to `default` with their storage backend; configuration directories have isolated credentials. Explicit `--profile` conflicts with machine credentials for data and connection-status commands.
-* `scope workspace use` without an ID offers an interactive picker showing workspace names and IDs. Workspace IDs and profile names support shell completion. Non-interactive workspace selection requires an explicit ID.
+* Named connections support independent OAuth logins and stored or environment-referenced API keys. Use `scope auth login --connection <name>` or `scope connection add <name>`, inspect saved connections with `connection list`, and select the default with `connection set-default`. Precedence is `--connection` (`-c`), `SCOPEDB_CONNECTION`, a complete temporary endpoint/key environment pair, then the saved default. Explicit named connections ignore generic endpoint/key variables. Existing OAuth credentials migrate into `default` with their workspace and storage backend.
+* `--workspace <id>` overrides the target of one OAuth workspace-scoped command without changing its saved default. API key connections use a fixed endpoint and reject workspace overrides and control-plane operations.
+* `scope connection remove <name>` removes local configuration and credentials, revoking an OAuth grant first while leaving service-side API keys intact. Revocation failures retain the connection for retry. Removal requires interactive confirmation or `--yes`, and removing the default clears its selection. OAuth logout keeps connection settings.
+* `scope workspace use` without an ID offers an interactive picker showing workspace names and IDs. Workspace IDs and connection names support shell completion. Non-interactive workspace selection requires an explicit ID.
 
 ### Improvements
 

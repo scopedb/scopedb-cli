@@ -41,18 +41,21 @@ type Paths struct {
 
 // Config contains non-secret user configuration.
 type Config struct {
-	ControlURL      string             `toml:"control_url,omitempty"`
-	ConsoleURL      string             `toml:"console_url,omitempty"`
-	CurrentProfile  string             `toml:"current_profile,omitempty"`
-	Profiles        map[string]Profile `toml:"profiles,omitempty"`
-	ProfileName     string             `toml:"-"`
-	SelectedProfile Profile            `toml:"-"`
-	ProfileExists   bool               `toml:"-"`
+	ControlURL           string                `toml:"control_url,omitempty"`
+	ConsoleURL           string                `toml:"console_url,omitempty"`
+	DefaultConnection    string                `toml:"default_connection,omitempty"`
+	Connections          map[string]Connection `toml:"connections,omitempty"`
+	LegacyProfiles       map[string]Connection `toml:"profiles,omitempty"`
+	LegacyCurrentProfile string                `toml:"current_profile,omitempty"`
+	ConnectionName       string                `toml:"-"`
+	SelectedConnection   Connection            `toml:"-"`
+	ConnectionExists     bool                  `toml:"-"`
+	Temporary            bool                  `toml:"-"`
 }
 
 // Overrides contains explicit command-line overrides. Empty fields are ignored.
 type Overrides struct {
-	Profile     string
+	Connection  string
 	AllowCreate bool
 	ControlURL  string
 	ConsoleURL  string
@@ -97,29 +100,36 @@ func Read(paths Paths) (Config, error) {
 	return cfg, nil
 }
 
-// Load selects a profile and applies environment and command-line service overrides.
+// Load selects a connection and applies environment and command-line service overrides.
 func Load(paths Paths, overrides Overrides) (Config, error) {
 	cfg, err := Read(paths)
 	if err != nil {
 		return Config{}, err
 	}
-	name := overrides.Profile
+	name := overrides.Connection
 	if name == "" {
-		name = cfg.CurrentProfile
+		name = cfg.DefaultConnection
 	}
 	if name == "" {
+		if len(cfg.Connections) != 0 {
+			return Config{}, fmt.Errorf("%w: no default is selected; run 'scope connection set-default <name>'", ErrUnknownConnection)
+		}
 		name = "default"
 	}
-	if err := ValidateProfileName(name); err != nil {
+	if err := ValidateConnectionName(name); err != nil {
 		return Config{}, err
 	}
-	profile, exists := cfg.Profiles[name]
-	if !exists && !overrides.AllowCreate && (overrides.Profile != "" || len(cfg.Profiles) != 0) {
-		return Config{}, fmt.Errorf("%w: %q", ErrUnknownProfile, name)
+	connection, exists := cfg.Connections[name]
+	if !exists && !overrides.AllowCreate && (overrides.Connection != "" || len(cfg.Connections) != 0) {
+		return Config{}, fmt.Errorf("%w: %q", ErrUnknownConnection, name)
+	}
+	if exists && connection.AuthType == AuthAPIKey {
+		cfg.ConnectionName, cfg.SelectedConnection, cfg.ConnectionExists = name, connection, true
+		return cfg, nil
 	}
 	if exists {
-		cfg.ControlURL, cfg.ConsoleURL = profile.ControlURL, profile.ConsoleURL
-	} else if current, ok := cfg.Profiles[cfg.CurrentProfile]; ok {
+		cfg.ControlURL, cfg.ConsoleURL = connection.ControlURL, connection.ConsoleURL
+	} else if current, ok := cfg.Connections[cfg.DefaultConnection]; ok && current.AuthType == AuthOAuth {
 		cfg.ControlURL, cfg.ConsoleURL = current.ControlURL, current.ConsoleURL
 	}
 	applyEnv(&cfg)
@@ -132,11 +142,12 @@ func Load(paths Paths, overrides Overrides) (Config, error) {
 	if err := validate(&cfg); err != nil {
 		return Config{}, err
 	}
-	if exists && cfg.ControlURL != profile.ControlURL {
-		return Config{}, fmt.Errorf("profile %q is bound to %s; use another profile for a different service", name, profile.ControlURL)
+	if exists && cfg.ControlURL != connection.ControlURL {
+		return Config{}, fmt.Errorf("connection %q is bound to %s; use another connection for a different service", name, connection.ControlURL)
 	}
-	profile.ControlURL, profile.ConsoleURL = cfg.ControlURL, cfg.ConsoleURL
-	cfg.ProfileName, cfg.SelectedProfile, cfg.ProfileExists = name, profile, exists
+	connection.AuthType = AuthOAuth
+	connection.ControlURL, connection.ConsoleURL = cfg.ControlURL, cfg.ConsoleURL
+	cfg.ConnectionName, cfg.SelectedConnection, cfg.ConnectionExists = name, connection, exists
 	return cfg, nil
 }
 
@@ -150,22 +161,50 @@ func applyEnv(cfg *Config) {
 }
 
 func validate(cfg *Config) error {
-	for name, profile := range cfg.Profiles {
-		if err := ValidateProfileName(name); err != nil {
+	if len(cfg.LegacyProfiles) != 0 {
+		if len(cfg.Connections) != 0 {
+			return errors.New("configuration contains both profiles and connections")
+		}
+		cfg.Connections, cfg.DefaultConnection = cfg.LegacyProfiles, cfg.LegacyCurrentProfile
+		cfg.LegacyProfiles, cfg.LegacyCurrentProfile = nil, ""
+	}
+	for name, connection := range cfg.Connections {
+		if err := ValidateConnectionName(name); err != nil {
 			return err
 		}
 		var err error
-		if profile.ControlURL, err = normalizeBaseURL(profile.ControlURL); err != nil {
-			return fmt.Errorf("profile %q: invalid control URL: %w", name, err)
+		if connection.AuthType == "" {
+			connection.AuthType = AuthOAuth
 		}
-		if profile.ConsoleURL, err = normalizeBaseURL(profile.ConsoleURL); err != nil {
-			return fmt.Errorf("profile %q: invalid console URL: %w", name, err)
+		switch connection.AuthType {
+		case AuthAPIKey:
+			connection.Endpoint, err = NormalizeEndpoint(connection.Endpoint)
+			if err != nil {
+				return fmt.Errorf("connection %q: invalid endpoint", name)
+			}
+			if connection.ControlURL != "" || connection.ConsoleURL != "" || connection.WorkspaceID != "" {
+				return fmt.Errorf("API key connection %q requires an endpoint instead of OAuth service or workspace settings", name)
+			}
+			cfg.Connections[name] = connection
+			continue
+		case AuthOAuth:
+			if connection.Endpoint != "" || connection.APIKeyEnv != "" {
+				return fmt.Errorf("OAuth connection %q cannot specify endpoint or api_key_env", name)
+			}
+		default:
+			return fmt.Errorf("connection %q: unknown authentication type %q", name, connection.AuthType)
 		}
-		cfg.Profiles[name] = profile
+		if connection.ControlURL, err = normalizeBaseURL(connection.ControlURL); err != nil {
+			return fmt.Errorf("connection %q: invalid control URL: %w", name, err)
+		}
+		if connection.ConsoleURL, err = normalizeBaseURL(connection.ConsoleURL); err != nil {
+			return fmt.Errorf("connection %q: invalid console URL: %w", name, err)
+		}
+		cfg.Connections[name] = connection
 	}
-	if cfg.CurrentProfile != "" {
-		if _, ok := cfg.Profiles[cfg.CurrentProfile]; !ok {
-			return fmt.Errorf("%w: current profile %q", ErrUnknownProfile, cfg.CurrentProfile)
+	if cfg.DefaultConnection != "" {
+		if _, ok := cfg.Connections[cfg.DefaultConnection]; !ok {
+			return fmt.Errorf("%w: current connection %q", ErrUnknownConnection, cfg.DefaultConnection)
 		}
 	}
 	var err error
@@ -204,7 +243,7 @@ func Save(paths Paths, cfg Config) error {
 	if err := os.MkdirAll(paths.Directory, 0o700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	if len(cfg.Profiles) != 0 {
+	if len(cfg.Connections) != 0 {
 		cfg.ControlURL, cfg.ConsoleURL = "", ""
 	}
 	data, err := toml.Marshal(cfg)

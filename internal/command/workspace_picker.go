@@ -76,7 +76,7 @@ func (a *app) pickWorkspace(ctx context.Context, workspaces []controlplane.Works
 }
 
 func (a *app) completeWorkspaces(cmd *cobra.Command, args []string, prefix string) ([]string, cobra.ShellCompDirective) {
-	if len(args) != 0 {
+	if cmd.CommandPath() == "scope workspace use" && len(args) != 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)

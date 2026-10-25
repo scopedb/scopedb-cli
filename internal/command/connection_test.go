@@ -38,7 +38,7 @@ import (
 
 // Exercise independent grants through the OAuth and control-plane HTTP boundaries.
 // The service rejects old rotated tokens and keeps revocation scoped to one grant.
-func TestProfileGrantLifecycle(t *testing.T) {
+func TestConnectionGrantLifecycle(t *testing.T) {
 	for _, sameAccount := range []bool{true, false} {
 		t.Run(fmt.Sprintf("same_account_%t", sameAccount), func(t *testing.T) {
 			fake, _ := setupCLITest(t)
@@ -117,7 +117,7 @@ func TestProfileGrantLifecycle(t *testing.T) {
 			fake.URL, fake.Issuer = server.URL, server.URL
 			t.Setenv("SCOPEDB_CONTROL_URL", server.URL)
 			for _, name := range []string{"dev", "prod"} {
-				args := []string{"auth", "login", "--profile", name, "--use-device-code", "--no-browser", "--workspace", "ws-" + name}
+				args := []string{"auth", "login", "--connection", name, "--use-device-code", "--no-browser", "--workspace", "ws-" + name}
 				if name == "prod" {
 					args = append(args, "--insecure-storage")
 				}
@@ -128,8 +128,8 @@ func TestProfileGrantLifecycle(t *testing.T) {
 			require.NoError(t, err)
 			cfg, err := config.Read(paths)
 			require.NoError(t, err)
-			require.Equal(t, "dev", cfg.CurrentProfile)
-			require.Len(t, cfg.Profiles, 2)
+			require.Equal(t, "dev", cfg.DefaultConnection)
+			require.Len(t, cfg.Connections, 2)
 			dev := credential.NewKeyringStore(config.CredentialReference(paths, "dev"))
 			prod := credential.NewPlaintextStore(paths.CredentialsFile, config.CredentialReference(paths, "prod"))
 			devState, err := dev.Load(fake.URL)
@@ -139,11 +139,11 @@ func TestProfileGrantLifecycle(t *testing.T) {
 			require.NotEqual(t, devState.RefreshToken, prodState.RefreshToken)
 			require.NotEqual(t, devState.LoginID, prodState.LoginID)
 			for _, name := range []string{"dev", "prod"} {
-				out, _, err := runCommand(t, "--profile", name, "auth", "status", "--format", "json")
+				out, _, err := runCommand(t, "--connection", name, "auth", "status", "--format", "json")
 				require.NoError(t, err)
 				var view statusView
 				require.NoError(t, json.Unmarshal([]byte(out), &view))
-				require.Equal(t, name, view.Profile)
+				require.Equal(t, name, view.Connection)
 				require.Equal(t, "ws-"+name, view.WorkspaceID)
 				expectedUser := "same-user"
 				if !sameAccount {
@@ -157,7 +157,7 @@ func TestProfileGrantLifecycle(t *testing.T) {
 			// Refresh only production; logging out development must not revoke it.
 			prodState.AccessTokenExpiresAt = time.Now().Add(-time.Minute)
 			require.NoError(t, prod.Save(fake.URL, prodState))
-			_, _, err = runCommand(t, "--profile", "prod", "auth", "status")
+			_, _, err = runCommand(t, "--connection", "prod", "auth", "status")
 			require.NoError(t, err)
 			rotated, err := prod.Load(fake.URL)
 			require.NoError(t, err)
@@ -165,19 +165,19 @@ func TestProfileGrantLifecycle(t *testing.T) {
 			unchanged, err := dev.Load(fake.URL)
 			require.NoError(t, err)
 			require.Equal(t, devState.RefreshToken, unchanged.RefreshToken)
-			_, _, err = runCommand(t, "--profile", "dev", "auth", "logout")
+			_, _, err = runCommand(t, "--connection", "dev", "auth", "logout")
 			require.NoError(t, err)
-			_, _, err = runCommand(t, "--profile", "prod", "auth", "status")
+			_, _, err = runCommand(t, "--connection", "prod", "auth", "status")
 			require.NoError(t, err)
-			_, _, err = runCommand(t, "profile", "use", "prod")
+			_, _, err = runCommand(t, "connection", "set-default", "prod")
 			require.NoError(t, err)
-			// Re-login retains the workspace binding and does not change the current profile.
-			_, _, err = runCommand(t, "--profile", "dev", "auth", "login", "--use-device-code", "--no-browser")
+			// Re-login retains the workspace binding and does not change the current connection.
+			_, _, err = runCommand(t, "--connection", "dev", "auth", "login", "--use-device-code", "--no-browser")
 			require.NoError(t, err)
 			cfg, err = config.Read(paths)
 			require.NoError(t, err)
-			require.Equal(t, "prod", cfg.CurrentProfile)
-			require.Equal(t, "ws-dev", cfg.Profiles["dev"].WorkspaceID)
+			require.Equal(t, "prod", cfg.DefaultConnection)
+			require.Equal(t, "ws-dev", cfg.Connections["dev"].WorkspaceID)
 			mu.Lock()
 			defer mu.Unlock()
 			require.Len(t, grants, 3)
@@ -188,70 +188,68 @@ func TestProfileGrantLifecycle(t *testing.T) {
 	}
 }
 
-func TestProfileSelectionPrecedenceAndLoggedOutDefault(t *testing.T) {
+func TestConnectionSelectionPrecedenceAndLoggedOutDefault(t *testing.T) {
 	fake, store := setupCLITest(t)
 	saveStoredLogin(t, store, fake.URL, "")
 	paths, err := config.ResolvePaths()
 	require.NoError(t, err)
-	require.NoError(t, config.SaveProfile(paths, "other", config.Profile{ControlURL: fake.URL, ConsoleURL: config.DefaultConsoleURL}, false))
+	require.NoError(t, config.SaveConnection(paths, "other", config.Connection{ControlURL: fake.URL, ConsoleURL: config.DefaultConsoleURL}, false))
 	env := func(name string) string {
-		if name == "SCOPEDB_PROFILE" {
+		if name == "SCOPEDB_CONNECTION" {
 			return "other"
 		}
 		return ""
 	}
 	_, _, err = runCommandWith(t, Dependencies{Getenv: env}, "auth", "status")
 	require.ErrorIs(t, err, auth.ErrNotLoggedIn)
-	_, _, err = runCommandWith(t, Dependencies{Getenv: env}, "--profile", "default", "auth", "status")
+	_, _, err = runCommandWith(t, Dependencies{Getenv: env}, "--connection", "default", "auth", "status")
 	require.NoError(t, err)
-	out, _, err := runCommandWith(t, Dependencies{Getenv: env}, "profile", "list", "--format", "json")
+	out, _, err := runCommandWith(t, Dependencies{Getenv: env}, "connection", "list", "--format", "json")
 	require.NoError(t, err)
-	var items []profileListItem
+	var items []connectionListItem
 	require.NoError(t, json.Unmarshal([]byte(out), &items))
-	require.True(t, items[0].Current)
+	require.True(t, items[0].Default)
 	require.False(t, items[0].Effective)
-	require.False(t, items[1].Current)
+	require.False(t, items[1].Default)
 	require.True(t, items[1].Effective)
-	out, _, err = runCommand(t, "profile", "use", "other", "--format", "json")
+	out, _, err = runCommand(t, "connection", "set-default", "other", "--format", "json")
 	require.NoError(t, err)
 	require.JSONEq(t, `{"name":"other","changed":true}`, out)
 	_, _, err = runCommand(t, "auth", "status")
 	require.ErrorIs(t, err, auth.ErrNotLoggedIn)
-	_, _, err = runCommand(t, "--profile", "missing", "auth", "status")
-	require.ErrorIs(t, err, config.ErrUnknownProfile)
+	_, _, err = runCommand(t, "--connection", "missing", "auth", "status")
+	require.ErrorIs(t, err, config.ErrUnknownConnection)
 	cfg, err := config.Read(paths)
 	require.NoError(t, err)
-	require.Equal(t, "other", cfg.CurrentProfile)
-	_, _, err = runCommand(t, "--profile", "default", "--control-url", "https://different.example.com", "auth", "status")
+	require.Equal(t, "other", cfg.DefaultConnection)
+	_, _, err = runCommand(t, "--connection", "default", "--control-url", "https://different.example.com", "auth", "status")
 	require.ErrorContains(t, err, "bound to")
 }
 
-func TestProfileMachineCredentialConflict(t *testing.T) {
+func TestExplicitConnectionIgnoresGenericMachineCredentials(t *testing.T) {
 	fake, store := setupCLITest(t)
 	saveStoredLogin(t, store, fake.URL, "")
-	for _, values := range []map[string]string{
+	for _, variables := range []map[string]string{
 		{"SCOPEDB_ENDPOINT": "https://data.example.com", "SCOPEDB_API_KEY": "test-key"},
 		{"SCOPEDB_API_KEY": "test-key"},
+		{"SCOPEDB_CONNECTION": "default", "SCOPEDB_API_KEY": "test-key"},
 	} {
-		for _, args := range [][]string{{"auth", "status"}, {"doctor"}, {"query", "SELECT 1"}, {"catalog", "list", "databases"}} {
-			out, _, err := runCommandWith(t, Dependencies{Getenv: func(key string) string { return values[key] }}, append([]string{"--profile", "default"}, args...)...)
-			require.Error(t, err)
-			require.Contains(t, out+err.Error(), "--profile conflicts")
+		args := []string{"auth", "status", "--format", "json"}
+		if variables["SCOPEDB_CONNECTION"] == "" {
+			args = append([]string{"--connection", "default"}, args...)
 		}
+		out, _, err := runCommandWith(t, Dependencies{Getenv: func(key string) string { return variables[key] }}, args...)
+		require.NoError(t, err)
+		require.Contains(t, out, `"auth_type": "oauth"`)
+		require.NotContains(t, out, "test-key")
 	}
-	out, _, err := runCommandWith(t, Dependencies{Getenv: func(name string) string {
-		switch name {
-		case "SCOPEDB_PROFILE":
-			return "default"
-		case "SCOPEDB_ENDPOINT":
-			return "https://data.example.com"
-		case "SCOPEDB_API_KEY":
+	_, _, err := runCommandWith(t, Dependencies{Getenv: func(key string) string {
+		if key == "SCOPEDB_API_KEY" {
 			return "test-key"
 		}
 		return ""
-	}}, "auth", "status", "--format", "json")
-	require.NoError(t, err)
-	require.Contains(t, out, `"credential_source": "environment"`)
+	}}, "auth", "status")
+	require.ErrorIs(t, err, auth.ErrInvalidMachineEnv)
 }
 
 func TestWorkspacePickerUsesIDsAndCancellationPreservesSelection(t *testing.T) {
@@ -301,13 +299,13 @@ func TestFirstNamedLoginMigratesLegacyIntoDefault(t *testing.T) {
 	require.NoError(t, err)
 	legacy := credential.NewPlaintextStore(paths.CredentialsFile, "")
 	require.NoError(t, legacy.Save(fake.URL, credential.State{AccessToken: "legacy-access", RefreshToken: "legacy-refresh", AccessTokenExpiresAt: time.Now().Add(time.Hour), WorkspaceID: "ws-old"}))
-	_, _, err = runCommand(t, "--profile", "new", "auth", "login", "--use-device-code", "--no-browser")
+	_, _, err = runCommand(t, "--connection", "new", "auth", "login", "--use-device-code", "--no-browser")
 	require.NoError(t, err)
 	cfg, err := config.Read(paths)
 	require.NoError(t, err)
-	require.Equal(t, "default", cfg.CurrentProfile)
-	require.Len(t, cfg.Profiles, 2)
-	require.Equal(t, "ws-old", cfg.Profiles["default"].WorkspaceID)
+	require.Equal(t, "default", cfg.DefaultConnection)
+	require.Len(t, cfg.Connections, 2)
+	require.Equal(t, "ws-old", cfg.Connections["default"].WorkspaceID)
 	migrated := credential.NewPlaintextStore(paths.CredentialsFile, config.CredentialReference(paths, "default"))
 	state, err := migrated.Load(fake.URL)
 	require.NoError(t, err)
@@ -339,12 +337,12 @@ func TestLegacyVersionTwoMigratesWithBackendAndWorkspace(t *testing.T) {
 			require.NoError(t, err)
 			var view statusView
 			require.NoError(t, json.Unmarshal([]byte(out), &view))
-			require.Equal(t, "default", view.Profile)
+			require.Equal(t, "default", view.Connection)
 			require.Equal(t, "ws-old", view.WorkspaceID)
 			require.Equal(t, backend, view.CredentialSource)
 			cfg, err := config.Read(paths)
 			require.NoError(t, err)
-			require.Equal(t, "default", cfg.CurrentProfile)
+			require.Equal(t, "default", cfg.DefaultConnection)
 			// A new directory cannot inherit the migrated keyring login.
 			t.Setenv("SCOPEDB_HOME", filepath.Join(t.TempDir(), "fresh"))
 			_, _, err = runCommand(t, "auth", "status")
@@ -353,17 +351,17 @@ func TestLegacyVersionTwoMigratesWithBackendAndWorkspace(t *testing.T) {
 	}
 }
 
-func TestNamedProfileFailureHintsKeepTheSelectedProfile(t *testing.T) {
+func TestNamedConnectionFailureHintsKeepTheSelectedConnection(t *testing.T) {
 	fake, _ := setupCLITest(t)
-	_, _, err := runCommand(t, "auth", "login", "--profile", "prod", "--use-device-code", "--no-browser")
+	_, _, err := runCommand(t, "auth", "login", "--connection", "prod", "--use-device-code", "--no-browser")
 	require.NoError(t, err)
-	_, _, err = runCommand(t, "auth", "login", "--profile", "prod")
-	require.Contains(t, clierror.Render(err), "scope --profile prod auth logout")
-	_, _, err = runCommand(t, "--profile", "prod", "auth", "logout")
+	_, _, err = runCommand(t, "auth", "login", "--connection", "prod")
+	require.Contains(t, clierror.Render(err), "scope --connection prod auth logout")
+	_, _, err = runCommand(t, "--connection", "prod", "auth", "logout")
 	require.NoError(t, err)
-	_, _, err = runCommand(t, "--profile", "prod", "auth", "status")
-	require.Contains(t, clierror.Render(err), `not logged in to profile "prod"`)
-	require.Contains(t, clierror.Render(err), "scope --profile prod auth login")
+	_, _, err = runCommand(t, "--connection", "prod", "auth", "status")
+	require.Contains(t, clierror.Render(err), `not logged in to connection "prod"`)
+	require.Contains(t, clierror.Render(err), "scope --connection prod auth login")
 	require.Equal(t, []string{fake.RefreshToken}, fake.RevokedTokens)
 }
 

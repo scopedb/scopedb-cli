@@ -31,6 +31,7 @@ import (
 )
 
 var (
+	ErrOAuthRequired         = errors.New("this operation requires an OAuth connection")
 	ErrNotLoggedIn           = errors.New("not logged in")
 	ErrAlreadyLoggedIn       = errors.New("a renewable login is already stored")
 	ErrInvalidMachineEnv     = errors.New("invalid machine credentials")
@@ -76,29 +77,32 @@ type CredentialStore interface {
 }
 
 type Manager struct {
-	ProfileName     string
-	Profile         *config.Profile
-	Paths           config.Paths
-	ExplicitProfile bool
-	loginID         string
-	loginPinned     bool
-	workspaces      []controlplane.Workspace
-	ControlURL      string
-	Control         ControlPlane
-	OAuth           OAuthClient
-	Credentials     CredentialStore
-	LockFile        string
-	Now             func() time.Time
-	Sleep           func(time.Duration)
-	Getenv          func(string) string
+	ConnectionName    string
+	Connection        *config.Connection
+	Paths             config.Paths
+	Temporary         bool
+	ConnectionExisted bool
+	WorkspaceOverride string
+	loginID           string
+	loginPinned       bool
+	workspaces        []controlplane.Workspace
+	ControlURL        string
+	Control           ControlPlane
+	OAuth             OAuthClient
+	Credentials       CredentialStore
+	LockFile          string
+	Now               func() time.Time
+	Sleep             func(time.Duration)
+	Getenv            func(string) string
 }
 
 // Access contains everything needed to connect to the data plane.
 type Access struct {
-	Endpoint    string
-	APIKey      string
-	WorkspaceID string
-	Mode        string
+	Endpoint         string
+	APIKey           string
+	WorkspaceID      string
+	Mode             string
+	CredentialSource string
 }
 
 type Account struct {
@@ -130,23 +134,54 @@ func (m *Manager) getenv(name string) string {
 }
 
 // A partial environment is rejected instead of falling through to a human login.
+func (m *Manager) RequireOAuth() error {
+	if m.Temporary || (m.Connection != nil && m.Connection.AuthType == config.AuthAPIKey) {
+		return ErrOAuthRequired
+	}
+	return nil
+}
+
 func (m *Manager) MachineAccess() (Access, bool, error) {
+	if m.Connection != nil && !m.Temporary {
+		if m.Connection.AuthType != config.AuthAPIKey {
+			return Access{}, false, nil
+		}
+		c := m.Connection
+		access := Access{Endpoint: c.Endpoint, Mode: "api_key"}
+		if c.APIKeyEnv != "" {
+			access.APIKey, access.CredentialSource = strings.TrimSpace(m.getenv(c.APIKeyEnv)), "environment"
+		} else {
+			state, err := m.Credentials.Load(c.Endpoint)
+			if err != nil {
+				return Access{}, true, fmt.Errorf("read API key credentials: %w", err)
+			}
+			access.APIKey, access.CredentialSource = state.APIKey, state.Source
+		}
+		if access.APIKey == "" {
+			return Access{}, true, errors.New("selected connection has no API key")
+		}
+		return access, true, nil
+	}
 	endpoint := strings.TrimSpace(m.getenv("SCOPEDB_ENDPOINT"))
 	apiKey := strings.TrimSpace(m.getenv("SCOPEDB_API_KEY"))
 	if endpoint == "" && apiKey == "" {
 		return Access{}, false, nil
 	}
-	if m.ExplicitProfile {
-		return Access{}, false, fmt.Errorf("%w: --profile conflicts with SCOPEDB_ENDPOINT or SCOPEDB_API_KEY; unset the environment credentials or omit --profile", ErrInvalidMachineEnv)
-	}
 	if endpoint == "" || apiKey == "" {
 		return Access{}, false, fmt.Errorf("%w: SCOPEDB_ENDPOINT and SCOPEDB_API_KEY must be set together", ErrInvalidMachineEnv)
 	}
-	return Access{Endpoint: endpoint, APIKey: apiKey, Mode: "api_key"}, true, nil
+	endpoint, err := config.NormalizeEndpoint(endpoint)
+	if err != nil {
+		return Access{}, false, fmt.Errorf("%w: invalid SCOPEDB_ENDPOINT", ErrInvalidMachineEnv)
+	}
+	return Access{Endpoint: endpoint, APIKey: apiKey, Mode: "api_key", CredentialSource: "environment"}, true, nil
 }
 
 // RenewableLogin reports the stored login that can still be renewed, without refreshing it.
 func (m *Manager) RenewableLogin() (credential.State, bool, error) {
+	if err := m.RequireOAuth(); err != nil {
+		return credential.State{}, false, err
+	}
 	state, err := m.load()
 	var keyringErr *credential.KeyringError
 	switch {
@@ -166,6 +201,9 @@ func (m *Manager) RenewableLogin() (credential.State, bool, error) {
 }
 
 func (m *Manager) LoadAccess(ctx context.Context) (credential.State, error) {
+	if err := m.RequireOAuth(); err != nil {
+		return credential.State{}, err
+	}
 	state, err := m.load()
 	if err != nil {
 		return credential.State{}, err
@@ -193,15 +231,18 @@ func (m *Manager) loadCredential() (credential.State, error) {
 
 func (m *Manager) load() (credential.State, error) {
 	state, err := m.loadCredential()
-	if m.Profile != nil {
-		state.WorkspaceID = m.Profile.WorkspaceID
+	if m.Connection != nil {
+		state.WorkspaceID = m.Connection.WorkspaceID
 	}
 	return state, err
 }
 
-// The selection survives a login, because signing in again does not change which workspace the profile uses.
+// The selection survives a login, because signing in again does not change which workspace the connection uses.
 // The lock serializes login with refresh and prevents replacing a concurrent login.
 func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) error {
+	if err := m.RequireOAuth(); err != nil {
+		return err
+	}
 	lock, err := filelock.Acquire(ctx, m.LockFile)
 	if err != nil {
 		return err
@@ -226,25 +267,30 @@ func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) e
 	}
 	state.WorkspaceID = previous.WorkspaceID
 	state.LoginID = rand.Text()
-	if m.Profile != nil {
+	if m.Connection != nil {
 		cfg, err := config.Read(m.Paths)
 		if err != nil {
 			return fmt.Errorf("%w: %w", ErrConfigurationWrite, err)
 		}
-		if saved, ok := cfg.Profiles[m.ProfileName]; ok {
-			if saved.ControlURL != m.ControlURL {
-				return fmt.Errorf("profile service changed during login")
+		if m.ConnectionExisted {
+			if _, ok := cfg.Connections[m.ConnectionName]; !ok {
+				return config.ErrUnknownConnection
 			}
-			*m.Profile = saved
 		}
-		state.WorkspaceID = m.Profile.WorkspaceID
+		if saved, ok := cfg.Connections[m.ConnectionName]; ok {
+			if saved.ControlURL != m.ControlURL {
+				return fmt.Errorf("connection service changed during login")
+			}
+			*m.Connection = saved
+		}
+		state.WorkspaceID = m.Connection.WorkspaceID
 	}
 	if err := m.Credentials.Replace(m.ControlURL, state); err != nil {
 		return err
 	}
-	if m.Profile != nil {
-		m.Profile.UserID, m.Profile.Email = "", ""
-		if err := config.SaveProfile(m.Paths, m.ProfileName, *m.Profile, true); err != nil {
+	if m.Connection != nil {
+		m.Connection.UserID, m.Connection.Email = "", ""
+		if err := config.SaveConnection(m.Paths, m.ConnectionName, *m.Connection, true); err != nil {
 			var rollback error
 			if previousFound {
 				rollback = m.Credentials.Replace(m.ControlURL, previous)
@@ -309,11 +355,14 @@ func (m *Manager) readAccount(ctx context.Context, state credential.State) (Acco
 	}
 	m.workspaces = workspaces
 	selected := state.WorkspaceID
-	if m.Profile != nil {
-		selected = m.Profile.WorkspaceID
+	if m.Connection != nil {
+		selected = m.Connection.WorkspaceID
 		if err := m.rememberIdentity(ctx, state, user, workspaces); err != nil {
 			return Account{}, err
 		}
+	}
+	if m.WorkspaceOverride != "" {
+		selected = m.WorkspaceOverride
 	}
 	return Account{User: user, Workspaces: workspaces, SelectedWorkspaceID: selected}, nil
 }
@@ -338,21 +387,21 @@ func (m *Manager) rememberIdentity(ctx context.Context, state credential.State, 
 	if err != nil {
 		return err
 	}
-	profile, ok := cfg.Profiles[m.ProfileName]
+	connection, ok := cfg.Connections[m.ConnectionName]
 	if !ok {
 		return nil
 	}
-	updated := profile
+	updated := connection
 	updated.UserID, updated.Email = user.ID, user.Email
 	for _, workspace := range workspaces {
-		if workspace.ID == profile.WorkspaceID {
+		if workspace.ID == connection.WorkspaceID {
 			updated.WorkspaceName = workspace.Name()
 		}
 	}
-	if updated == profile {
+	if updated == connection {
 		return nil
 	}
-	return config.SaveProfile(m.Paths, m.ProfileName, updated, false)
+	return config.SaveConnection(m.Paths, m.ConnectionName, updated, false)
 }
 
 func isControlUnauthorized(err error) bool {
@@ -372,19 +421,19 @@ func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error
 	if err != nil {
 		return err
 	}
-	var profile config.Profile
-	if m.Profile != nil {
+	var connection config.Connection
+	if m.Connection != nil {
 		cfg, err := config.Read(m.Paths)
 		if err != nil {
 			return err
 		}
 		var ok bool
-		profile, ok = cfg.Profiles[m.ProfileName]
+		connection, ok = cfg.Connections[m.ConnectionName]
 		if !ok {
-			return fmt.Errorf("%w: %q", config.ErrUnknownProfile, m.ProfileName)
+			return fmt.Errorf("%w: %q", config.ErrUnknownConnection, m.ConnectionName)
 		}
 		// An automatic clear of an obsolete snapshot must not undo another terminal's selection.
-		if workspaceID == "" && profile.WorkspaceID != m.Profile.WorkspaceID {
+		if workspaceID == "" && connection.WorkspaceID != m.Connection.WorkspaceID {
 			return nil
 		}
 	} else if state.WorkspaceID == workspaceID {
@@ -396,17 +445,17 @@ func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error
 	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
 		return fmt.Errorf("save workspace selection: %w", err)
 	}
-	if m.Profile != nil {
-		profile.WorkspaceID, profile.WorkspaceName = workspaceID, ""
+	if m.Connection != nil {
+		connection.WorkspaceID, connection.WorkspaceName = workspaceID, ""
 		for _, workspace := range m.workspaces {
 			if workspace.ID == workspaceID {
-				profile.WorkspaceName = workspace.Name()
+				connection.WorkspaceName = workspace.Name()
 			}
 		}
-		if err := config.SaveProfile(m.Paths, m.ProfileName, profile, false); err != nil {
+		if err := config.SaveConnection(m.Paths, m.ConnectionName, connection, false); err != nil {
 			return err
 		}
-		*m.Profile = profile
+		*m.Connection = connection
 	}
 	return nil
 }
@@ -423,6 +472,9 @@ func (e *LogoutCleanupError) Unwrap() error { return e.Err }
 // Local credentials are removed even when revocation fails, and the failure is reported so the user
 // knows the login may still exist.
 func (m *Manager) Logout(ctx context.Context) error {
+	if err := m.RequireOAuth(); err != nil {
+		return err
+	}
 	lock, err := filelock.Acquire(ctx, m.LockFile)
 	if err != nil {
 		return err

@@ -23,29 +23,47 @@ import (
 	"strings"
 )
 
-var ErrUnknownProfile = errors.New("unknown profile")
+var ErrUnknownConnection = errors.New("unknown connection")
 
-// Profile stores defaults and last known identity information, never credentials.
-type Profile struct {
-	ControlURL    string `toml:"control_url" json:"control_url"`
-	ConsoleURL    string `toml:"console_url" json:"console_url"`
+const (
+	AuthOAuth  = "oauth"
+	AuthAPIKey = "api_key"
+)
+
+// Connection stores defaults and last known identity information, never credentials.
+type Connection struct {
+	AuthType      string `toml:"auth_type" json:"auth_type"`
+	Endpoint      string `toml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	APIKeyEnv     string `toml:"api_key_env,omitempty" json:"api_key_env,omitempty"`
+	ControlURL    string `toml:"control_url,omitempty" json:"control_url,omitempty"`
+	ConsoleURL    string `toml:"console_url,omitempty" json:"console_url,omitempty"`
 	WorkspaceID   string `toml:"workspace_id,omitempty" json:"workspace_id,omitempty"`
 	WorkspaceName string `toml:"workspace_name,omitempty" json:"workspace_name,omitempty"`
 	UserID        string `toml:"last_user_id,omitempty" json:"last_user_id,omitempty"`
 	Email         string `toml:"last_email,omitempty" json:"last_email,omitempty"`
 }
 
-func ValidateProfileName(name string) error {
+func (c Connection) CredentialOrigin() string {
+	if c.AuthType == AuthAPIKey {
+		return c.Endpoint
+	}
+	return c.ControlURL
+}
+
+// NormalizeEndpoint rejects URL components that could hide credentials or alter routing.
+func NormalizeEndpoint(value string) (string, error) { return normalizeBaseURL(value) }
+
+func ValidateConnectionName(name string) error {
 	if name == "" || len(name) > 64 || strings.IndexFunc(name, func(r rune) bool {
 		valid := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.'
 		return !valid
 	}) != -1 {
-		return fmt.Errorf("profile names must contain 1 to 64 letters, digits, dots, underscores, or hyphens")
+		return fmt.Errorf("connection names must contain 1 to 64 letters, digits, dots, underscores, or hyphens")
 	}
 	return nil
 }
 
-// CredentialReference isolates equal profile names in different configuration directories.
+// CredentialReference isolates equal connection names in different configuration directories.
 func CredentialReference(paths Paths, name string) string {
 	directory := paths.Directory
 	// Resolve existing parent symlinks even before a new config directory is created.
@@ -68,21 +86,21 @@ func CredentialReference(paths Paths, name string) string {
 	return hex.EncodeToString(digest[:])
 }
 
-// SaveProfile merges one profile into the latest document. The caller holds Paths.LockFile.
-func SaveProfile(paths Paths, name string, profile Profile, establishDefault bool) error {
+// SaveConnection merges one connection into the latest document. The caller holds Paths.LockFile.
+func SaveConnection(paths Paths, name string, connection Connection, establishDefault bool) error {
 	cfg, err := Read(paths)
 	if err != nil {
 		return err
 	}
-	if cfg.Profiles == nil {
-		cfg.Profiles = map[string]Profile{}
+	if cfg.Connections == nil {
+		cfg.Connections = map[string]Connection{}
 	}
-	if existing, ok := cfg.Profiles[name]; ok && existing.ControlURL != profile.ControlURL {
-		return fmt.Errorf("profile %q changed service while the command was running", name)
+	if existing, ok := cfg.Connections[name]; ok && existing.ControlURL != connection.ControlURL {
+		return fmt.Errorf("connection %q changed service while the command was running", name)
 	}
-	cfg.Profiles[name] = profile
-	if establishDefault && cfg.CurrentProfile == "" {
-		cfg.CurrentProfile = name
+	cfg.Connections[name] = connection
+	if establishDefault && cfg.DefaultConnection == "" {
+		cfg.DefaultConnection = name
 	}
 	return Save(paths, cfg)
 }

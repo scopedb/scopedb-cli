@@ -49,7 +49,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check local configuration and ScopeDB connectivity",
 		Long: "Check configuration, authentication, and connectivity by running SELECT 1 AS ready.\n" +
-			"Uses SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when both are set; otherwise uses your login.\n" +
+			"Uses the selected OAuth or API key connection.\n" +
 			"Incomplete account setup is reported as a warning without running a query.\n" +
 			"--timeout 0 disables the per-check limit; individual control-plane requests still have a 15s limit.",
 		Args: cobra.NoArgs,
@@ -74,8 +74,8 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				report.OK = false
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: machineErr.Error()})
 			case machine:
-				report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: "environment"})
-				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "API key from environment for " + access.Endpoint})
+				report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: access.CredentialSource})
+				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "API key from " + access.CredentialSource + " for " + access.Endpoint})
 				a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 			default:
 				healthCtx, cancel := timeoutContext(cmd.Context(), timeout)
@@ -109,6 +109,9 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					} else {
 						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: account.User.Email})
 						if setupErr := workspaceSetupError(auth.RequireWorkspace(account)); setupErr != nil {
+							if runtime.auth.WorkspaceOverride != "" {
+								report.OK = false
+							}
 							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "warn", Details: fmt.Sprintf("%s; %s", setupErr.Message, setupErr.Hint)})
 						} else {
 							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "pass", Details: account.SelectedWorkspaceID})

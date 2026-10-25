@@ -42,6 +42,7 @@ var ErrInvalidState = errors.New("stored credential state is invalid")
 type State struct {
 	CredentialID string `json:"credential_id,omitempty"`
 	LoginID      string `json:"login_id,omitempty"`
+	APIKey       string `json:"api_key,omitempty"`
 	// MigratedTo claims a legacy record before moving it, so interrupted migrations
 	// resume only for the owning profile and never duplicate rotating credentials.
 	MigratedTo string `json:"migrated_to,omitempty"`
@@ -97,6 +98,12 @@ func validate(controlURL, reference string, state State) error {
 		return fmt.Errorf("%w: credential origin mismatch", ErrInvalidState)
 	}
 	if state.Cleared && state.AccessToken == "" && state.RefreshToken == "" && state.DataToken == "" {
+		return nil
+	}
+	if state.APIKey != "" {
+		if state.AccessToken != "" || state.RefreshToken != "" {
+			return fmt.Errorf("%w: mixed authentication credentials", ErrInvalidState)
+		}
 		return nil
 	}
 	if state.AccessToken == "" {

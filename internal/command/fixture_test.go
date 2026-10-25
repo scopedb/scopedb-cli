@@ -386,7 +386,7 @@ func saveLogin(t *testing.T, store *credential.PlaintextStore, controlURL, works
 	require.NoError(t, store.Save(controlURL, state))
 	paths, err := config.ResolvePaths()
 	require.NoError(t, err)
-	require.NoError(t, config.SaveProfile(paths, "default", config.Profile{ControlURL: controlURL, ConsoleURL: config.DefaultConsoleURL, WorkspaceID: workspaceID}, true))
+	require.NoError(t, config.SaveConnection(paths, "default", config.Connection{ControlURL: controlURL, ConsoleURL: config.DefaultConsoleURL, WorkspaceID: workspaceID}, true))
 	return state
 }
 

@@ -133,8 +133,8 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
 		Use:   "use [id]",
-		Short: "Select the workspace for this profile by ID",
-		Long: "Select the workspace for this profile by ID, or omit the ID for an interactive picker.\n" +
+		Short: "Select the workspace for this connection by ID",
+		Long: "Select the workspace for this connection by ID, or omit the ID for an interactive picker.\n" +
 			"Run 'scope workspace list' to find workspace IDs.\n" +
 			"Data commands use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when set, regardless of this selection.",
 		Args: func(_ *cobra.Command, args []string) error {

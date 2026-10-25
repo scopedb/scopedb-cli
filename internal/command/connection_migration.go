@@ -28,7 +28,7 @@ import (
 
 var errLegacyMigration = errors.New("legacy credential migration failed")
 
-func (a *app) migrateProfile(ctx context.Context, r *runtimeContext) error {
+func (a *app) migrateConnection(ctx context.Context, r *runtimeContext) error {
 	// A new configuration directory must never adopt another directory's legacy keyring login.
 	// Legacy plaintext records are already local to this directory.
 	_, configErr := os.Stat(r.paths.Config)
@@ -45,11 +45,11 @@ func (a *app) migrateProfile(ctx context.Context, r *runtimeContext) error {
 	if err != nil {
 		return err
 	}
-	if profile, ok := cfg.Profiles[r.config.ProfileName]; ok {
-		if profile.ControlURL != r.config.ControlURL {
-			return usageError("profile service changed while the command was starting")
+	if connection, ok := cfg.Connections[r.config.ConnectionName]; ok {
+		if connection.ControlURL != r.config.ControlURL {
+			return usageError("connection service changed while the command was starting")
 		}
-		r.config.SelectedProfile, r.config.ProfileExists = profile, true
+		r.config.SelectedConnection, r.config.ConnectionExists = connection, true
 		return nil
 	}
 	// Legacy keyring entries were shared across configuration directories. Serialize
@@ -73,17 +73,17 @@ func (a *app) migrateProfile(ctx context.Context, r *runtimeContext) error {
 		return err
 	}
 	legacy := &credential.Stores{Keyring: keyring, Plaintext: plaintext}
-	migrated, found, err := credential.MigrateLegacy(r.config.ControlURL, config.CredentialReference(r.paths, r.config.ProfileName), legacy, r.credentials)
+	migrated, found, err := credential.MigrateLegacy(r.config.ControlURL, config.CredentialReference(r.paths, r.config.ConnectionName), legacy, r.credentials)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errLegacyMigration, err)
 	}
 	if !found {
 		return nil
 	}
-	r.config.SelectedProfile.WorkspaceID = migrated.WorkspaceID
-	if err := config.SaveProfile(r.paths, r.config.ProfileName, r.config.SelectedProfile, true); err != nil {
+	r.config.SelectedConnection.WorkspaceID = migrated.WorkspaceID
+	if err := config.SaveConnection(r.paths, r.config.ConnectionName, r.config.SelectedConnection, true); err != nil {
 		return err
 	}
-	r.config.ProfileExists = true
+	r.config.ConnectionExists = true
 	return nil
 }
