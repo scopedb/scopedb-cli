@@ -25,9 +25,9 @@ scope auth login --use-device-code --no-browser
 
 Open the printed verification link on any device and approve the request. `--use-device-code` selects device authorization; `--no-browser` independently disables automatic browser opening. Omit `--no-browser` to also open the verification link in a local browser. Neither flow requires an interactive terminal.
 
-Login keeps a valid workspace selection or automatically selects the first workspace that is not scheduled for deletion, and prints its name and ID. Workspaces shared with you are listed and selected the same way as workspaces you own. Use `scope workspace use <id-or-name>` to switch.
+Login keeps a valid workspace selection or automatically selects the first workspace that is not scheduled for deletion, and prints its name and ID. Workspaces shared with you are listed and selected the same way as workspaces you own. Use `scope workspace use <id>` to switch, or `scope auth login --workspace <id>` to select a workspace during login. Both commands require an ID from `scope workspace list`; display names are not accepted.
 
-If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id-or-name>`.
+If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id>`.
 
 `scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`, and the credential file path when using plaintext. In login mode it verifies your login against ScopeDB and reports when the login expires; in environment mode it displays the configured endpoint without validating the API key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
 
@@ -121,7 +121,7 @@ If a timed-out query reports that server cancellation could not be confirmed, re
 | Only one connection variable set | Set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or unset both to use your login.                       |
 | Not logged in                    | Run `scope auth login`, or configure both connection variables.                                           |
 | OS keyring unavailable           | See [headless Linux setup](#use-headless-linux) for API key access or explicit plaintext login.           |
-| No workspace selected            | Run `scope workspace list`, then `scope workspace use <id-or-name>`.                                      |
+| No workspace selected            | Run `scope workspace list`, then `scope workspace use <id>`.                                              |
 | Workspace is still provisioning  | Check `scope workspace get` or the Console and retry when the workspace is ready.                         |
 | API key rejected                 | Check that the endpoint and key belong to the same workspace and the key has not expired or been revoked. |
 | Operation timed out              | Check connectivity; increase `doctor --timeout` only if the per-check limit is too short.                 |

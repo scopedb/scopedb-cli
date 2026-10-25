@@ -6,6 +6,7 @@ All significant changes to this project will be documented in this file.
 
 ### Breaking changes
 
+* `scope workspace use <id>` and `scope auth login --workspace <id>` now require a workspace ID. Display names are no longer accepted; use `scope workspace list` to find the ID and update commands and scripts that select workspaces by name.
 * Rename the CLI configuration directory override from `SCOPEDB_CONFIG_DIR` to `SCOPEDB_HOME`. Set `SCOPEDB_HOME` to the same directory and remove the old variable from your environment. The CLI no longer reads the old name. Default storage locations, existing configuration files, and credential storage are unchanged; connection variables retain their existing `SCOPEDB_` names.
 
 ## v0.2.0 (2026-10-25)

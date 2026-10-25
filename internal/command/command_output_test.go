@@ -63,7 +63,7 @@ func TestCommandJSONOutput(t *testing.T) {
 		json string
 	}{
 		{"workspace list --limit 1", `[{"id":"ws-1","display_name":"Alpha","status":"ready","current":true}]`},
-		{"workspace use Beta", `{"id":"ws-2","display_name":"Beta","changed":true}`},
+		{"workspace use ws-2", `{"id":"ws-2","display_name":"Beta","changed":true}`},
 		{"workspace use ws-2", `{"id":"ws-2","display_name":"Beta","changed":false}`},
 		{"api-key revoke automation --yes", `{"id":"key-1","name":"automation","revoked":true}`},
 		{"auth logout", `{"changed":true}`},
@@ -99,7 +99,7 @@ func TestWorkspaceUseTextOutput(t *testing.T) {
 	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
 	saveStoredLogin(t, store, fake.URL, "ws-1")
 
-	out, diagnostics, err := runCommand(t, "--control-url", fake.URL, "workspace", "use", "Alpha")
+	out, diagnostics, err := runCommand(t, "--control-url", fake.URL, "workspace", "use", "ws-1")
 	require.NoError(t, err)
 	require.Empty(t, diagnostics)
 	require.Contains(t, out, "Already using workspace Alpha (ws-1) for this login.")
@@ -135,7 +135,7 @@ func TestWorkspaceUseWarnsAboutEnvironmentCredentials(t *testing.T) {
 			}
 			return ""
 		},
-	}, "--control-url", fake.URL, "workspace", "use", "Alpha")
+	}, "--control-url", fake.URL, "workspace", "use", "ws-1")
 	require.NoError(t, err)
 	require.Contains(t, diagnostics, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 	require.NotContains(t, diagnostics, "machine-secret")

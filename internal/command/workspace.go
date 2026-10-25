@@ -132,9 +132,9 @@ func workspaceStatus(workspace controlplane.Workspace) string {
 func (a *app) newWorkspaceUseCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
-		Use:   "use <id-or-name>",
-		Short: "Select the workspace for this login",
-		Long: "Select the workspace for this login.\n" +
+		Use:   "use <id>",
+		Short: "Select the workspace for this login by ID",
+		Long: "Select the workspace for this login by ID. Run 'scope workspace list' to find its ID.\n" +
 			"Data commands use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when set, regardless of this selection.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -152,7 +152,7 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 			if len(account.Workspaces) == 0 {
 				return auth.RequireWorkspace(account)
 			}
-			workspace, err := resolveWorkspace(account.Workspaces, args[0])
+			workspace, err := resolveWorkspaceID(account.Workspaces, args[0])
 			if err != nil {
 				return err
 			}
@@ -277,25 +277,13 @@ func workspaceByID(workspaces []controlplane.Workspace, id string) (controlplane
 	return controlplane.Workspace{}, false
 }
 
-func resolveWorkspace(workspaces []controlplane.Workspace, value string) (controlplane.Workspace, error) {
-	value = strings.TrimSpace(value)
-	for _, workspace := range workspaces {
-		if workspace.ID == value {
-			return workspace, nil
-		}
+func resolveWorkspaceID(workspaces []controlplane.Workspace, id string) (controlplane.Workspace, error) {
+	id = strings.TrimSpace(id)
+	if workspace, found := workspaceByID(workspaces, id); found {
+		return workspace, nil
 	}
-	var matches []controlplane.Workspace
-	for _, workspace := range workspaces {
-		if workspace.DisplayName != nil && strings.EqualFold(*workspace.DisplayName, value) {
-			matches = append(matches, workspace)
-		}
-	}
-	switch len(matches) {
-	case 1:
-		return matches[0], nil
-	case 0:
-		return controlplane.Workspace{}, clierror.New(clierror.ExitNotFound, fmt.Sprintf("workspace %q was not found", value))
-	default:
-		return controlplane.Workspace{}, usageError(fmt.Sprintf("workspace name %q is ambiguous; use its ID", value))
-	}
+	return controlplane.Workspace{}, clierror.WithHint(
+		clierror.New(clierror.ExitNotFound, fmt.Sprintf("workspace ID %q was not found", id)),
+		"run 'scope workspace list', then 'scope workspace use <id>' with an accessible workspace ID",
+	)
 }
