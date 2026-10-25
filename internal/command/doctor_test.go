@@ -135,7 +135,7 @@ func TestDoctorMachineCredentials(t *testing.T) {
 		{"partial", "", 0, "must be set together"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+			t.Setenv("SCOPEDB_HOME", t.TempDir())
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
@@ -200,7 +200,7 @@ func (s doctorUnusedStore) Delete(string) error {
 }
 
 func TestDoctorCheckTimeout(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
 	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
 	for _, disabled := range []bool{false, true} {
@@ -234,7 +234,7 @@ func TestDoctorCheckTimeout(t *testing.T) {
 func TestDoctorTimeoutAndCancellation(t *testing.T) {
 	for _, interrupt := range []bool{false, true} {
 		t.Run(map[bool]string{false: "timeout", true: "interrupt"}[interrupt], func(t *testing.T) {
-			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+			t.Setenv("SCOPEDB_HOME", t.TempDir())
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var out bytes.Buffer

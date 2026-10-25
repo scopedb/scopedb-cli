@@ -142,7 +142,7 @@ func TestWorkspaceUseWarnsAboutEnvironmentCredentials(t *testing.T) {
 }
 
 func TestConsoleOutput(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Setenv("SCOPEDB_CONSOLE_URL", "https://console.example.com")
 	for _, tc := range []struct {
 		args   string

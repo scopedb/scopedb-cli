@@ -66,7 +66,8 @@ credential_store = "plaintext"
 
 func TestResolvePathsUsesOverride(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "nested")
-	t.Setenv("SCOPEDB_CONFIG_DIR", directory)
+	t.Setenv("SCOPEDB_HOME", directory)
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 	paths, err := ResolvePaths()
 	require.NoError(t, err)
 	require.Equal(t, directory, paths.Directory)
@@ -74,7 +75,8 @@ func TestResolvePathsUsesOverride(t *testing.T) {
 }
 
 func TestResolvePathsUsesPlatformConfigDirectory(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", "")
+	t.Setenv("SCOPEDB_HOME", "")
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 	base, err := os.UserConfigDir()
 	require.NoError(t, err)
 	paths, err := ResolvePaths()

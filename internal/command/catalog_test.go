@@ -34,7 +34,7 @@ import (
 )
 
 func TestCatalogPlanApply(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	var out, diagnostics bytes.Buffer
 	writes, plans := 0, 0
 	stale := false
@@ -111,7 +111,7 @@ func TestCatalogPlanApply(t *testing.T) {
 }
 
 func TestCatalogApplyConfirmation(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	definition := filepath.Join(t.TempDir(), "table.yaml")
 	require.NoError(t, os.WriteFile(definition, []byte("name: t\ncolumns: []\n"), 0o600))
 	for _, tc := range []struct {
@@ -178,7 +178,7 @@ func TestCatalogApplyConfirmation(t *testing.T) {
 }
 
 func TestCatalogDrop(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	for _, tc := range []struct {
 		resource                  []string
 		method, path, body, after string
@@ -246,7 +246,7 @@ func TestCatalogInvalidInput(t *testing.T) {
 }
 
 func TestCatalogRequestFailures(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Run("invalid endpoint", func(t *testing.T) {
 		t.Setenv("SCOPEDB_ENDPOINT", "not-a-url")
 		t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
@@ -345,7 +345,7 @@ func TestCatalogRequestFailures(t *testing.T) {
 }
 
 func TestCatalogBrowse(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
 	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
 	tableName := "Events.a/b`c\\d"
@@ -416,7 +416,7 @@ func TestCatalogBrowse(t *testing.T) {
 }
 
 func TestCatalogTenantApply(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
 	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
 	var out, diagnostics bytes.Buffer
@@ -467,7 +467,7 @@ func TestCatalogScopes(t *testing.T) {
 }
 
 func TestCatalogOutput(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
 	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
 	var out, diagnostics bytes.Buffer
@@ -514,7 +514,7 @@ func TestCatalogOutput(t *testing.T) {
 }
 
 func TestCatalogRequestTimeout(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
 	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
 	for _, tc := range []struct {
