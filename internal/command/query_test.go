@@ -85,7 +85,7 @@ func runQueryWithTransport(t *testing.T, transport roundTripFunc, args ...string
 
 func runQueryWithWriter(t *testing.T, transport roundTripFunc, out io.Writer, args ...string) error {
 	t.Helper()
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Setenv("SCOPEDB_CONTROL_URL", "")
 	t.Setenv("SCOPEDB_CONSOLE_URL", "")
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")

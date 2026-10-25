@@ -53,7 +53,7 @@ type Overrides struct {
 
 // ResolvePaths returns the platform-native configuration paths.
 func ResolvePaths() (Paths, error) {
-	directory := strings.TrimSpace(os.Getenv("SCOPEDB_CONFIG_DIR"))
+	directory := strings.TrimSpace(os.Getenv("SCOPEDB_HOME"))
 	if directory == "" {
 		base, err := os.UserConfigDir()
 		if err != nil {

@@ -446,7 +446,7 @@ func TestDiscoveryRequiresPKCEAndIssuerParameter(t *testing.T) {
 func TestLoginWithoutOAuthSupportReportsGuidance(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	_, _, err := runInteractiveCommand(t, "--control-url", server.URL, "auth", "login", "--insecure-storage")
 	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
 	require.Contains(t, clierror.Render(err), "requires ScopeDB v0.23.0 or newer")

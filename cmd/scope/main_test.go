@@ -47,7 +47,7 @@ func TestCommandErrorsAtProcessBoundary(t *testing.T) {
 		{name: "transport", cause: errors.New("connection refused"), code: clierror.ExitTemporary, message: "connection refused"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+			t.Setenv("SCOPEDB_HOME", t.TempDir())
 			const controlURL = "https://control.example.com"
 			store := credential.NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
 			require.NoError(t, store.Save(controlURL, credential.State{
@@ -131,7 +131,7 @@ func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 	const statementID = "01989a4e-4ee2-7e63-87a5-65ac3b5161dc"
 	for _, outcome := range []string{"before_submit", "finished"} {
 		t.Run(outcome, func(t *testing.T) {
-			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+			t.Setenv("SCOPEDB_HOME", t.TempDir())
 			t.Setenv("SCOPEDB_CONTROL_URL", "")
 			t.Setenv("SCOPEDB_CONSOLE_URL", "")
 			t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
@@ -194,7 +194,7 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestInterruptedCatalogWriteReportsUnknownOutcome(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
 	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
 	ctx, cancel := context.WithCancel(t.Context())
