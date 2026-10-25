@@ -131,7 +131,7 @@ func TestDoctorMachineCredentials(t *testing.T) {
 		want   string
 	}{
 		{"valid", "machine-secret", http.StatusOK, ""},
-		{"unauthorized", "machine-secret", http.StatusUnauthorized, "same workspace"},
+		{"unauthorized", "machine-secret", http.StatusUnauthorized, "key's workspace"},
 		{"partial", "", 0, "must be set together"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {

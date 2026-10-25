@@ -48,7 +48,7 @@ func NewRoot(deps Dependencies) *cobra.Command {
 		}
 		return nil
 	}
-	root.PersistentFlags().StringVar(&a.workspaceFlag, "workspace", "", "use this workspace ID for this command; login saves the selection")
+	root.PersistentFlags().StringVar(&a.workspaceFlag, "workspace", "", "use this workspace ID for one OAuth command; login saves the selection")
 	_ = root.RegisterFlagCompletionFunc("workspace", a.completeWorkspaces)
 	root.Version = version.Current().Version
 	root.SetVersionTemplate("scope {{.Version}}\n")

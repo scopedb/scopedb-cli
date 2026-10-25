@@ -60,6 +60,9 @@ func (a *app) newConnectionAddCommand() *cobra.Command {
 	var authType, endpoint, keyEnv, format string
 	var keyStdin, insecure bool
 	command := &cobra.Command{Use: "add <name>", Short: "Save an OAuth or API key connection", Args: exactArgs(1),
+		Long: "Save an OAuth or API key connection. OAuth discovers the data service endpoint for the selected workspace.\n" +
+			"API key connections save an endpoint and use the workspace authorized by their key.\n" +
+			"Multiple connections and workspaces can use the same endpoint.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTextFormat(format); err != nil {
 				return err
@@ -162,7 +165,7 @@ func (a *app) newConnectionAddCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&authType, "auth-type", config.AuthOAuth, "authentication type: oauth or api_key")
-	command.Flags().StringVar(&endpoint, "endpoint", "", "data endpoint for an API key connection")
+	command.Flags().StringVar(&endpoint, "endpoint", "", "data service URL for an API key connection")
 	command.Flags().BoolVar(&keyStdin, "api-key-stdin", false, "read an API key from stdin and save it in the credential store")
 	command.Flags().StringVar(&keyEnv, "api-key-env", "", "read the API key from this environment variable at runtime")
 	command.Flags().BoolVar(&insecure, "insecure-storage", false, "store the supplied API key unencrypted")

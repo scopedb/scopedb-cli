@@ -284,7 +284,7 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	}
 	runtime.auth.WorkspaceOverride = a.workspaceFlag
 	if a.workspaceFlag != "" && runtime.config.SelectedConnection.AuthType == config.AuthAPIKey {
-		return nil, usageError("--workspace requires an OAuth connection; API key connections have a fixed endpoint")
+		return nil, usageError("--workspace requires an OAuth connection; an API key's workspace is determined by the key")
 	}
 	if !usesDataCredentials(cmd) {
 		if err := runtime.auth.RequireOAuth(); err != nil {

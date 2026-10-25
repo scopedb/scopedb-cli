@@ -2,7 +2,7 @@
 
 This guide follows the selected repository revision; `main` can include unreleased changes. For an installed release, browse the guide at its matching [release tag](https://github.com/scopedb/scopedb-cli/tags). Run `scope version` to identify your version and `scope --help` to check its commands. See the [changelog](../CHANGELOG.md) for migration steps when upgrading.
 
-Use `scope auth login` for terminal exploration. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring when available, with a plaintext fallback; SDKs do not read it.
+Use `scope auth login` for terminal exploration. Use a data service endpoint and workspace API key for application SDKs and CI. The CLI login is stored in your OS keyring when available, with a plaintext fallback; SDKs do not read it.
 
 ## Verify your login
 
@@ -31,7 +31,7 @@ A failed explicit workspace selection reports that the login was saved and exits
 
 If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id>`.
 
-`scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`, and the credential file path when using plaintext. In login mode it verifies your login against ScopeDB and reports when the login expires; in environment mode it displays the configured endpoint without validating the API key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
+`scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`, and the credential file path when using plaintext. For OAuth it verifies your login against ScopeDB and reports when the login expires; for API keys it displays the configured endpoint without validating the key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
 
 `scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
 
@@ -39,18 +39,39 @@ If your account is awaiting approval or has no workspace, follow the instruction
 
 A named connection stores an authentication type and its target. OAuth connections hold service URLs and a default workspace; API key connections hold a data endpoint and either a stored key or an explicit environment-variable reference. Secrets are stored separately from `config.toml`.
 
+An endpoint is a data service address, separate from workspace identity. Multiple workspaces and connections can share the same endpoint. Do not construct an endpoint from a workspace ID or name. The example address `https://api.example.com` below is a placeholder; use the address returned by `scope workspace get` for the workspace that owns your API key.
+
+OAuth discovers the selected workspace's current endpoint through the control plane before accessing data, including when reusing an unexpired data token. An OAuth connection does not save a data endpoint. An API key connection uses its saved endpoint directly, and its key determines the workspace and permissions; it does not discover an address or change the key's authorization through `--workspace`. If the service address changes, an environment-referenced connection can update its endpoint in `config.toml`. For a stored key, remove the connection before changing the address, then add it again with the new endpoint and key. Removing a connection does not revoke the service-side API key.
+
 ```sh
 scope auth login --connection development --workspace <workspace-id>
-scope connection add automation --auth-type api_key --endpoint https://your-workspace.example.com --api-key-env APP_API_KEY
+export APP_API_KEY="your-api-key"
+scope connection add automation --auth-type api_key --endpoint https://api.example.com --api-key-env APP_API_KEY
 scope connection list --format json
 scope connection set-default development
 scope --connection automation query 'SELECT 1 AS ready'
 scope --connection development auth status
 ```
 
-`connection add NAME` saves an OAuth configuration without logging in. `auth login --connection NAME` can also create an OAuth connection after authorization succeeds. API key connections require `--auth-type api_key`, `--endpoint`, and exactly one of `--api-key-stdin` or `--api-key-env NAME`. The former reads one key from standard input and saves it using the OS keyring with the same warned plaintext fallback as OAuth credentials; `--insecure-storage` explicitly selects plaintext for that key. The latter stores only the variable name and requires that variable to contain a key when the connection is used. Adding an existing connection fails without overwriting its configuration or credentials.
+`connection add NAME` saves an OAuth configuration without logging in; run `scope auth login --connection NAME` when ready to authorize it. `auth login --connection NAME` can also create an OAuth connection after authorization succeeds. API key connections require `--auth-type api_key`, `--endpoint`, and exactly one of `--api-key-stdin` or `--api-key-env NAME`. The former reads one key from standard input and saves it using the OS keyring with the same warned plaintext fallback as OAuth credentials; `--insecure-storage` explicitly selects plaintext for that key. The latter stores only the variable name and requires that variable to contain a key when the connection is used. Adding an existing connection fails without overwriting its configuration or credentials.
 
-The configuration has this shape:
+For a stored key, supply a protected file or pipe the output of your secret manager:
+
+```sh
+scope connection add application --auth-type api_key --endpoint https://api.example.com --api-key-stdin < api-key.txt
+scope --connection application doctor
+scope --connection application query 'SELECT 1 AS ready'
+```
+
+For an environment reference, provide the referenced variable whenever the connection runs. Saving the connection does not save the variable's value:
+
+```sh
+export APP_API_KEY="your-api-key"
+scope --connection automation doctor
+scope --connection automation query 'SELECT 1 AS ready'
+```
+
+The non-secret configuration has this shape. The two API key connections can access different workspaces at the same endpoint when their keys authorize different workspaces:
 
 ```toml
 default_connection = "development"
@@ -63,11 +84,28 @@ workspace_id = "<workspace-id>"
 
 [connections.automation]
 auth_type = "api_key"
-endpoint = "https://your-workspace.example.com"
+endpoint = "https://api.example.com"
 api_key_env = "APP_API_KEY"
+
+[connections.application]
+auth_type = "api_key"
+endpoint = "https://api.example.com"
 ```
 
+An API key entry without `api_key_env` reads the key saved by `--api-key-stdin` from the credential store; adding the entry by hand does not create that credential. OAuth entries may also include `workspace_name`, `last_user_id`, and `last_email` as last known display information. Copying `config.toml` does not copy logins or stored keys.
+
+By default, `config.toml` is in `~/Library/Application Support/scopedb` on macOS, `$XDG_CONFIG_HOME/scopedb` or `~/.config/scopedb` on Linux, and `%AppData%\scopedb` on Windows. Set `SCOPEDB_HOME` to choose another configuration and plaintext credential directory.
+
 Selection precedence is `--connection` (`-c`), `SCOPEDB_CONNECTION`, the generic `SCOPEDB_ENDPOINT`/`SCOPEDB_API_KEY` pair, then `default_connection`. The pair supplies a temporary API key connection and must be complete. Explicit named selection ignores the generic pair, including incomplete values; it never mixes credentials from another connection or falls back when its own credentials are missing. `SCOPEDB_HOME` selects the configuration and plaintext credential directory.
+
+```sh
+scope connection set-default development
+scope query 'SELECT 1 AS ready'
+scope -c automation query 'SELECT 1 AS ready'
+export SCOPEDB_CONNECTION=automation
+scope query 'SELECT 1 AS ready'
+unset SCOPEDB_CONNECTION
+```
 
 The first added connection becomes the default. An unqualified first OAuth login creates `default`; adding or logging into another connection does not replace an existing default. `connection set-default NAME` changes only that default. Per-command and environment selection do not persist. Unknown names fail except during creation. Names contain 1 to 64 letters, digits, dots, underscores, or hyphens. Removing the default clears the selection; select another explicitly or run `connection set-default NAME` before unqualified commands.
 
@@ -77,7 +115,23 @@ The first added connection becomes the default. An unqualified first OAuth login
 
 `scope --connection development workspace use <id>` validates and saves that connection's default workspace. Two terminals using the same connection share this saved default. For a single command, use `--workspace <id>` with `query`, `catalog`, `workspace get`, `api-key` operations, `auth status`, or `doctor`. The override validates access, keeps the saved workspace unchanged, and never falls back to a different target. `auth login --workspace <id>` instead saves the selection as part of login. API key connections reject workspace overrides and OAuth-only operations such as workspace discovery and API key administration.
 
+```sh
+scope -c development workspace list
+scope -c development workspace use <workspace-id>
+scope -c development workspace get --format json
+scope -c development --workspace <another-workspace-id> query 'SELECT 1 AS ready'
+scope -c development --workspace <another-workspace-id> doctor
+```
+
 Each running OAuth command keeps its resolved identity and target through refresh and concurrent changes. Each connection owns its own login grant, rotating refresh credentials, and data-token cache, including when multiple connections authorize the same account. Workspace selection is a default, not an authorization restriction. Login refuses to overwrite a renewable login; log out of that connection first or use a new name.
+
+To keep a second login independent, create another connection and complete its authorization as the desired account:
+
+```sh
+scope auth login --connection personal --workspace <personal-workspace-id>
+scope -c personal auth status
+scope -c development auth status
+```
 
 ### Log out or remove a connection
 
@@ -100,10 +154,10 @@ Credentials are isolated by connection and configuration directory, including in
 
 On Linux, the OS keyring requires a working D-Bus session and a Secret Service provider, such as GNOME Keyring, with an accessible login collection. Servers, SSH sessions, and containers may not have these services available. If keyring storage fails during a new login, the CLI prints a warning to stderr and saves the credentials unencrypted in `credentials.json`. Device authorization and storage selection are independent.
 
-For servers and CI, use a workspace endpoint and API key:
+For servers and CI, use a data service endpoint and workspace API key:
 
 ```sh
-export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
+export SCOPEDB_ENDPOINT="https://api.example.com"
 export SCOPEDB_API_KEY="your-api-key"
 scope doctor
 scope query --format json 'SELECT 1 AS ready'
@@ -128,7 +182,7 @@ To return to keyring storage, restore keyring access, run `scope auth logout`, t
 
 ## Get application credentials
 
-Show the selected workspace's endpoint and create a key for your application:
+Show the data service endpoint for the selected workspace and create a key for your application:
 
 ```sh
 scope workspace get
@@ -139,10 +193,10 @@ The key is shown only once on stdout. Store it in your application's secret mana
 
 Revoke a key with `scope api-key revoke <id>`, using the ID from `scope api-key list`. A unique name also works, but repeated names require an ID; if an ID also matches another key's name, the ID wins. The confirmation shows the selected name and ID, and declining it sends no deletion.
 
-Copy the workspace's data-plane endpoint, without appending `/v1/statements`. Set both values in your application environment or local shell:
+Copy `connection.endpoint` from `scope workspace get --format json`, without appending `/v1/statements` or constructing a hostname from the workspace ID. Other workspaces may return the same endpoint. Set both values in your application environment or local shell:
 
 ```sh
-export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
+export SCOPEDB_ENDPOINT="https://api.example.com"
 export SCOPEDB_API_KEY="your-api-key"
 scope auth status
 scope doctor --timeout 15s
@@ -179,14 +233,14 @@ Each remote check has its own timeout, defaulting to five seconds. Resolving log
 
 If a timed-out query reports that server cancellation could not be confirmed, retain the statement ID and check its outcome before retrying. The statement may have completed or still be running; repeating a write could duplicate its effects. A successful cancellation request only confirms cancellation when the returned statement status is `cancelled`.
 
-| Symptom                          | Next step                                                                                                 |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Only one connection variable set | Set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or unset both to use your login.                       |
-| Not logged in                    | Run `scope auth login`, or configure both connection variables.                                           |
-| OS keyring unavailable           | See [headless Linux setup](#use-headless-linux) for API key access or explicit plaintext login.           |
-| No workspace selected            | Run `scope workspace list`, then `scope workspace use <id>`.                                              |
-| Workspace is still provisioning  | Check `scope workspace get` or the Console and retry when the workspace is ready.                         |
-| API key rejected                 | Check that the endpoint and key belong to the same workspace and the key has not expired or been revoked. |
-| Operation timed out              | Check connectivity; increase `doctor --timeout` only if the per-check limit is too short.                 |
+| Symptom                          | Next step                                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Only one connection variable set | Set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or unset both to use your login.                                 |
+| Not logged in                    | Run `scope auth login`, or configure both connection variables.                                                     |
+| OS keyring unavailable           | See [headless Linux setup](#use-headless-linux) for API key access or explicit plaintext login.                     |
+| No workspace selected            | Run `scope workspace list`, then `scope workspace use <id>`.                                                        |
+| Workspace is still provisioning  | Check `scope workspace get` or the Console and retry when the workspace is ready.                                   |
+| API key rejected                 | Use the data service endpoint returned for the key's workspace; check that the key has not expired or been revoked. |
+| Operation timed out              | Check connectivity; increase `doctor --timeout` only if the per-check limit is too short.                           |
 
 JSON diagnostics keep the same `ok` and `checks` fields as table diagnostics. Failed checks exit with code 1; invalid flags exit with code 2; Ctrl+C exits with code 130. Include a reported request ID when asking for support, and omit API keys and session credentials.

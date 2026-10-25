@@ -84,7 +84,8 @@ Save OAuth and API key connections, and select one for each command or terminal:
 
 ```sh
 scope auth login --connection development --workspace <workspace-id>
-scope connection add automation --auth-type api_key --endpoint https://your-workspace.example.com --api-key-env APP_API_KEY
+export APP_API_KEY="your-api-key"
+scope connection add automation --auth-type api_key --endpoint https://api.example.com --api-key-env APP_API_KEY
 scope connection list
 scope connection set-default development
 scope --connection automation query 'SELECT 1 AS ready'
@@ -94,7 +95,11 @@ scope connection remove automation --yes
 
 Selection precedence is `--connection` (`-c`), `SCOPEDB_CONNECTION`, paired `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` as a temporary connection, then the saved default. An explicitly selected connection ignores the generic endpoint/key variables and never falls back to another identity. A partial temporary pair fails. Single-command and environment selection do not change the saved default.
 
-Each OAuth connection has an independent login and default workspace. `--workspace <id>` overrides the target for one workspace-scoped command; `auth login --workspace <id>` and `workspace use <id>` save it. API key connections have a fixed endpoint and do not support workspace overrides or control-plane management. `auth logout` retains OAuth connection settings; `connection remove` revokes its OAuth login before deleting it, or forgets a local API key without revoking the key on the service. Removing the default leaves no default selected.
+Each OAuth connection has an independent login and default workspace. `--workspace <id>` overrides the target for one workspace-scoped command; `auth login --workspace <id>` and `workspace use <id>` save it.
+
+OAuth discovers the data service endpoint for the selected workspace through the control plane. API key connections save an endpoint and use the workspace authorized by their key; they do not support workspace overrides or control-plane management. An endpoint is a service address, not a workspace identifier, and multiple workspaces can share it.
+
+`auth logout` retains OAuth connection settings; `connection remove` revokes its OAuth login before deleting it, or forgets a local API key without revoking the key on the service. Removing the default leaves no default selected.
 
 Use `--api-key-stdin` instead of `--api-key-env` to save a key in the credential store. `connection list` displays saved information; `auth status` reports the selected authentication source and verifies OAuth logins, and `doctor` tests data access. See [connections and migration](docs/connect.md#manage-connections) for configuration, storage, and migration details.
 
@@ -180,7 +185,7 @@ Run `scope --help` or `scope <command> --help` for the complete command referenc
 For CI and other non-interactive environments, set the data-plane endpoint and API key:
 
 ```sh
-export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
+export SCOPEDB_ENDPOINT="https://api.example.com"
 export SCOPEDB_API_KEY="your-api-key"
 
 scope doctor

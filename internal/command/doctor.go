@@ -152,7 +152,7 @@ func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext,
 		err = NormalizeError(err)
 		check.Details = clierror.Compact(err)
 		if clierror.ExitCode(err) == clierror.ExitAuth && access.Mode == "api_key" {
-			check.Details += "; check SCOPEDB_ENDPOINT and SCOPEDB_API_KEY belong to the same workspace and the key has not expired or been revoked"
+			check.Details += "; use the data service endpoint returned for the key's workspace and check that the key has not expired or been revoked"
 		}
 	}
 	report.Checks = append(report.Checks, check)
