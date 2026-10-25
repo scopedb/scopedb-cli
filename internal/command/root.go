@@ -45,6 +45,9 @@ func NewRoot(deps Dependencies) *cobra.Command {
 	})
 	root.PersistentFlags().StringVar(&a.controlURLFlag, "control-url", "", "ScopeDB control-plane URL")
 	root.PersistentFlags().StringVar(&a.consoleURLFlag, "console-url", "", "ScopeDB console URL")
+	// Keep service URL overrides available for troubleshooting without advertising them.
+	_ = root.PersistentFlags().MarkHidden("control-url")
+	_ = root.PersistentFlags().MarkHidden("console-url")
 
 	root.AddCommand(
 		a.newAuthCommand(),

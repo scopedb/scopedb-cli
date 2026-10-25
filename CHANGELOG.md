@@ -8,6 +8,10 @@ All significant changes to this project will be documented in this file.
 
 * Rename the CLI configuration directory override from `SCOPEDB_CONFIG_DIR` to `SCOPEDB_HOME`. Set `SCOPEDB_HOME` to the same directory and remove the old variable from your environment. The CLI no longer reads the old name. Default storage locations, existing configuration files, and credential storage are unchanged; connection variables retain their existing `SCOPEDB_` names.
 
+### Improvements
+
+* Hide service URL override flags from command help and shell completion.
+
 ## v0.2.0 (2026-10-25)
 
 ### Breaking changes
