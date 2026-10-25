@@ -320,7 +320,7 @@ func openURL(target string, getenv func(string) string) error {
 	}
 }
 
-const keyringAccessHint = "restore OS keyring access; for queries without a keyring, set both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY; " +
+const keyringAccessHint = "restore OS keyring access; for queries without a keyring, set both SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY; " +
 	"or explicitly use 'scope auth login --insecure-storage' to store login credentials unencrypted in a 0600 file " +
 	"(add --use-device-code --no-browser on headless hosts)"
 

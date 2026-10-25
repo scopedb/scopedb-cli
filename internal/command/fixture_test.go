@@ -354,9 +354,9 @@ func challengeFor(verifier string) string {
 func setupCLITest(t *testing.T) (*fakeControlPlane, *credential.PlaintextStore) {
 	t.Helper()
 	fake := newFakeControlPlane(t)
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	t.Setenv("SCOPEDB_CONTROL_URL", fake.URL)
-	t.Setenv("SCOPEDB_CONSOLE_URL", "")
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_CONTROL_URL", fake.URL)
+	t.Setenv("SCOPEDB_CLI_CONSOLE_URL", "")
 	keyring.MockInit()
 	t.Cleanup(keyring.MockInit)
 	paths, err := config.ResolvePaths()

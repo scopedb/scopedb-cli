@@ -40,24 +40,26 @@ On Linux, the OS keyring requires a working D-Bus session and a Secret Service p
 For servers and CI, use a workspace endpoint and API key:
 
 ```sh
-export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
-export SCOPEDB_API_KEY="your-api-key"
+export SCOPEDB_CLI_ENDPOINT="https://your-workspace.example.com"
+export SCOPEDB_CLI_API_KEY="your-api-key"
 scope doctor
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-With both variables set, `scope query`, `scope auth status`, and `scope doctor` skip the keyring and do not require `scope auth login`. Setting only one variable fails. Workspace and API key management still require a CLI login.
+With both variables set, `scope query`, `scope auth status`, and `scope doctor` skip the keyring and do not require `scope auth login`. These credentials override the saved login for data access, and `scope workspace use` warns when they override the selected workspace. Setting only one variable fails without falling back to your login. Workspace and API key management still require a CLI login.
 
 For a CLI login on a host without a usable keyring:
 
 ```sh
-unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
+unset SCOPEDB_CLI_ENDPOINT SCOPEDB_CLI_API_KEY
 scope auth login --use-device-code --no-browser
 scope auth status
 scope query 'SELECT 1 AS ready'
 ```
 
-Approve the printed device code in a browser on another device. `--use-device-code` selects that authorization flow, and `--no-browser` skips opening a browser on the host. Add `--insecure-storage` to choose plaintext directly for this login. It does not change future login defaults. Plaintext credentials use permissions `0600` on Unix. On Linux, `credentials.json` and `config.toml` default to `$XDG_CONFIG_HOME/scopedb` or `~/.config/scopedb`; `SCOPEDB_CONFIG_DIR` overrides their directory.
+Approve the printed device code in a browser on another device. `--use-device-code` selects that authorization flow, and `--no-browser` skips opening a browser on the host. Add `--insecure-storage` to choose plaintext directly for this login. It does not change future login defaults. Plaintext credentials use permissions `0600` on Unix. On Linux, `credentials.json` and `config.toml` default to `$XDG_CONFIG_HOME/scopedb` or `~/.config/scopedb`; `SCOPEDB_CLI_CONFIG_DIR` overrides their directory.
+
+To end your login session, unset both CLI connection variables and run `scope auth logout`. The command refuses to log out while machine credentials are configured; it does not revoke application API keys.
 
 Queries and other commands discover the existing login, and refresh writes back to the same store without automatic downgrade. A fallback file takes precedence over an old keyring entry for the same control-plane URL. Logout revokes the active login and clears both stores. If the keyring cannot be cleared, the command reports the failure and removes local file tokens while retaining a non-secret logout marker so an old keyring entry cannot become active again. Restore keyring access and rerun `scope auth logout` to finish cleanup.
 
@@ -81,18 +83,17 @@ Copy the workspace's data-plane endpoint, without appending `/v1/statements`. Se
 ```sh
 export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
 export SCOPEDB_API_KEY="your-api-key"
-scope auth status
-scope doctor --timeout 15s
+```
+
+The CLI reads `SCOPEDB_CLI_ENDPOINT` and `SCOPEDB_CLI_API_KEY`, so these application variables do not change its active credentials. To check the application's connection, pass both values explicitly for that command:
+
+```sh
+SCOPEDB_CLI_ENDPOINT="$SCOPEDB_ENDPOINT" \
+SCOPEDB_CLI_API_KEY="$SCOPEDB_API_KEY" \
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-`scope auth status` reports `environment` as the credential source when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login session and warns when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
-
-```sh
-unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
-```
-
-To end your login session, run `scope auth logout` after unsetting both variables. The command refuses to log out while machine credentials are configured; it does not revoke application API keys.
+The assignments apply only to this command. Use the same assignments with `scope doctor --timeout 15s` for connection diagnostics.
 
 ## Connect an SDK
 
@@ -118,7 +119,7 @@ If a timed-out query reports that server cancellation could not be confirmed, re
 
 | Symptom                          | Next step                                                                                                 |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Only one connection variable set | Set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or unset both to use your login.                       |
+| Only one connection variable set | Set both `SCOPEDB_CLI_ENDPOINT` and `SCOPEDB_CLI_API_KEY`, or unset both to use your login.               |
 | Not logged in                    | Run `scope auth login`, or configure both connection variables.                                           |
 | OS keyring unavailable           | See [headless Linux setup](#use-headless-linux) for API key access or explicit plaintext login.           |
 | No workspace selected            | Run `scope workspace list`, then `scope workspace use <id-or-name>`.                                      |

@@ -128,22 +128,22 @@ func TestWorkspaceUseWarnsAboutEnvironmentCredentials(t *testing.T) {
 		Sleep: func(time.Duration) {},
 		Getenv: func(name string) string {
 			switch name {
-			case "SCOPEDB_ENDPOINT":
+			case "SCOPEDB_CLI_ENDPOINT":
 				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
+			case "SCOPEDB_CLI_API_KEY":
 				return "machine-secret"
 			}
 			return ""
 		},
 	}, "--control-url", fake.URL, "workspace", "use", "Alpha")
 	require.NoError(t, err)
-	require.Contains(t, diagnostics, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
+	require.Contains(t, diagnostics, "SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY")
 	require.NotContains(t, diagnostics, "machine-secret")
 }
 
 func TestConsoleOutput(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	t.Setenv("SCOPEDB_CONSOLE_URL", "https://console.example.com")
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_CONSOLE_URL", "https://console.example.com")
 	for _, tc := range []struct {
 		args   string
 		output string

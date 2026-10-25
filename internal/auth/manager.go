@@ -121,13 +121,13 @@ func (m *Manager) getenv(name string) string {
 
 // A partial environment is rejected instead of falling through to a human login.
 func (m *Manager) MachineAccess() (Access, bool, error) {
-	endpoint := strings.TrimSpace(m.getenv("SCOPEDB_ENDPOINT"))
-	apiKey := strings.TrimSpace(m.getenv("SCOPEDB_API_KEY"))
+	endpoint := strings.TrimSpace(m.getenv("SCOPEDB_CLI_ENDPOINT"))
+	apiKey := strings.TrimSpace(m.getenv("SCOPEDB_CLI_API_KEY"))
 	if endpoint == "" && apiKey == "" {
 		return Access{}, false, nil
 	}
 	if endpoint == "" || apiKey == "" {
-		return Access{}, false, fmt.Errorf("%w: SCOPEDB_ENDPOINT and SCOPEDB_API_KEY must be set together", ErrInvalidMachineEnv)
+		return Access{}, false, fmt.Errorf("%w: SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY must be set together", ErrInvalidMachineEnv)
 	}
 	return Access{Endpoint: endpoint, APIKey: apiKey, Mode: "api_key"}, true, nil
 }

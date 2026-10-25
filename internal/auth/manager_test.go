@@ -206,18 +206,38 @@ func newManager(t *testing.T, store CredentialStore, control ControlPlane, oauth
 	}
 }
 
-func TestMachineAccessRequiresCompletePair(t *testing.T) {
-	values := map[string]string{"SCOPEDB_ENDPOINT": "https://data.example.com"}
-	manager := Manager{Getenv: func(key string) string { return values[key] }}
-	_, active, err := manager.MachineAccess()
-	require.False(t, active)
-	require.ErrorIs(t, err, ErrInvalidMachineEnv)
-
-	values["SCOPEDB_API_KEY"] = "secret"
-	access, active, err := manager.MachineAccess()
-	require.NoError(t, err)
-	require.True(t, active)
-	require.Equal(t, Access{Endpoint: "https://data.example.com", APIKey: "secret", Mode: "api_key"}, access)
+func TestMachineAccessRequiresCompleteCLIPair(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		endpoint   string
+		apiKey     string
+		wantAccess Access
+		wantError  error
+	}{
+		{name: "application credentials only"},
+		{name: "missing CLI key", endpoint: "https://cli-data.example.com", wantError: ErrInvalidMachineEnv},
+		{name: "missing CLI endpoint", apiKey: "cli-secret", wantError: ErrInvalidMachineEnv},
+		{
+			name:       "complete CLI pair",
+			endpoint:   "https://cli-data.example.com",
+			apiKey:     "cli-secret",
+			wantAccess: Access{Endpoint: "https://cli-data.example.com", APIKey: "cli-secret", Mode: "api_key"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			values := map[string]string{
+				"SCOPEDB_ENDPOINT":     "https://app-data.example.com",
+				"SCOPEDB_API_KEY":      "app-secret",
+				"SCOPEDB_CLI_ENDPOINT": tt.endpoint,
+				"SCOPEDB_CLI_API_KEY":  tt.apiKey,
+			}
+			manager := Manager{Getenv: func(key string) string { return values[key] }}
+			access, active, err := manager.MachineAccess()
+			require.ErrorIs(t, err, tt.wantError)
+			require.Equal(t, tt.wantAccess.Mode != "", active)
+			require.Equal(t, tt.wantAccess, access)
+		})
+	}
 }
 
 func TestLoadAccessReturnsFreshTokenWithoutRefresh(t *testing.T) {
@@ -606,6 +626,11 @@ func TestResolveDataAccessUsesCachedToken(t *testing.T) {
 		},
 	}
 	manager := newManager(t, store, control, &fakeOAuth{}, now)
+	values := map[string]string{
+		"SCOPEDB_ENDPOINT": "https://app-data.example.com",
+		"SCOPEDB_API_KEY":  "app-secret",
+	}
+	manager.Getenv = func(key string) string { return values[key] }
 
 	access, err := manager.ResolveDataAccess(t.Context())
 	require.NoError(t, err)

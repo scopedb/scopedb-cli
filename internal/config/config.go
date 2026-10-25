@@ -53,7 +53,7 @@ type Overrides struct {
 
 // ResolvePaths returns the platform-native configuration paths.
 func ResolvePaths() (Paths, error) {
-	directory := strings.TrimSpace(os.Getenv("SCOPEDB_CONFIG_DIR"))
+	directory := strings.TrimSpace(os.Getenv("SCOPEDB_CLI_CONFIG_DIR"))
 	if directory == "" {
 		base, err := os.UserConfigDir()
 		if err != nil {
@@ -103,10 +103,10 @@ func Load(paths Paths, overrides Overrides) (Config, error) {
 }
 
 func applyEnv(cfg *Config) {
-	if value := strings.TrimSpace(os.Getenv("SCOPEDB_CONTROL_URL")); value != "" {
+	if value := strings.TrimSpace(os.Getenv("SCOPEDB_CLI_CONTROL_URL")); value != "" {
 		cfg.ControlURL = value
 	}
-	if value := strings.TrimSpace(os.Getenv("SCOPEDB_CONSOLE_URL")); value != "" {
+	if value := strings.TrimSpace(os.Getenv("SCOPEDB_CLI_CONSOLE_URL")); value != "" {
 		cfg.ConsoleURL = value
 	}
 }

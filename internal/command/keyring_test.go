@@ -127,9 +127,9 @@ func TestQueryEnvironmentCredentialsBypassUnavailableKeyring(t *testing.T) {
 	out, diagnostics, err := runCommandWith(t, Dependencies{
 		Getenv: func(name string) string {
 			switch name {
-			case "SCOPEDB_ENDPOINT":
+			case "SCOPEDB_CLI_ENDPOINT":
 				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
+			case "SCOPEDB_CLI_API_KEY":
 				return "machine-secret"
 			}
 			return ""
@@ -178,8 +178,8 @@ func TestDeviceLoginWithExplicitPlaintextBypassesUnavailableKeyring(t *testing.T
 
 func requireKeyringRecovery(t *testing.T, rendered string) {
 	t.Helper()
-	require.Contains(t, rendered, "SCOPEDB_ENDPOINT")
-	require.Contains(t, rendered, "SCOPEDB_API_KEY")
+	require.Contains(t, rendered, "SCOPEDB_CLI_ENDPOINT")
+	require.Contains(t, rendered, "SCOPEDB_CLI_API_KEY")
 	require.Contains(t, rendered, "unencrypted")
 	require.Equal(t, 1, strings.Count(rendered, "scope auth login --insecure-storage"))
 }

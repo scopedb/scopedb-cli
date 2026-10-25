@@ -49,7 +49,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check local configuration and ScopeDB connectivity",
 		Long: "Check configuration, authentication, and connectivity by running SELECT 1 AS ready.\n" +
-			"Uses SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when both are set; otherwise uses your login.\n" +
+			"Uses SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY when both are set; otherwise uses your login.\n" +
 			"Incomplete account setup is reported as a warning without running a query.\n" +
 			"--timeout 0 disables the per-check limit; individual control-plane requests still have a 15s limit.",
 		Args: cobra.NoArgs,
@@ -90,7 +90,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 
 				state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
 				if errors.Is(loadErr, credential.ErrNotFound) || errors.Is(loadErr, credential.ErrInvalidState) {
-					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login' or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY"})
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login' or set SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY"})
 				} else if loadErr != nil {
 					report.OK = false
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(loadErr))})
@@ -149,7 +149,7 @@ func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext,
 		err = NormalizeError(err)
 		check.Details = clierror.Compact(err)
 		if clierror.ExitCode(err) == clierror.ExitAuth && access.Mode == "api_key" {
-			check.Details += "; check SCOPEDB_ENDPOINT and SCOPEDB_API_KEY belong to the same workspace and the key has not expired or been revoked"
+			check.Details += "; check SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY belong to the same workspace and the key has not expired or been revoked"
 		}
 	}
 	report.Checks = append(report.Checks, check)

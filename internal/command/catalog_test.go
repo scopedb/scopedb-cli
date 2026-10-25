@@ -34,7 +34,7 @@ import (
 )
 
 func TestCatalogPlanApply(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
 	var out, diagnostics bytes.Buffer
 	writes, plans := 0, 0
 	stale := false
@@ -69,9 +69,9 @@ func TestCatalogPlanApply(t *testing.T) {
 		root := NewRoot(Dependencies{In: strings.NewReader(input), Out: &out, ErrOut: &diagnostics, HTTPClient: client,
 			Getenv: func(name string) string {
 				switch name {
-				case "SCOPEDB_ENDPOINT":
+				case "SCOPEDB_CLI_ENDPOINT":
 					return "https://data.example.com/prefix/"
-				case "SCOPEDB_API_KEY":
+				case "SCOPEDB_CLI_API_KEY":
 					return apiKey
 				}
 				return ""
@@ -111,7 +111,7 @@ func TestCatalogPlanApply(t *testing.T) {
 }
 
 func TestCatalogApplyConfirmation(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
 	definition := filepath.Join(t.TempDir(), "table.yaml")
 	require.NoError(t, os.WriteFile(definition, []byte("name: t\ncolumns: []\n"), 0o600))
 	for _, tc := range []struct {
@@ -137,9 +137,9 @@ func TestCatalogApplyConfirmation(t *testing.T) {
 				IsInputTerminal: func() bool { return !tc.yes && !tc.nonInteractive },
 				Getenv: func(name string) string {
 					switch name {
-					case "SCOPEDB_ENDPOINT":
+					case "SCOPEDB_CLI_ENDPOINT":
 						return "https://data.example.com"
-					case "SCOPEDB_API_KEY":
+					case "SCOPEDB_CLI_API_KEY":
 						return "fixture-secret"
 					}
 					return ""
@@ -178,7 +178,7 @@ func TestCatalogApplyConfirmation(t *testing.T) {
 }
 
 func TestCatalogDrop(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
 	for _, tc := range []struct {
 		resource                  []string
 		method, path, body, after string
@@ -192,9 +192,9 @@ func TestCatalogDrop(t *testing.T) {
 			deps := Dependencies{Out: &out, ErrOut: &diagnostics,
 				Getenv: func(name string) string {
 					switch name {
-					case "SCOPEDB_ENDPOINT":
+					case "SCOPEDB_CLI_ENDPOINT":
 						return "https://data.example.com"
-					case "SCOPEDB_API_KEY":
+					case "SCOPEDB_CLI_API_KEY":
 						return "fixture-secret"
 					}
 					return ""
@@ -246,10 +246,10 @@ func TestCatalogInvalidInput(t *testing.T) {
 }
 
 func TestCatalogRequestFailures(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
 	t.Run("invalid endpoint", func(t *testing.T) {
-		t.Setenv("SCOPEDB_ENDPOINT", "not-a-url")
-		t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+		t.Setenv("SCOPEDB_CLI_ENDPOINT", "not-a-url")
+		t.Setenv("SCOPEDB_CLI_API_KEY", "fixture-secret")
 		root := NewRoot(Dependencies{Out: io.Discard, ErrOut: io.Discard})
 		root.SetArgs([]string{"catalog", "get"})
 		err := NormalizeError(root.ExecuteContext(t.Context()))
@@ -280,9 +280,9 @@ func TestCatalogRequestFailures(t *testing.T) {
 			root := NewRoot(Dependencies{In: strings.NewReader("name: t\n"), Out: &out, ErrOut: &diagnostics,
 				Getenv: func(name string) string {
 					switch name {
-					case "SCOPEDB_ENDPOINT":
+					case "SCOPEDB_CLI_ENDPOINT":
 						return "https://data.example.com"
-					case "SCOPEDB_API_KEY":
+					case "SCOPEDB_CLI_API_KEY":
 						return "fixture-secret"
 					}
 					return ""
@@ -345,9 +345,9 @@ func TestCatalogRequestFailures(t *testing.T) {
 }
 
 func TestCatalogBrowse(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_CLI_API_KEY", "fixture-secret")
 	tableName := "Events.a/b`c\\d"
 	table := map[string]any{"name": tableName, "columns": []any{map[string]any{"name": "id", "data_type": "int"}}}
 	schema := map[string]any{"name": "public", "tables": []any{table}, "views": []any{map[string]any{"name": "recent", "statement": "from events"}}}
@@ -416,9 +416,9 @@ func TestCatalogBrowse(t *testing.T) {
 }
 
 func TestCatalogTenantApply(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_CLI_API_KEY", "fixture-secret")
 	var out, diagnostics bytes.Buffer
 	requests := 0
 	root := NewRoot(Dependencies{In: strings.NewReader("databases: []\n"), Out: &out, ErrOut: &diagnostics,
@@ -467,9 +467,9 @@ func TestCatalogScopes(t *testing.T) {
 }
 
 func TestCatalogOutput(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_CLI_API_KEY", "fixture-secret")
 	var out, diagnostics bytes.Buffer
 	writes := 0
 	result := `{"before":{"databases":[]},"after":{"databases":[{"name":"db"}]},"destructive":false}`
@@ -514,9 +514,9 @@ func TestCatalogOutput(t *testing.T) {
 }
 
 func TestCatalogRequestTimeout(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_CLI_API_KEY", "fixture-secret")
 	for _, tc := range []struct {
 		args     []string
 		timeout  time.Duration

@@ -85,18 +85,18 @@ func runQueryWithTransport(t *testing.T, transport roundTripFunc, args ...string
 
 func runQueryWithWriter(t *testing.T, transport roundTripFunc, out io.Writer, args ...string) error {
 	t.Helper()
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	t.Setenv("SCOPEDB_CONTROL_URL", "")
-	t.Setenv("SCOPEDB_CONSOLE_URL", "")
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_CONTROL_URL", "")
+	t.Setenv("SCOPEDB_CLI_CONSOLE_URL", "")
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
 	var diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
 		Out: out, ErrOut: &diagnostics,
 		Getenv: func(name string) string {
 			switch name {
-			case "SCOPEDB_ENDPOINT":
+			case "SCOPEDB_CLI_ENDPOINT":
 				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
+			case "SCOPEDB_CLI_API_KEY":
 				return "fixture-secret"
 			default:
 				return ""

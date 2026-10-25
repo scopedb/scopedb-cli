@@ -96,8 +96,8 @@ func TestOpenURLDoesNotWaitForTheBrowserToClose(t *testing.T) {
 		_, _ = release.WriteString("done\n")
 		_ = release.Close()
 	})
-	t.Setenv("SCOPEDB_TEST_BROWSER_RELEASE", fifo)
-	installBrowserLauncher(t, "read -r release < \"$SCOPEDB_TEST_BROWSER_RELEASE\"\n")
+	t.Setenv("SCOPEDB_CLI_TEST_BROWSER_RELEASE", fifo)
+	installBrowserLauncher(t, "read -r release < \"$SCOPEDB_CLI_TEST_BROWSER_RELEASE\"\n")
 	opened := make(chan error, 1)
 	go func() { opened <- openURL("https://console.example.com", os.Getenv) }()
 

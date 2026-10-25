@@ -36,8 +36,8 @@ func TestLoadPrecedence(t *testing.T) {
 	}
 	require.NoError(t, Save(paths, fileConfig))
 
-	t.Setenv("SCOPEDB_CONTROL_URL", "https://env-control.example.com/")
-	t.Setenv("SCOPEDB_CONSOLE_URL", "https://env-console.example.com/")
+	t.Setenv("SCOPEDB_CLI_CONTROL_URL", "https://env-control.example.com/")
+	t.Setenv("SCOPEDB_CLI_CONSOLE_URL", "https://env-console.example.com/")
 	cfg, err := Load(paths, Overrides{ControlURL: "https://flag-control.example.com/"})
 	require.NoError(t, err)
 	require.Equal(t, "https://flag-control.example.com", cfg.ControlURL)
@@ -52,8 +52,10 @@ console_url = "https://console.example.com"
 credential_store = "plaintext"
 `)
 	require.NoError(t, os.WriteFile(path, contents, 0o600))
-	t.Setenv("SCOPEDB_CONTROL_URL", "")
-	t.Setenv("SCOPEDB_CONSOLE_URL", "")
+	t.Setenv("SCOPEDB_CLI_CONTROL_URL", "")
+	t.Setenv("SCOPEDB_CLI_CONSOLE_URL", "")
+	t.Setenv("SCOPEDB_CONTROL_URL", "https://legacy-control.example.com")
+	t.Setenv("SCOPEDB_CONSOLE_URL", "https://legacy-console.example.com")
 	cfg, err := Load(Paths{Directory: directory, Config: path}, Overrides{})
 	require.NoError(t, err)
 	require.Equal(t, "https://control.example.com", cfg.ControlURL)
@@ -66,7 +68,8 @@ credential_store = "plaintext"
 
 func TestResolvePathsUsesOverride(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "nested")
-	t.Setenv("SCOPEDB_CONFIG_DIR", directory)
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", directory)
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 	paths, err := ResolvePaths()
 	require.NoError(t, err)
 	require.Equal(t, directory, paths.Directory)
@@ -74,7 +77,8 @@ func TestResolvePathsUsesOverride(t *testing.T) {
 }
 
 func TestResolvePathsUsesPlatformConfigDirectory(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", "")
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", "")
+	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
 	base, err := os.UserConfigDir()
 	require.NoError(t, err)
 	paths, err := ResolvePaths()

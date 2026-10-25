@@ -156,9 +156,9 @@ func TestStatusMachineCredentialsSkipTheLogin(t *testing.T) {
 		Sleep: func(time.Duration) {},
 		Getenv: func(name string) string {
 			switch name {
-			case "SCOPEDB_ENDPOINT":
+			case "SCOPEDB_CLI_ENDPOINT":
 				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
+			case "SCOPEDB_CLI_API_KEY":
 				return "machine-secret"
 			}
 			return ""

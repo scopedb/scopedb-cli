@@ -4,6 +4,10 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Breaking changes
+
+* CLI environment variables now use the `SCOPEDB_CLI_` prefix. Rename `SCOPEDB_CONFIG_DIR`, `SCOPEDB_CONTROL_URL`, `SCOPEDB_CONSOLE_URL`, `SCOPEDB_ENDPOINT`, and `SCOPEDB_API_KEY` to `SCOPEDB_CLI_CONFIG_DIR`, `SCOPEDB_CLI_CONTROL_URL`, `SCOPEDB_CLI_CONSOLE_URL`, `SCOPEDB_CLI_ENDPOINT`, and `SCOPEDB_CLI_API_KEY`, respectively. The CLI ignores the old names, so application credentials no longer override its saved login and its configuration directory variable no longer conflicts with the server's `SCOPEDB_CONFIG_*` variables. Keep the same directory value when renaming `SCOPEDB_CONFIG_DIR` to retain access to your configuration and plaintext credentials. Default storage locations and existing configuration files are unchanged. To check an application's connection with the CLI, pass its endpoint and key explicitly through the new CLI variables.
+
 ## v0.2.0 (2026-10-25)
 
 ### Breaking changes

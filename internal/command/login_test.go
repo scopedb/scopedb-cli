@@ -446,11 +446,11 @@ func TestDiscoveryRequiresPKCEAndIssuerParameter(t *testing.T) {
 func TestLoginWithoutOAuthSupportReportsGuidance(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(server.Close)
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
 	_, _, err := runInteractiveCommand(t, "--control-url", server.URL, "auth", "login", "--insecure-storage")
 	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
 	require.Contains(t, clierror.Render(err), "requires ScopeDB v0.23.0 or newer")
-	require.Contains(t, clierror.Render(err), "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
+	require.Contains(t, clierror.Render(err), "SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY")
 }
 
 func TestLoginKeepsCredentialsWhenAccountLookupFails(t *testing.T) {
@@ -897,9 +897,9 @@ func TestLogoutRejectsEnvironmentCredentials(t *testing.T) {
 	out, diagnostics, err := runCommandWith(t, Dependencies{
 		Getenv: func(name string) string {
 			switch name {
-			case "SCOPEDB_ENDPOINT":
+			case "SCOPEDB_CLI_ENDPOINT":
 				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
+			case "SCOPEDB_CLI_API_KEY":
 				return "machine-secret"
 			}
 			return ""

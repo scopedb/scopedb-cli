@@ -135,7 +135,7 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 		Use:   "use <id-or-name>",
 		Short: "Select the workspace for this login",
 		Long: "Select the workspace for this login.\n" +
-			"Data commands use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when set, regardless of this selection.",
+			"Data commands use SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY when set, regardless of this selection.",
 		Args: exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTextFormat(format); err != nil {
@@ -169,11 +169,11 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 				}
 			}
 			if _, active, machineErr := runtime.auth.MachineAccess(); machineErr != nil {
-				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands require both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY; set both or unset both to use your login workspace."); err != nil {
+				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands require both SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY; set both or unset both to use your login workspace."); err != nil {
 					return err
 				}
 			} else if active {
-				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands still use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY from the environment; unset both to use your login workspace."); err != nil {
+				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands still use SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY from the environment; unset both to use your login workspace."); err != nil {
 					return err
 				}
 			}

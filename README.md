@@ -60,7 +60,7 @@ scope query 'FROM system.tables LIMIT 10'
 
 Login does not require an interactive terminal. Authorization instructions and progress go to stderr; `--format text|json` selects the result format on stdout.
 
-Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves credentials unencrypted in a file (`0600` on Unix); `scope auth status` shows its location. `--insecure-storage` selects plaintext for that login only. For servers and CI, set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or use device authorization for a CLI login. See [headless Linux setup](docs/connect.md#use-headless-linux).
+Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves credentials unencrypted in a file (`0600` on Unix); `scope auth status` shows its location. `--insecure-storage` selects plaintext for that login only. For servers and CI, set both `SCOPEDB_CLI_ENDPOINT` and `SCOPEDB_CLI_API_KEY`, or use device authorization for a CLI login. See [headless Linux setup](docs/connect.md#use-headless-linux).
 
 Pass `--workspace <id-or-name>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account can still access it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. Use `scope workspace use <id-or-name>` to switch afterwards.
 
@@ -158,16 +158,16 @@ Run `scope --help` or `scope <command> --help` for the complete command referenc
 For CI and other non-interactive environments, set the data-plane endpoint and API key:
 
 ```sh
-export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
-export SCOPEDB_API_KEY="your-api-key"
+export SCOPEDB_CLI_ENDPOINT="https://your-workspace.example.com"
+export SCOPEDB_CLI_API_KEY="your-api-key"
 
 scope doctor
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-Both variables are required and override the saved login for queries, `auth status`, and connection checks. Setting only one fails instead of falling back to your login. Unset both to return to your logged-in workspace.
+Both variables are required and override the saved login for queries, `auth status`, and connection checks. Setting only one fails instead of falling back to your login. Unset both to return to your logged-in workspace. Application variables `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` do not configure the CLI.
 
-For SDK setup, get the endpoint with `scope workspace get` and create an application key with `scope api-key create <name>`. Use the same endpoint and key in your SDK configuration, then run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
+For SDK setup, get the endpoint with `scope workspace get` and create an application key with `scope api-key create <name>`. Pass the endpoint and key explicitly to your SDK. See the [CLI and SDK connection guide](docs/connect.md) to check application credentials with the CLI and troubleshoot connections.
 
 ## Development
 

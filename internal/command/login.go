@@ -57,7 +57,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 			"Prefers the OS keyring, with a warning and plaintext fallback if storage fails.\n" +
 			"On Linux, keyring access requires a D-Bus session and Secret Service.\n" +
 			"--insecure-storage chooses an unencrypted file for this login only.\n" +
-			"For queries without a login, set both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY.",
+			"For queries without a login, set both SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY.",
 		Example: "  scope auth login\n  scope auth login --use-device-code --no-browser",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -86,7 +86,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 				if errors.As(err, &controlErr) && controlErr.Status == http.StatusNotFound {
 					return clierror.WithHint(
 						clierror.New(clierror.ExitUsage, "CLI login requires ScopeDB v0.23.0 or newer; this deployment is older"),
-						"upgrade the platform, or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY for non-interactive access",
+						"upgrade the platform, or set SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY for non-interactive access",
 					)
 				}
 				return err
@@ -545,7 +545,7 @@ func (a *app) newLogoutCommand() *cobra.Command {
 			if _, active, machineErr := runtime.auth.MachineAccess(); machineErr != nil {
 				return machineErr
 			} else if active {
-				return clierror.WithHint(clierror.New(clierror.ExitUsage, "environment-provided API keys cannot be logged out"), "unset SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
+				return clierror.WithHint(clierror.New(clierror.ExitUsage, "environment-provided API keys cannot be logged out"), "unset SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY")
 			}
 
 			err = runtime.auth.Logout(cmd.Context())

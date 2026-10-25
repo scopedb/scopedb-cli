@@ -47,7 +47,7 @@ func TestCommandErrorsAtProcessBoundary(t *testing.T) {
 		{name: "transport", cause: errors.New("connection refused"), code: clierror.ExitTemporary, message: "connection refused"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+			t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
 			const controlURL = "https://control.example.com"
 			store := credential.NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
 			require.NoError(t, store.Save(controlURL, credential.State{
@@ -131,9 +131,9 @@ func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 	const statementID = "01989a4e-4ee2-7e63-87a5-65ac3b5161dc"
 	for _, outcome := range []string{"before_submit", "finished"} {
 		t.Run(outcome, func(t *testing.T) {
-			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-			t.Setenv("SCOPEDB_CONTROL_URL", "")
-			t.Setenv("SCOPEDB_CONSOLE_URL", "")
+			t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
+			t.Setenv("SCOPEDB_CLI_CONTROL_URL", "")
+			t.Setenv("SCOPEDB_CLI_CONSOLE_URL", "")
 			t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -143,9 +143,9 @@ func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 				Out: &out, ErrOut: &diagnostics,
 				Getenv: func(name string) string {
 					switch name {
-					case "SCOPEDB_ENDPOINT":
+					case "SCOPEDB_CLI_ENDPOINT":
 						return "https://data.example.com"
-					case "SCOPEDB_API_KEY":
+					case "SCOPEDB_CLI_API_KEY":
 						return "fixture-secret"
 					default:
 						return ""
@@ -194,9 +194,9 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestInterruptedCatalogWriteReportsUnknownOutcome(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_CLI_API_KEY", "fixture-secret")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var out, diagnostics bytes.Buffer

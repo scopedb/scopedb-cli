@@ -135,7 +135,7 @@ func TestDoctorMachineCredentials(t *testing.T) {
 		{"partial", "", 0, "must be set together"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
-			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+			t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
 			calls := 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				calls++
@@ -151,10 +151,10 @@ func TestDoctorMachineCredentials(t *testing.T) {
 			t.Cleanup(server.Close)
 			out, diagnostics, err := runCommandWith(t, Dependencies{
 				Getenv: func(name string) string {
-					if name == "SCOPEDB_ENDPOINT" {
+					if name == "SCOPEDB_CLI_ENDPOINT" {
 						return server.URL
 					}
-					if name == "SCOPEDB_API_KEY" {
+					if name == "SCOPEDB_CLI_API_KEY" {
 						return scenario.key
 					}
 					return ""
@@ -200,9 +200,9 @@ func (s doctorUnusedStore) Delete(string) error {
 }
 
 func TestDoctorCheckTimeout(t *testing.T) {
-	t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
+	t.Setenv("SCOPEDB_CLI_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_CLI_API_KEY", "fixture-secret")
 	for _, disabled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "default", true: "disabled"}[disabled], func(t *testing.T) {
 			requests := 0
@@ -234,17 +234,17 @@ func TestDoctorCheckTimeout(t *testing.T) {
 func TestDoctorTimeoutAndCancellation(t *testing.T) {
 	for _, interrupt := range []bool{false, true} {
 		t.Run(map[bool]string{false: "timeout", true: "interrupt"}[interrupt], func(t *testing.T) {
-			t.Setenv("SCOPEDB_CONFIG_DIR", t.TempDir())
+			t.Setenv("SCOPEDB_CLI_CONFIG_DIR", t.TempDir())
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var out bytes.Buffer
 			root := NewRoot(Dependencies{
 				Out: &out,
 				Getenv: func(name string) string {
-					if name == "SCOPEDB_ENDPOINT" {
+					if name == "SCOPEDB_CLI_ENDPOINT" {
 						return "https://data.example.com"
 					}
-					if name == "SCOPEDB_API_KEY" {
+					if name == "SCOPEDB_CLI_API_KEY" {
 						return "machine-secret"
 					}
 					return ""
@@ -290,7 +290,7 @@ func TestDoctorGuidesNewUsers(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, diagnostics)
 		require.Contains(t, out, "scope auth login")
-		require.Contains(t, out, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
+		require.Contains(t, out, "SCOPEDB_CLI_ENDPOINT and SCOPEDB_CLI_API_KEY")
 	}
 }
 
