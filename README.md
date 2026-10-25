@@ -87,13 +87,13 @@ scope query 'FROM system.tables LIMIT 10' --format csv > tables.csv
 
 The shell controls file replacement and permissions. Redirecting with `>` can truncate an existing file before the query runs; write to a temporary file and move it after success if you need to preserve the previous result on failure.
 
-`scope query` and the query check in `scope doctor` require ScopeDB 0.6.0 or later. Queries have no client-side wait limit by default. Use `scope query --timeout 5m` to limit waiting and attempt server cancellation when the limit expires. `--timeout 0` disables this client limit; it does not change the server's default one-hour elapsed-time limit or network timeouts. The limit covers submitting and waiting for the statement, excluding input, authentication, and output. Cancellation may take an additional five seconds.
+Queries have no client-side wait limit by default. Use `scope query --timeout 5m` to limit waiting and attempt server cancellation when the limit expires. `--timeout 0` disables this client limit; it does not change the server's default one-hour elapsed-time limit or network timeouts. The limit covers submitting and waiting for the statement, excluding input, authentication, and output. Cancellation may take an additional five seconds.
 
 Once a statement ID has been received, timeout and Ctrl+C diagnostics include it and distinguish confirmed cancellation, an already completed statement, a server failure, and an unconfirmed outcome. The command keeps its timeout or interrupt exit code and writes no query results. If the statement already completed, retrieve its result using the ID instead of rerunning a statement with side effects.
 
 ## Catalog
 
-Catalog commands require ScopeDB 0.6.0 or later. `get`, `plan`, and `apply` default to the entire tenant. Select one resource with `--database DB`, `--schema DB.SCHEMA`, `--table DB.SCHEMA.TABLE`, or `--view DB.SCHEMA.VIEW`. These scope flags are mutually exclusive and require fully qualified names. Bare names are case insensitive; use backticks to preserve case or include special characters, for example ``'scopedb.public.`Events.Daily`'``.
+`get`, `plan`, and `apply` default to the entire catalog. Select one resource with `--database DB`, `--schema DB.SCHEMA`, `--table DB.SCHEMA.TABLE`, or `--view DB.SCHEMA.VIEW`. These scope flags are mutually exclusive and require fully qualified names. Bare names are case insensitive; use backticks to preserve case or include special characters, for example ``'scopedb.public.`Events.Daily`'``.
 
 Browse resource names, then export the definition to edit:
 
@@ -147,7 +147,7 @@ scope console --format json
 
 Results go to stdout; prompts, warnings, and errors go to stderr. `scope doctor --format json` prints its report and exits nonzero if checks fail. `scope version --format json` prints machine-readable version information; `--json` is also supported.
 
-API-key revocation requires Control Plane 0.25.0 or newer. Use an ID from `scope api-key list` in scripts; unique names are accepted, and ID matches take precedence. JSON results contain `id`, `name`, and `revoked`, including when you decline confirmation. See [API key management](docs/connect.md#get-application-credentials) for permissions and interactive use.
+Use an ID from `scope api-key list` in scripts; unique names are accepted, and ID matches take precedence. JSON results contain `id`, `name`, and `revoked`, including when you decline confirmation. See [API key management](docs/connect.md#get-application-credentials) for permissions and interactive use.
 
 `scope workspace list` and `scope api-key list` accept `--limit N` to show at most N items. The default and `--limit 0` show all items. This limits displayed results without reducing the amount fetched.
 
