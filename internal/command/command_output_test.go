@@ -31,6 +31,25 @@ type failingWriter struct{ err error }
 
 func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
 
+func TestServiceURLOverridesAreHidden(t *testing.T) {
+	for _, args := range []string{
+		"--help",
+		"query --help",
+		"auth login --help",
+		"help console",
+		"__complete --",
+		"__complete auth login --",
+	} {
+		t.Run(args, func(t *testing.T) {
+			out, _, err := runCommand(t, strings.Fields(args)...)
+			require.NoError(t, err)
+			require.Contains(t, out, "--help")
+			require.NotContains(t, out, "--control-url")
+			require.NotContains(t, out, "--console-url")
+		})
+	}
+}
+
 func TestCommandsReportTableWriteFailures(t *testing.T) {
 	for _, args := range []string{"workspace list", "workspace get", "api-key list", "auth status", "doctor"} {
 		t.Run(args, func(t *testing.T) {
@@ -153,6 +172,7 @@ func TestConsoleOutput(t *testing.T) {
 		{"console query --open", "https://console.example.com/query\n", "https://console.example.com/query"},
 		{"console query --format json", `{"page":"query","url":"https://console.example.com/query","opened":false}`, ""},
 		{"console query --open --format json", `{"page":"query","url":"https://console.example.com/query","opened":true}`, "https://console.example.com/query"},
+		{"console --console-url https://override.example.com", "https://override.example.com/home\n", ""},
 	} {
 		t.Run(tc.args, func(t *testing.T) {
 			var out, diagnostics bytes.Buffer
