@@ -1,8 +1,6 @@
 module github.com/scopedb/scopedb-cli
 
-go 1.27.0
-
-toolchain go1.27.1
+go 1.27.3
 
 require (
 	github.com/go-openapi/go-yaml v0.0.0-20261001105429-c7b5c60d8490

@@ -34,7 +34,7 @@ Ensure `$HOME/.local/bin` is on your `PATH` before running `scope`.
 
 ### Install from source
 
-With Go 1.27 or newer:
+With Go 1.27.3 or newer:
 
 ```sh
 go install github.com/scopedb/scopedb-cli/cmd/scope@latest

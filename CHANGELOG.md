@@ -11,6 +11,7 @@ All significant changes to this project will be documented in this file.
 
 ### Improvements
 
+* Source installations require Go 1.27.3 or newer to include its certificate-validation security fix.
 * Hide service URL override flags from command help and shell completion.
 
 ## v0.2.0 (2026-10-25)
