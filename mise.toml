@@ -14,8 +14,8 @@
 
 [tools]
 "github:fast/hawkeye" = "7.1.0"
-go = "1.27.1"
-golangci-lint = "2.13.2"
+go = "1.27.3"
+golangci-lint = "2.15.0"
 typos = "1.50.1"
 
 [task_config]
