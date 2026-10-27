@@ -64,7 +64,7 @@ Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves 
 
 Set `SCOPEDB_HOME` to override the directory used for configuration and plaintext credentials. Otherwise, the CLI uses a `scopedb` subdirectory of your operating system's user configuration directory.
 
-Pass `--workspace <id>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account can still access it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. Use `scope workspace use <id>` to switch afterwards. Both commands require an ID from `scope workspace list`; display names are not accepted.
+Pass `--workspace <id>` to select a workspace explicitly. Without it, login keeps an accessible saved selection or selects the only eligible workspace. With several eligible workspaces, an interactive terminal prompts you to choose; otherwise login succeeds without a target. Run `scope workspace use` for an interactive picker, or `scope workspace use <id>` for scripts. Explicit workspace arguments accept IDs from `scope workspace list`, not display names.
 
 A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status and create your first workspace in the Console. Once a workspace is available, select it without logging in again:
 
@@ -74,9 +74,34 @@ scope workspace use <id>
 scope auth status
 ```
 
-The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. Workspaces shared with you appear in `scope workspace list` alongside the ones you own; select either with `scope workspace use <id>`. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
+The workspace selection is stored locally for the resolved connection and survives logout. Terminals using the same connection share its default; commands already running keep their resolved target. Workspaces shared with you appear in `scope workspace list` alongside the ones you own; select either with `scope workspace use <id>`. `scope auth status` shows the connection, credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
 
 `scope console [page]` provides shortcuts to Console pages: `home` (default), `query`, `data`, `keys`, and `connect`. For example, `scope console query` prints the query page URL; add `--open` to also open it in your browser.
+
+## Manage connections
+
+Save OAuth and API key connections, and select one for each command or terminal:
+
+```sh
+scope auth login --connection development --workspace <workspace-id>
+export APP_API_KEY="your-api-key"
+scope connection add automation --auth-type api_key --endpoint https://api.example.com --api-key-env APP_API_KEY
+scope connection list
+scope connection set-default development
+scope --connection automation query 'SELECT 1 AS ready'
+scope --connection development --workspace <another-workspace-id> query 'SELECT 1 AS ready'
+scope connection remove automation --yes
+```
+
+Selection precedence is `--connection` (`-c`), `SCOPEDB_CONNECTION`, paired `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` as a temporary connection, then the saved default. An explicitly selected connection ignores the generic endpoint/key variables and never falls back to another identity. A partial temporary pair fails. Single-command and environment selection do not change the saved default.
+
+Each OAuth connection has an independent login and default workspace. `--workspace <id>` overrides the target for one workspace-scoped command; `auth login --workspace <id>` and `workspace use <id>` save it.
+
+OAuth discovers the data service endpoint for the selected workspace through the control plane. API key connections save an endpoint and use the workspace authorized by their key; they do not support workspace overrides or control-plane management. An endpoint is a service address, not a workspace identifier, and multiple workspaces can share it.
+
+`auth logout` retains OAuth connection settings; `connection remove` revokes its OAuth login before deleting it, or forgets a local API key without revoking the key on the service. Removing the default leaves no default selected.
+
+Use `--api-key-stdin` instead of `--api-key-env` to save a key in the credential store. `connection list` displays saved information; `auth status` reports the selected authentication source and verifies OAuth logins, and `doctor` tests data access. See [connections and migration](docs/connect.md#manage-connections) for configuration, storage, and migration details.
 
 ## Query output
 
@@ -160,14 +185,14 @@ Run `scope --help` or `scope <command> --help` for the complete command referenc
 For CI and other non-interactive environments, set the data-plane endpoint and API key:
 
 ```sh
-export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
+export SCOPEDB_ENDPOINT="https://api.example.com"
 export SCOPEDB_API_KEY="your-api-key"
 
 scope doctor
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-Both variables are required and override the saved login for queries, `auth status`, and connection checks. Setting only one fails instead of falling back to your login. Unset both to return to your logged-in workspace.
+Without an explicit `--connection` or `SCOPEDB_CONNECTION`, these variables select a temporary API key connection ahead of the saved default. Both variables are required; a partial pair fails. Unset both or explicitly select an OAuth connection to return to your logged-in workspace.
 
 For SDK setup, get the endpoint with `scope workspace get` and create an application key with `scope api-key create <name>`. Use the same endpoint and key in your SDK configuration, then run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
 

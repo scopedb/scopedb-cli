@@ -131,7 +131,7 @@ func TestDoctorMachineCredentials(t *testing.T) {
 		want   string
 	}{
 		{"valid", "machine-secret", http.StatusOK, ""},
-		{"unauthorized", "machine-secret", http.StatusUnauthorized, "same workspace"},
+		{"unauthorized", "machine-secret", http.StatusUnauthorized, "key's workspace"},
 		{"partial", "", 0, "must be set together"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
@@ -159,7 +159,7 @@ func TestDoctorMachineCredentials(t *testing.T) {
 					}
 					return ""
 				},
-				CredentialStore: func(string, config.Paths) (credential.Store, error) {
+				CredentialStore: func(string, config.Paths, string) (credential.Store, error) {
 					return doctorUnusedStore{t: t}, nil
 				},
 			}, "doctor", "--format", "json")

@@ -25,7 +25,6 @@ import (
 
 	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
-	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/oauth"
 	"github.com/spf13/cobra"
@@ -43,7 +42,7 @@ const (
 
 func (a *app) newLoginCommand() *cobra.Command {
 	var insecureStorage, noBrowser, useDeviceCode bool
-	var format, workspace string
+	var format string
 	command := &cobra.Command{
 		Use:   "login",
 		Short: "Log in through the ScopeDB Console",
@@ -51,8 +50,9 @@ func (a *app) newLoginCommand() *cobra.Command {
 			"Opens your browser and completes the login through a callback on this device. If the browser\n" +
 			"does not open, open the printed URL on the same device. Use --use-device-code to approve\n" +
 			"from another device, or --no-browser to skip opening a browser automatically in either flow.\n\n" +
-			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
-			"name and ID. Use 'scope workspace use <id>' to switch afterwards.\n" +
+			"Keeps an accessible saved workspace, or selects the only eligible workspace. With several\n" +
+			"workspaces, prompts on an interactive terminal; otherwise saves the login without a target.\n" +
+			"Use --workspace <id> or 'scope workspace use [id]' to select a workspace.\n" +
 			"Login does not require an interactive terminal.\n\n" +
 			"Prefers the OS keyring, with a warning and plaintext fallback if storage fails.\n" +
 			"On Linux, keyring access requires a D-Bus session and Secret Service.\n" +
@@ -64,11 +64,14 @@ func (a *app) newLoginCommand() *cobra.Command {
 			if err := validateTextFormat(format); err != nil {
 				return err
 			}
+			if cmd.Flags().Changed("workspace") && strings.TrimSpace(a.workspaceFlag) == "" {
+				return usageError("--workspace requires a workspace ID")
+			}
 			paths, cfg, err := a.loadConfig(cmd)
 			if err != nil {
 				return err
 			}
-			runtime, err := a.newRuntime(paths, cfg)
+			runtime, err := a.newRuntime(cmd.Context(), paths, cfg)
 			if err != nil {
 				return err
 			}
@@ -105,8 +108,11 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return err
 			}
 
-			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, workspace)
+			selection, err := a.selectLoginWorkspace(cmd.Context(), runtime, a.workspaceFlag)
 			if err != nil {
+				return err
+			}
+			if err := a.warnMachineOverride(); err != nil {
 				return err
 			}
 			if format == structuredFormatJSON {
@@ -124,7 +130,6 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
-	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace by ID; defaults to the first available workspace by ID")
 	command.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open the browser automatically")
 	command.Flags().BoolVar(&useDeviceCode, "use-device-code", false, "use a device code to approve login from any device")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store this login's credentials unencrypted in a file")
@@ -217,17 +222,20 @@ func (a *app) selectLoginWorkspace(ctx context.Context, runtime *runtimeContext,
 		selection.workspace = &workspace
 		selection.kept = true
 	default:
-		for _, workspace := range account.Workspaces {
-			if workspace.ScheduledForDeletion() {
-				continue
+		eligible := eligibleWorkspaces(account.Workspaces)
+		switch {
+		case len(eligible) == 1:
+			selection.workspace = &eligible[0]
+		case len(eligible) > 1 && a.isInputTerminal() && a.isErrorTerminal():
+			workspace, err := a.pickWorkspace(ctx, eligible)
+			if err != nil {
+				return loginSelection{}, workspaceSelectionError(err, "")
 			}
-			if selection.workspace == nil || workspace.ID < selection.workspace.ID {
-				selection.workspace = &workspace
-			}
+			selection.workspace = &workspace
 		}
 		if selection.workspace != nil {
 			if err := runtime.auth.SelectWorkspace(ctx, selection.workspace.ID); err != nil {
-				return loginSelection{}, err
+				return loginSelection{}, workspaceSelectionError(err, selection.workspace.ID)
 			}
 		}
 	}
@@ -243,9 +251,17 @@ func workspaceSelectionError(err error, requested string) error {
 	result := NormalizeError(err)
 	var failure *clierror.Error
 	if errors.As(result, &failure) {
-		failure.Message = fmt.Sprintf("login saved, but workspace %s was not selected: %s", requested, failure.Message)
+		if requested == "" {
+			failure.Message = "login saved, but no workspace was selected: " + failure.Message
+		} else {
+			failure.Message = fmt.Sprintf("login saved, but workspace %s was not selected: %s", requested, failure.Message)
+		}
 		if failure.Hint == "" {
-			failure.Hint = fmt.Sprintf("run 'scope workspace use %s'", requested)
+			if requested == "" {
+				failure.Hint = "run 'scope workspace use <id>' to select a workspace"
+			} else {
+				failure.Hint = fmt.Sprintf("run 'scope workspace use %s'", requested)
+			}
 		}
 	}
 	return result
@@ -483,7 +499,7 @@ func describeAuthorizationError(callback oauth.Callback) string {
 }
 
 func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.TokenSet) error {
-	savedPrevious, savedFound, writtenAccessToken, saveErr := r.auth.SaveLogin(ctx, tokens)
+	saveErr := r.auth.SaveLogin(ctx, tokens)
 	if saveErr != nil {
 		r.revokeIssuedLogin(tokens)
 		if ctx.Err() != nil {
@@ -495,24 +511,15 @@ func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.T
 		if errors.Is(saveErr, auth.ErrAlreadyLoggedIn) {
 			return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "another login completed while authorization was in progress", saveErr), "run 'scope auth status' to inspect it, or 'scope auth logout' before logging in again")
 		}
+		if errors.Is(saveErr, auth.ErrConfigurationWrite) {
+			return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but configuration could not be stored", saveErr)
+		}
 		if errors.Is(saveErr, auth.ErrCredentialsUnreadable) {
 			return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but existing credentials could not be read", saveErr)
 		}
 		return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", saveErr)
 	}
-	if err := config.Save(r.paths, r.config); err == nil {
-		return nil
-	} else {
-		result := clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "login succeeded, but configuration could not be stored", err), "check config directory access and retry")
-		rollbackErr := r.auth.RestoreLogin(ctx, savedPrevious, savedFound, writtenAccessToken)
-		r.revokeIssuedLogin(tokens)
-		if rollbackErr != nil {
-			result.Message += " and previous credentials could not be restored"
-			result.Err = errors.Join(result.Err, rollbackErr)
-			result.Hint = "check config and credential store access before retrying"
-		}
-		return result
-	}
+	return nil
 }
 
 // revokeIssuedLogin tries to revoke a login the CLI could not store.
@@ -543,11 +550,6 @@ func (a *app) newLogoutCommand() *cobra.Command {
 			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return err
-			}
-			if _, active, machineErr := runtime.auth.MachineAccess(); machineErr != nil {
-				return machineErr
-			} else if active {
-				return clierror.WithHint(clierror.New(clierror.ExitUsage, "environment-provided API keys cannot be logged out"), "unset SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 			}
 
 			err = runtime.auth.Logout(cmd.Context())

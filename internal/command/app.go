@@ -39,7 +39,7 @@ import (
 	"golang.org/x/term"
 )
 
-type credentialFactory func(string, config.Paths) (credential.Store, error)
+type credentialFactory func(string, config.Paths, string) (credential.Store, error)
 
 // Dependencies configures the process boundaries used by the command tree.
 type Dependencies struct {
@@ -57,21 +57,26 @@ type Dependencies struct {
 }
 
 type app struct {
-	in                io.Reader
-	input             *bufio.Reader
-	out               io.Writer
-	errOut            io.Writer
-	httpClient        *http.Client
-	query             *dataplane.QueryService
-	credentialFactory credentialFactory
-	isInputTerminal   func() bool
-	isErrorTerminal   func() bool
-	openURL           func(string) error
-	now               func() time.Time
-	sleep             func(time.Duration)
-	getenv            func(string) string
-	controlURLFlag    string
-	consoleURLFlag    string
+	explicitConnection bool
+	machineMode        bool
+	in                 io.Reader
+	input              *bufio.Reader
+	out                io.Writer
+	errOut             io.Writer
+	httpClient         *http.Client
+	query              *dataplane.QueryService
+	credentialFactory  credentialFactory
+	isInputTerminal    func() bool
+	isErrorTerminal    func() bool
+	openURL            func(string) error
+	now                func() time.Time
+	sleep              func(time.Duration)
+	getenv             func(string) string
+	controlURLFlag     string
+	consoleURLFlag     string
+	connectionFlag     string
+	workspaceFlag      string
+	resolvedConnection string
 }
 
 type runtimeContext struct {
@@ -161,11 +166,42 @@ func newApp(deps Dependencies) *app {
 }
 
 func (a *app) loadConfig(cmd *cobra.Command) (config.Paths, config.Config, error) {
+	explicit := cmd.Root().PersistentFlags().Changed("connection") || strings.TrimSpace(a.getenv("SCOPEDB_CONNECTION")) != ""
+	a.explicitConnection = explicit
+	a.machineMode = !explicit && (strings.TrimSpace(a.getenv("SCOPEDB_ENDPOINT")) != "" || strings.TrimSpace(a.getenv("SCOPEDB_API_KEY")) != "")
 	paths, err := config.ResolvePaths()
 	if err != nil {
 		return config.Paths{}, config.Config{}, err
 	}
-	overrides := config.Overrides{}
+	if a.machineMode {
+		return paths, config.Config{ControlURL: config.DefaultControlURL, ConsoleURL: config.DefaultConsoleURL,
+			Temporary: true, SelectedConnection: config.Connection{AuthType: config.AuthAPIKey}}, nil
+	}
+	// Migrate the old default before creating a named connection, so changing the
+	// requested name cannot transfer an existing grant to that new environment.
+	saved, err := config.Read(paths)
+	if err != nil {
+		return config.Paths{}, config.Config{}, err
+	}
+	if len(saved.Connections) == 0 && !a.machineMode && cmd.CommandPath() != "scope console" {
+		legacy, err := config.Load(paths, config.Overrides{})
+		if err != nil {
+			return config.Paths{}, config.Config{}, err
+		}
+		if _, err := a.newRuntime(cmd.Context(), paths, legacy); err != nil {
+			if cmd.Name() == "login" {
+				return config.Paths{}, config.Config{}, clierror.Wrap(clierror.ExitGeneral, "existing credentials could not be read", err)
+			}
+			return config.Paths{}, config.Config{}, err
+		}
+	}
+	overrides := config.Overrides{Connection: strings.TrimSpace(a.getenv("SCOPEDB_CONNECTION")), AllowCreate: cmd.Name() == "login"}
+	if cmd.Root().PersistentFlags().Changed("connection") {
+		if err := config.ValidateConnectionName(a.connectionFlag); err != nil {
+			return config.Paths{}, config.Config{}, usageError(err.Error())
+		}
+		overrides.Connection = a.connectionFlag
+	}
 	flags := cmd.Root().PersistentFlags()
 	if flags.Changed("control-url") {
 		overrides.ControlURL = a.controlURLFlag
@@ -177,20 +213,21 @@ func (a *app) loadConfig(cmd *cobra.Command) (config.Paths, config.Config, error
 	if err != nil {
 		return config.Paths{}, config.Config{}, err
 	}
+	a.resolvedConnection = cfg.ConnectionName
 	return paths, cfg, nil
 }
 
-func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext, error) {
+func (a *app) newRuntime(ctx context.Context, paths config.Paths, cfg config.Config) (*runtimeContext, error) {
 	build := version.Current()
 	control, err := controlplane.NewClient(cfg.ControlURL, "scope/"+build.Version, a.httpClient)
 	if err != nil {
 		return nil, err
 	}
-	keyring, err := a.credentialFactory(credential.SourceKeyring, paths)
+	keyring, err := a.credentialFactory(credential.SourceKeyring, paths, config.CredentialReference(paths, cfg.ConnectionName))
 	if err != nil {
 		return nil, err
 	}
-	plaintext, err := a.credentialFactory(credential.SourcePlaintext, paths)
+	plaintext, err := a.credentialFactory(credential.SourcePlaintext, paths, config.CredentialReference(paths, cfg.ConnectionName))
 	if err != nil {
 		return nil, err
 	}
@@ -203,7 +240,7 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 			}
 			_, _ = fmt.Fprintf(a.errOut, "Warning: credentials are stored unencrypted in %s.\n", paths.CredentialsFile)
 			if cleanup != nil {
-				_, _ = fmt.Fprintln(a.errOut, "Warning: OS keyring cleanup could not be verified. Restore keyring access and run 'scope auth logout' to clean it up.")
+				_, _ = fmt.Fprintln(a.errOut, "Warning: OS keyring cleanup could not be verified. Restore keyring access before removing stale credentials.")
 			}
 		},
 	}
@@ -213,15 +250,25 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 		control:     control,
 		credentials: credentials,
 	}
+	if !cfg.ConnectionExists && !a.machineMode {
+		if err := a.migrateConnection(ctx, runtime); err != nil {
+			return nil, err
+		}
+	}
 	runtime.auth = &auth.Manager{
-		ControlURL:  cfg.ControlURL,
-		Control:     control,
-		OAuth:       runtime,
-		Credentials: credentials,
-		LockFile:    paths.LockFile,
-		Now:         a.now,
-		Sleep:       a.sleep,
-		Getenv:      a.getenv,
+		ConnectionName:    runtime.config.ConnectionName,
+		Connection:        &runtime.config.SelectedConnection,
+		Paths:             paths,
+		Temporary:         cfg.Temporary,
+		ConnectionExisted: runtime.config.ConnectionExists,
+		ControlURL:        cfg.ControlURL,
+		Control:           control,
+		OAuth:             runtime,
+		Credentials:       credentials,
+		LockFile:          paths.LockFile,
+		Now:               a.now,
+		Sleep:             a.sleep,
+		Getenv:            a.getenv,
 	}
 	return runtime, nil
 }
@@ -231,7 +278,28 @@ func (a *app) runtime(cmd *cobra.Command) (*runtimeContext, error) {
 	if err != nil {
 		return nil, err
 	}
-	return a.newRuntime(paths, cfg)
+	runtime, err := a.newRuntime(cmd.Context(), paths, cfg)
+	if err != nil {
+		return nil, err
+	}
+	runtime.auth.WorkspaceOverride = a.workspaceFlag
+	if a.workspaceFlag != "" && runtime.config.SelectedConnection.AuthType == config.AuthAPIKey {
+		return nil, usageError("--workspace requires an OAuth connection; an API key's workspace is determined by the key")
+	}
+	if !usesDataCredentials(cmd) {
+		if err := runtime.auth.RequireOAuth(); err != nil {
+			return nil, err
+		}
+	}
+	return runtime, nil
+}
+
+func usesDataCredentials(cmd *cobra.Command) bool {
+	switch cmd.CommandPath() {
+	case "scope auth status", "scope doctor", "scope query":
+		return true
+	}
+	return strings.HasPrefix(cmd.CommandPath(), "scope catalog ")
 }
 
 // A zero timeout preserves parent cancellation without adding a deadline.
@@ -324,10 +392,63 @@ const keyringAccessHint = "restore OS keyring access; for queries without a keyr
 	"or explicitly use 'scope auth login --insecure-storage' to store login credentials unencrypted in a 0600 file " +
 	"(add --use-device-code --no-browser on headless hosts)"
 
+type connectionError struct {
+	name string
+	err  error
+}
+
+func (e *connectionError) Error() string { return e.err.Error() }
+func (e *connectionError) Unwrap() error { return e.err }
+
+// Keep follow-up commands on the same connection, particularly logout instructions.
+func (a *app) bindConnectionErrors(cmd *cobra.Command) {
+	for _, child := range cmd.Commands() {
+		a.bindConnectionErrors(child)
+	}
+	if run := cmd.RunE; run != nil {
+		cmd.RunE = func(command *cobra.Command, args []string) error {
+			err := run(command, args)
+			if err == nil || a.resolvedConnection == "" {
+				return err
+			}
+			if a.resolvedConnection == "default" && !command.Root().PersistentFlags().Changed("connection") && a.getenv("SCOPEDB_CONNECTION") == "" {
+				return err
+			}
+			return &connectionError{name: a.resolvedConnection, err: err}
+		}
+	}
+}
+
 // NormalizeError maps domain and HTTP errors to the public CLI exit contract.
 func NormalizeError(err error) error {
 	if err == nil {
 		return nil
+	}
+	var scoped *connectionError
+	if errors.As(err, &scoped) {
+		normalized := NormalizeError(scoped.err)
+		var failure *clierror.Error
+		if errors.As(normalized, &failure) {
+			copy := *failure
+			parts := strings.Split(copy.Hint, "'")
+			for i := 1; i < len(parts); i += 2 {
+				if strings.HasPrefix(parts[i], "scope ") && !strings.Contains(parts[i], "--connection") {
+					parts[i] = "scope --connection " + scoped.name + strings.TrimPrefix(parts[i], "scope")
+				}
+			}
+			copy.Hint = strings.Join(parts, "'")
+			if errors.Is(scoped.err, auth.ErrNotLoggedIn) {
+				copy.Message = fmt.Sprintf("not logged in to connection %q", scoped.name)
+			}
+			return &copy
+		}
+		return normalized
+	}
+	if errors.Is(err, auth.ErrOAuthRequired) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, err.Error(), err), "select an OAuth connection with --connection; use connection remove to forget an API key connection")
+	}
+	if errors.Is(err, config.ErrUnknownConnection) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, err.Error(), err), "run 'scope connection list' or create the connection with 'scope auth login --connection <name>'")
 	}
 	var cleanup *auth.LogoutCleanupError
 	if errors.As(err, &cleanup) {
@@ -338,6 +459,10 @@ func NormalizeError(err error) error {
 			failure.Hint = "the login stays valid until it expires or is revoked in the Console"
 		}
 		return result
+	}
+	var migrationKeyring *credential.KeyringError
+	if errors.Is(err, errLegacyMigration) && errors.As(err, &migrationKeyring) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "could not check or migrate legacy credentials", err), "restore OS keyring access and retry; for queries without migrating, set both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 	}
 	var ready *clierror.Error
 	var keyringErr *credential.KeyringError

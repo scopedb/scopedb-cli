@@ -132,14 +132,24 @@ func workspaceStatus(workspace controlplane.Workspace) string {
 func (a *app) newWorkspaceUseCommand() *cobra.Command {
 	var format string
 	command := &cobra.Command{
-		Use:   "use <id>",
-		Short: "Select the workspace for this login by ID",
-		Long: "Select the workspace for this login by ID. Run 'scope workspace list' to find its ID.\n" +
+		Use:   "use [id]",
+		Short: "Select the workspace for this connection by ID",
+		Long: "Select the workspace for this connection by ID, or omit the ID for an interactive picker.\n" +
+			"Run 'scope workspace list' to find workspace IDs.\n" +
 			"Data commands use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when set, regardless of this selection.",
-		Args: exactArgs(1),
+		Args: func(_ *cobra.Command, args []string) error {
+			if len(args) > 1 {
+				return usageError("expected at most one workspace ID")
+			}
+			return nil
+		},
+		ValidArgsFunction: a.completeWorkspaces,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validateTextFormat(format); err != nil {
 				return err
+			}
+			if len(args) == 0 && (!a.isInputTerminal() || !a.isErrorTerminal()) {
+				return usageError("workspace ID is required without an interactive terminal; run 'scope workspace list'")
 			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
@@ -152,7 +162,12 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 			if len(account.Workspaces) == 0 {
 				return auth.RequireWorkspace(account)
 			}
-			workspace, err := resolveWorkspaceID(account.Workspaces, args[0])
+			var workspace controlplane.Workspace
+			if len(args) == 0 {
+				workspace, err = a.pickWorkspace(cmd.Context(), account.Workspaces)
+			} else {
+				workspace, err = resolveWorkspaceID(account.Workspaces, args[0])
+			}
 			if err != nil {
 				return err
 			}
@@ -163,19 +178,11 @@ func (a *app) newWorkspaceUseCommand() *cobra.Command {
 				)
 			}
 			changed := workspace.ID != account.SelectedWorkspaceID
-			if changed {
-				if err := runtime.auth.SelectWorkspace(cmd.Context(), workspace.ID); err != nil {
-					return err
-				}
+			if err := runtime.auth.SelectWorkspace(cmd.Context(), workspace.ID); err != nil {
+				return err
 			}
-			if _, active, machineErr := runtime.auth.MachineAccess(); machineErr != nil {
-				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands require both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY; set both or unset both to use your login workspace."); err != nil {
-					return err
-				}
-			} else if active {
-				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands still use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY from the environment; unset both to use your login workspace."); err != nil {
-					return err
-				}
+			if err := a.warnMachineOverride(); err != nil {
+				return err
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, workspaceUseResult{ID: workspace.ID, DisplayName: workspace.DisplayName, Changed: changed})

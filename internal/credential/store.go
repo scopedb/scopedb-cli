@@ -26,7 +26,7 @@ import (
 
 // Version 1 held a browser session token that an OAuth login can never use, so an older document is
 // invalid rather than migrated.
-const currentStateVersion = 2
+const currentStateVersion = 3
 
 const (
 	SourceKeyring   = "keyring"
@@ -40,6 +40,12 @@ var ErrNotFound = errors.New("credentials not found")
 var ErrInvalidState = errors.New("stored credential state is invalid")
 
 type State struct {
+	CredentialID string `json:"credential_id,omitempty"`
+	LoginID      string `json:"login_id,omitempty"`
+	APIKey       string `json:"api_key,omitempty"`
+	// MigratedTo claims a legacy record before moving it, so interrupted migrations
+	// resume only for the owning profile and never duplicate rotating credentials.
+	MigratedTo string `json:"migrated_to,omitempty"`
 	// Source is resolved on load, never persisted. Updates keep this destination;
 	// a new login has no source and chooses its destination independently.
 	Source string `json:"-"`
@@ -58,7 +64,7 @@ type State struct {
 	DataTokenExpiresAt    time.Time `json:"data_token_expires_at,omitempty"`
 }
 
-// Store persists credentials for one or more control-plane origins.
+// Store persists credentials for a bound profile, validating its control-plane origin.
 type Store interface {
 	Load(controlURL string) (State, error)
 	Save(controlURL string, state State) error
@@ -66,31 +72,38 @@ type Store interface {
 }
 
 // New returns one credential backend without accessing it.
-func New(kind string, paths config.Paths) (Store, error) {
+func New(kind string, paths config.Paths, reference string) (Store, error) {
 	switch kind {
 	case SourceKeyring:
-		return NewKeyringStore(), nil
+		return NewKeyringStore(reference), nil
 	case SourcePlaintext:
-		return NewPlaintextStore(paths.CredentialsFile), nil
+		return NewPlaintextStore(paths.CredentialsFile, reference), nil
 	default:
 		return nil, fmt.Errorf("unsupported credential store %q", kind)
 	}
 }
 
-func prepare(controlURL string, state State) State {
+func prepare(controlURL, reference string, state State) State {
 	state.Version = currentStateVersion
+	state.CredentialID = reference
 	state.ControlURL = controlURL
 	return state
 }
 
-func validate(controlURL string, state State) error {
-	if state.Version != currentStateVersion {
+func validate(controlURL, reference string, state State) error {
+	if state.Version != currentStateVersion && (reference != "" || state.Version != 2) {
 		return fmt.Errorf("%w: unsupported version %d; log in again", ErrInvalidState, state.Version)
 	}
-	if state.ControlURL != controlURL {
+	if state.ControlURL != controlURL || state.CredentialID != reference {
 		return fmt.Errorf("%w: credential origin mismatch", ErrInvalidState)
 	}
 	if state.Cleared && state.AccessToken == "" && state.RefreshToken == "" && state.DataToken == "" {
+		return nil
+	}
+	if state.APIKey != "" {
+		if state.AccessToken != "" || state.RefreshToken != "" {
+			return fmt.Errorf("%w: mixed authentication credentials", ErrInvalidState)
+		}
 		return nil
 	}
 	if state.AccessToken == "" {
@@ -102,7 +115,10 @@ func validate(controlURL string, state State) error {
 	return nil
 }
 
-func profileKey(controlURL string) string {
+func profileKey(controlURL, reference string) string {
+	if reference != "" {
+		controlURL += "\x00" + reference
+	}
 	digest := sha256.Sum256([]byte(controlURL))
 	return hex.EncodeToString(digest[:])
 }

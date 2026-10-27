@@ -16,6 +16,7 @@ package auth
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,12 +24,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/scopedb/scopedb-cli/internal/filelock"
 )
 
 var (
+	ErrOAuthRequired         = errors.New("this operation requires an OAuth connection")
 	ErrNotLoggedIn           = errors.New("not logged in")
 	ErrAlreadyLoggedIn       = errors.New("a renewable login is already stored")
 	ErrInvalidMachineEnv     = errors.New("invalid machine credentials")
@@ -38,6 +41,7 @@ var (
 	ErrWorkspaceUnavailable  = errors.New("selected workspace is no longer available")
 	ErrLoginExpired          = errors.New("login is no longer valid")
 	ErrCredentialsUnreadable = errors.New("existing credentials could not be read")
+	ErrConfigurationWrite    = errors.New("configuration could not be stored")
 )
 
 const (
@@ -73,22 +77,32 @@ type CredentialStore interface {
 }
 
 type Manager struct {
-	ControlURL  string
-	Control     ControlPlane
-	OAuth       OAuthClient
-	Credentials CredentialStore
-	LockFile    string
-	Now         func() time.Time
-	Sleep       func(time.Duration)
-	Getenv      func(string) string
+	ConnectionName    string
+	Connection        *config.Connection
+	Paths             config.Paths
+	Temporary         bool
+	ConnectionExisted bool
+	WorkspaceOverride string
+	loginID           string
+	loginPinned       bool
+	workspaces        []controlplane.Workspace
+	ControlURL        string
+	Control           ControlPlane
+	OAuth             OAuthClient
+	Credentials       CredentialStore
+	LockFile          string
+	Now               func() time.Time
+	Sleep             func(time.Duration)
+	Getenv            func(string) string
 }
 
 // Access contains everything needed to connect to the data plane.
 type Access struct {
-	Endpoint    string
-	APIKey      string
-	WorkspaceID string
-	Mode        string
+	Endpoint         string
+	APIKey           string
+	WorkspaceID      string
+	Mode             string
+	CredentialSource string
 }
 
 type Account struct {
@@ -120,7 +134,34 @@ func (m *Manager) getenv(name string) string {
 }
 
 // A partial environment is rejected instead of falling through to a human login.
+func (m *Manager) RequireOAuth() error {
+	if m.Temporary || (m.Connection != nil && m.Connection.AuthType == config.AuthAPIKey) {
+		return ErrOAuthRequired
+	}
+	return nil
+}
+
 func (m *Manager) MachineAccess() (Access, bool, error) {
+	if m.Connection != nil && !m.Temporary {
+		if m.Connection.AuthType != config.AuthAPIKey {
+			return Access{}, false, nil
+		}
+		c := m.Connection
+		access := Access{Endpoint: c.Endpoint, Mode: "api_key"}
+		if c.APIKeyEnv != "" {
+			access.APIKey, access.CredentialSource = strings.TrimSpace(m.getenv(c.APIKeyEnv)), "environment"
+		} else {
+			state, err := m.Credentials.Load(c.Endpoint)
+			if err != nil {
+				return Access{}, true, fmt.Errorf("read API key credentials: %w", err)
+			}
+			access.APIKey, access.CredentialSource = state.APIKey, state.Source
+		}
+		if access.APIKey == "" {
+			return Access{}, true, errors.New("selected connection has no API key")
+		}
+		return access, true, nil
+	}
 	endpoint := strings.TrimSpace(m.getenv("SCOPEDB_ENDPOINT"))
 	apiKey := strings.TrimSpace(m.getenv("SCOPEDB_API_KEY"))
 	if endpoint == "" && apiKey == "" {
@@ -129,11 +170,18 @@ func (m *Manager) MachineAccess() (Access, bool, error) {
 	if endpoint == "" || apiKey == "" {
 		return Access{}, false, fmt.Errorf("%w: SCOPEDB_ENDPOINT and SCOPEDB_API_KEY must be set together", ErrInvalidMachineEnv)
 	}
-	return Access{Endpoint: endpoint, APIKey: apiKey, Mode: "api_key"}, true, nil
+	endpoint, err := config.NormalizeEndpoint(endpoint)
+	if err != nil {
+		return Access{}, false, fmt.Errorf("%w: invalid SCOPEDB_ENDPOINT", ErrInvalidMachineEnv)
+	}
+	return Access{Endpoint: endpoint, APIKey: apiKey, Mode: "api_key", CredentialSource: "environment"}, true, nil
 }
 
 // RenewableLogin reports the stored login that can still be renewed, without refreshing it.
 func (m *Manager) RenewableLogin() (credential.State, bool, error) {
+	if err := m.RequireOAuth(); err != nil {
+		return credential.State{}, false, err
+	}
 	state, err := m.load()
 	var keyringErr *credential.KeyringError
 	switch {
@@ -153,6 +201,9 @@ func (m *Manager) RenewableLogin() (credential.State, bool, error) {
 }
 
 func (m *Manager) LoadAccess(ctx context.Context) (credential.State, error) {
+	if err := m.RequireOAuth(); err != nil {
+		return credential.State{}, err
+	}
 	state, err := m.load()
 	if err != nil {
 		return credential.State{}, err
@@ -163,7 +214,7 @@ func (m *Manager) LoadAccess(ctx context.Context) (credential.State, error) {
 	return m.refresh(ctx, state)
 }
 
-func (m *Manager) load() (credential.State, error) {
+func (m *Manager) loadCredential() (credential.State, error) {
 	state, err := m.Credentials.Load(m.ControlURL)
 	if errors.Is(err, credential.ErrNotFound) || errors.Is(err, credential.ErrInvalidState) {
 		return credential.State{}, ErrNotLoggedIn
@@ -171,15 +222,30 @@ func (m *Manager) load() (credential.State, error) {
 	if err != nil {
 		return credential.State{}, err
 	}
+	if m.loginPinned && state.LoginID != m.loginID {
+		return credential.State{}, ErrLoginExpired
+	}
+	m.loginID, m.loginPinned = state.LoginID, true
 	return state, nil
 }
 
-// The selection survives a login, because signing in again does not change which workspace the profile uses.
+func (m *Manager) load() (credential.State, error) {
+	state, err := m.loadCredential()
+	if m.Connection != nil {
+		state.WorkspaceID = m.Connection.WorkspaceID
+	}
+	return state, err
+}
+
+// The selection survives a login, because signing in again does not change which workspace the connection uses.
 // The lock serializes login with refresh and prevents replacing a concurrent login.
-func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (credential.State, bool, string, error) {
+func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) error {
+	if err := m.RequireOAuth(); err != nil {
+		return err
+	}
 	lock, err := filelock.Acquire(ctx, m.LockFile)
 	if err != nil {
-		return credential.State{}, false, "", err
+		return err
 	}
 	defer func() { _ = lock.Close() }()
 
@@ -190,46 +256,52 @@ func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (
 	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState), errors.As(err, &keyringErr):
 		previous = credential.State{}
 	case err != nil:
-		return credential.State{}, false, "", fmt.Errorf("%w: %w", ErrCredentialsUnreadable, err)
+		return fmt.Errorf("%w: %w", ErrCredentialsUnreadable, err)
 	}
 	if previousFound && (previous.RefreshTokenExpiresAt.IsZero() || previous.RefreshTokenExpiresAt.After(m.now())) {
-		return credential.State{}, false, "", ErrAlreadyLoggedIn
+		return ErrAlreadyLoggedIn
 	}
 	state, err := m.tokenState(credential.State{}, tokens)
 	if err != nil {
-		return credential.State{}, false, "", err
+		return err
 	}
 	state.WorkspaceID = previous.WorkspaceID
+	state.LoginID = rand.Text()
+	if m.Connection != nil {
+		cfg, err := config.Read(m.Paths)
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrConfigurationWrite, err)
+		}
+		if m.ConnectionExisted {
+			if _, ok := cfg.Connections[m.ConnectionName]; !ok {
+				return config.ErrUnknownConnection
+			}
+		}
+		if saved, ok := cfg.Connections[m.ConnectionName]; ok {
+			if saved.ControlURL != m.ControlURL {
+				return fmt.Errorf("connection service changed during login")
+			}
+			*m.Connection = saved
+		}
+		state.WorkspaceID = m.Connection.WorkspaceID
+	}
 	if err := m.Credentials.Replace(m.ControlURL, state); err != nil {
-		return credential.State{}, false, "", err
-	}
-	return previous, previousFound, state.AccessToken, nil
-}
-
-// RestoreLogin puts back the login SaveLogin replaced, under the same lock, when the surrounding
-// configuration write fails. It only acts while the record still holds the login SaveLogin wrote, so
-// a concurrent logout or newer login is never overwritten or deleted.
-func (m *Manager) RestoreLogin(ctx context.Context, state credential.State, found bool, writtenAccessToken string) error {
-	lock, err := filelock.Acquire(ctx, m.LockFile)
-	if err != nil {
 		return err
 	}
-	defer func() { _ = lock.Close() }()
-
-	current, err := m.Credentials.Load(m.ControlURL)
-	switch {
-	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState):
-		return nil
-	case err != nil:
-		return err
+	if m.Connection != nil {
+		m.Connection.UserID, m.Connection.Email = "", ""
+		if err := config.SaveConnection(m.Paths, m.ConnectionName, *m.Connection, true); err != nil {
+			var rollback error
+			if previousFound {
+				rollback = m.Credentials.Replace(m.ControlURL, previous)
+			} else {
+				rollback = m.deleteIgnoringMissing()
+			}
+			return fmt.Errorf("%w: %w", ErrConfigurationWrite, errors.Join(err, rollback))
+		}
 	}
-	if current.AccessToken != writtenAccessToken {
-		return nil
-	}
-	if found {
-		return m.Credentials.Replace(m.ControlURL, state)
-	}
-	return m.deleteIgnoringMissing()
+	m.loginID, m.loginPinned = state.LoginID, true
+	return nil
 }
 
 type WorkspaceAccess struct {
@@ -281,7 +353,55 @@ func (m *Manager) readAccount(ctx context.Context, state credential.State) (Acco
 	if err != nil {
 		return Account{}, err
 	}
-	return Account{User: user, Workspaces: workspaces, SelectedWorkspaceID: state.WorkspaceID}, nil
+	m.workspaces = workspaces
+	selected := state.WorkspaceID
+	if m.Connection != nil {
+		selected = m.Connection.WorkspaceID
+		if err := m.rememberIdentity(ctx, state, user, workspaces); err != nil {
+			return Account{}, err
+		}
+	}
+	if m.WorkspaceOverride != "" {
+		selected = m.WorkspaceOverride
+	}
+	return Account{User: user, Workspaces: workspaces, SelectedWorkspaceID: selected}, nil
+}
+
+func (m *Manager) rememberIdentity(ctx context.Context, state credential.State, user controlplane.User, workspaces []controlplane.Workspace) error {
+	lock, err := filelock.Acquire(ctx, m.LockFile)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Close() }()
+	current, err := m.Credentials.Load(m.ControlURL)
+	if errors.Is(err, credential.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if current.LoginID != state.LoginID {
+		return ErrLoginExpired
+	}
+	cfg, err := config.Read(m.Paths)
+	if err != nil {
+		return err
+	}
+	connection, ok := cfg.Connections[m.ConnectionName]
+	if !ok {
+		return nil
+	}
+	updated := connection
+	updated.UserID, updated.Email = user.ID, user.Email
+	for _, workspace := range workspaces {
+		if workspace.ID == connection.WorkspaceID {
+			updated.WorkspaceName = workspace.Name()
+		}
+	}
+	if updated == connection {
+		return nil
+	}
+	return config.SaveConnection(m.Paths, m.ConnectionName, updated, false)
 }
 
 func isControlUnauthorized(err error) bool {
@@ -297,20 +417,45 @@ func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error
 		return err
 	}
 	defer func() { _ = lock.Close() }()
-
-	state, err := m.load()
+	state, err := m.loadCredential()
 	if err != nil {
 		return err
 	}
-	if state.WorkspaceID == workspaceID {
+	var connection config.Connection
+	if m.Connection != nil {
+		cfg, err := config.Read(m.Paths)
+		if err != nil {
+			return err
+		}
+		var ok bool
+		connection, ok = cfg.Connections[m.ConnectionName]
+		if !ok {
+			return fmt.Errorf("%w: %q", config.ErrUnknownConnection, m.ConnectionName)
+		}
+		// An automatic clear of an obsolete snapshot must not undo another terminal's selection.
+		if workspaceID == "" && connection.WorkspaceID != m.Connection.WorkspaceID {
+			return nil
+		}
+	} else if state.WorkspaceID == workspaceID {
 		return nil
 	}
 	state.WorkspaceID = workspaceID
-	state.DataToken = ""
-	state.DataTokenWorkspaceID = ""
+	state.DataToken, state.DataTokenWorkspaceID = "", ""
 	state.DataTokenExpiresAt = time.Time{}
 	if err := m.Credentials.Save(m.ControlURL, state); err != nil {
 		return fmt.Errorf("save workspace selection: %w", err)
+	}
+	if m.Connection != nil {
+		connection.WorkspaceID, connection.WorkspaceName = workspaceID, ""
+		for _, workspace := range m.workspaces {
+			if workspace.ID == workspaceID {
+				connection.WorkspaceName = workspace.Name()
+			}
+		}
+		if err := config.SaveConnection(m.Paths, m.ConnectionName, connection, false); err != nil {
+			return err
+		}
+		*m.Connection = connection
 	}
 	return nil
 }
@@ -327,6 +472,9 @@ func (e *LogoutCleanupError) Unwrap() error { return e.Err }
 // Local credentials are removed even when revocation fails, and the failure is reported so the user
 // knows the login may still exist.
 func (m *Manager) Logout(ctx context.Context) error {
+	if err := m.RequireOAuth(); err != nil {
+		return err
+	}
 	lock, err := filelock.Acquire(ctx, m.LockFile)
 	if err != nil {
 		return err
@@ -438,7 +586,7 @@ func (m *Manager) saveDataToken(ctx context.Context, accessToken, workspaceID st
 	}
 	defer func() { _ = lock.Close() }()
 
-	state, err := m.load()
+	state, err := m.loadCredential()
 	if errors.Is(err, ErrNotLoggedIn) {
 		return nil
 	}
@@ -492,6 +640,9 @@ func (m *Manager) refresh(ctx context.Context, state credential.State) (credenti
 
 	// Another process may have refreshed the login while this one waited for the lock.
 	current, loadErr := m.Credentials.Load(m.ControlURL)
+	if loadErr == nil && current.LoginID != state.LoginID {
+		return credential.State{}, ErrLoginExpired
+	}
 	switch {
 	case loadErr == nil && current.AccessToken != state.AccessToken && current.AccessTokenExpiresAt.After(m.now().Add(accessRefreshAhead)):
 		return current, nil

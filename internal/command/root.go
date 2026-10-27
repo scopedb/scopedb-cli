@@ -16,6 +16,7 @@ package command
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/version"
@@ -35,6 +36,20 @@ func NewRoot(deps Dependencies) *cobra.Command {
 			return cmd.Help()
 		},
 	}
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if cmd.Root().PersistentFlags().Changed("workspace") {
+			a.workspaceFlag = strings.TrimSpace(a.workspaceFlag)
+			if a.workspaceFlag == "" {
+				return usageError("--workspace requires a workspace ID")
+			}
+			if !usesDataCredentials(cmd) && cmd.CommandPath() != "scope auth login" && cmd.CommandPath() != "scope workspace get" && !strings.HasPrefix(cmd.CommandPath(), "scope api-key ") {
+				return usageError("--workspace is only supported for login and workspace-scoped operations")
+			}
+		}
+		return nil
+	}
+	root.PersistentFlags().StringVar(&a.workspaceFlag, "workspace", "", "use this workspace ID for one OAuth command; login saves the selection")
+	_ = root.RegisterFlagCompletionFunc("workspace", a.completeWorkspaces)
 	root.Version = version.Current().Version
 	root.SetVersionTemplate("scope {{.Version}}\n")
 	root.SetIn(a.in)
@@ -43,8 +58,10 @@ func NewRoot(deps Dependencies) *cobra.Command {
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return clierror.Wrap(clierror.ExitUsage, err.Error(), err)
 	})
+	root.PersistentFlags().StringVarP(&a.connectionFlag, "connection", "c", "", "use this saved connection for this command")
 	root.PersistentFlags().StringVar(&a.controlURLFlag, "control-url", "", "ScopeDB control-plane URL")
 	root.PersistentFlags().StringVar(&a.consoleURLFlag, "console-url", "", "ScopeDB console URL")
+	_ = root.RegisterFlagCompletionFunc("connection", a.completeConnections)
 	// Keep service URL overrides available for troubleshooting without advertising them.
 	_ = root.PersistentFlags().MarkHidden("control-url")
 	_ = root.PersistentFlags().MarkHidden("console-url")
@@ -52,6 +69,7 @@ func NewRoot(deps Dependencies) *cobra.Command {
 	root.AddCommand(
 		a.newAuthCommand(),
 		a.newWorkspaceCommand(),
+		a.newConnectionCommand(),
 		a.newAPIKeyCommand(),
 		a.newQueryCommand(),
 		a.newCatalogCommand(),
@@ -60,6 +78,7 @@ func NewRoot(deps Dependencies) *cobra.Command {
 		newVersionCommand(a.out),
 		newCompletionCommand(root),
 	)
+	a.bindConnectionErrors(root)
 	return root
 }
 

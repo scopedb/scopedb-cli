@@ -217,7 +217,7 @@ func TestMachineAccessRequiresCompletePair(t *testing.T) {
 	access, active, err := manager.MachineAccess()
 	require.NoError(t, err)
 	require.True(t, active)
-	require.Equal(t, Access{Endpoint: "https://data.example.com", APIKey: "secret", Mode: "api_key"}, access)
+	require.Equal(t, Access{Endpoint: "https://data.example.com", APIKey: "secret", Mode: "api_key", CredentialSource: "environment"}, access)
 }
 
 func TestLoadAccessReturnsFreshTokenWithoutRefresh(t *testing.T) {
@@ -705,7 +705,7 @@ func TestSaveLoginRejectsIncompleteTokenResponse(t *testing.T) {
 		{AccessToken: "oat_new", ExpiresIn: 3600},
 		{AccessToken: "oat_new", RefreshToken: "ort_new"},
 	} {
-		_, _, _, err := manager.SaveLogin(t.Context(), tokens)
+		err := manager.SaveLogin(t.Context(), tokens)
 		require.Error(t, err)
 	}
 	require.False(t, store.stored())
@@ -716,7 +716,7 @@ func TestSaveLoginStoresBothTokens(t *testing.T) {
 	store := &memoryStore{}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
 	require.NoError(t, err)
 	require.Equal(t, "oat_new", store.saved().AccessToken)
 	require.Equal(t, "ort_new", store.saved().RefreshToken)
@@ -734,7 +734,7 @@ func TestSaveLoginReplacesExpiredLoginAndKeepsSelection(t *testing.T) {
 	store := &memoryStore{present: true, state: state}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
 	require.NoError(t, err)
 	require.Equal(t, "ws-1", store.saved().WorkspaceID)
 	require.Equal(t, "oat_new", store.saved().AccessToken)
@@ -748,7 +748,7 @@ func TestSaveLoginReplacesUnreadableStoredState(t *testing.T) {
 	store := &memoryStore{invalidHi: true}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
 	require.NoError(t, err)
 	require.Equal(t, "oat_new", store.saved().AccessToken)
 	require.Empty(t, store.saved().WorkspaceID)
@@ -759,28 +759,9 @@ func TestSaveLoginReportsCredentialLoadFailure(t *testing.T) {
 	store := &memoryStore{loadErr: errors.New("credential store unavailable")}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
 	require.ErrorContains(t, err, "credential store unavailable")
 	require.False(t, store.stored())
-}
-
-func TestRestoreLoginDoesNotReplaceANewerLogin(t *testing.T) {
-	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
-	store := &memoryStore{}
-	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
-
-	previous, found, written, err := manager.SaveLogin(t.Context(), accessTokens("oat_login", "ort_login"))
-	require.NoError(t, err)
-	require.False(t, found)
-	require.Equal(t, "oat_login", written)
-
-	newer := loginState(now, now.Add(time.Hour))
-	newer.AccessToken = "oat_newer"
-	newer.RefreshToken = "ort_newer"
-	require.NoError(t, store.Save(manager.ControlURL, newer))
-
-	require.NoError(t, manager.RestoreLogin(t.Context(), previous, found, written))
-	require.Equal(t, "oat_newer", store.saved().AccessToken)
 }
 
 func TestSelectWorkspaceClearsSelectionAndDataToken(t *testing.T) {

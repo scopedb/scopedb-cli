@@ -28,6 +28,9 @@ import (
 )
 
 type statusView struct {
+	Connection            string `json:"connection,omitempty"`
+	AuthType              string `json:"auth_type"`
+	UserID                string `json:"user_id,omitempty"`
 	ControlURL            string `json:"control_url,omitempty"`
 	Email                 string `json:"email,omitempty"`
 	CredentialSource      string `json:"credential_source"`
@@ -45,7 +48,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 		Use:   "status",
 		Short: "Show authentication source, identity, and connection target",
 		Long: "Show authentication source, identity, and connection target.\n" +
-			"Uses environment credentials when set; otherwise verifies your CLI login.\n" +
+			"Reports the selected connection; OAuth connections verify your CLI login.\n" +
 			"Run 'scope doctor' to verify query access or 'scope workspace get' for deployment details.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -60,14 +63,21 @@ func (a *app) newStatusCommand() *cobra.Command {
 				if machineErr != nil {
 					return machineErr
 				}
-				return renderStatus(a.out, format, statusView{
-					CredentialSource: "environment", Endpoint: access.Endpoint,
-				})
+				view := statusView{Connection: runtime.config.ConnectionName, AuthType: "api_key", CredentialSource: access.CredentialSource, Endpoint: access.Endpoint}
+				if access.CredentialSource == credential.SourcePlaintext {
+					view.CredentialFile = runtime.paths.CredentialsFile
+				}
+				return renderStatus(a.out, format, view)
 			}
 
 			account, state, err := runtime.auth.Account(cmd.Context())
 			if err != nil {
 				return err
+			}
+			if runtime.auth.WorkspaceOverride != "" {
+				if err := auth.RequireWorkspace(account); err != nil {
+					return err
+				}
 			}
 			if account.SelectedWorkspaceID != "" && errors.Is(auth.RequireWorkspace(account), auth.ErrWorkspaceUnavailable) {
 				if err := runtime.auth.SelectWorkspace(cmd.Context(), ""); err != nil {
@@ -79,6 +89,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 				}
 			}
 			view := statusView{
+				AuthType: "oauth", Connection: runtime.config.ConnectionName, UserID: account.User.ID,
 				ControlURL:            runtime.config.ControlURL,
 				Email:                 account.User.Email,
 				CredentialSource:      state.Source,
@@ -124,6 +135,9 @@ func renderStatus(out io.Writer, format string, view statusView) error {
 		t.AppendRow(table.Row{"Credential file", view.CredentialFile})
 	}
 	t.AppendRows([]table.Row{
+		{"Connection", emptyDash(view.Connection)},
+		{"Authentication", view.AuthType},
+		{"User ID", emptyDash(view.UserID)},
 		{"Email", emptyDash(view.Email)},
 		{"User status", emptyDash(view.UserStatus)},
 		{"Refresh token expires", emptyDash(view.RefreshTokenExpiresAt)},

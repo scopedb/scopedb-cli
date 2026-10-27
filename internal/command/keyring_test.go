@@ -90,8 +90,8 @@ func TestLoginFallsBackWhenKeyringWriteFails(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
 		args: []string{"auth", "login"},
-		credentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
-			store, err := credential.New(kind, paths)
+		credentialStore: func(kind string, paths config.Paths, reference string) (credential.Store, error) {
+			store, err := credential.New(kind, paths, reference)
 			if kind == credential.SourceKeyring {
 				return credentialWriteFailureStore{Store: store, err: &credential.KeyringError{Op: "write", Err: os.ErrPermission}}, err
 			}
@@ -215,7 +215,7 @@ func TestLoginStorageChoiceDoesNotChangeNextLoginDefault(t *testing.T) {
 			refreshed, err := plaintext.Load(fake.URL)
 			require.NoError(t, err)
 			require.Equal(t, fake.RefreshedRefreshToken, refreshed.RefreshToken)
-			_, err = credential.NewKeyringStore().Load(fake.URL)
+			_, err = testKeyring(t).Load(fake.URL)
 			require.ErrorIs(t, err, credential.ErrNotFound)
 
 			_, _, err = runFakeCommand(t, fake, "auth", "logout")
@@ -235,7 +235,7 @@ func TestLoginStorageChoiceDoesNotChangeNextLoginDefault(t *testing.T) {
 			require.NotContains(t, diagnostics, "unencrypted")
 			_, err = plaintext.Load(fake.URL)
 			require.ErrorIs(t, err, credential.ErrNotFound)
-			stored, err := credential.NewKeyringStore().Load(fake.URL)
+			stored, err := testKeyring(t).Load(fake.URL)
 			require.NoError(t, err)
 			require.Equal(t, fake.RefreshToken, stored.RefreshToken)
 			out, _, err = runFakeCommand(t, fake, "auth", "status", "--format", "json")
@@ -282,7 +282,7 @@ func TestLoginRefusesRenewableCredentialsInEitherStore(t *testing.T) {
 			state := saveStoredLogin(t, plaintext, fake.URL, "")
 			args := []string{"auth", "login"}
 			if source == credential.SourceKeyring {
-				require.NoError(t, credential.NewKeyringStore().Save(fake.URL, state))
+				require.NoError(t, testKeyring(t).Save(fake.URL, state))
 				require.NoError(t, plaintext.Delete(fake.URL))
 				args = append(args, "--insecure-storage")
 			}
@@ -301,7 +301,7 @@ func TestLoginRestoresPreviousStoreWhenConfigurationSaveFails(t *testing.T) {
 			previous := saveExpiredLogin(t, plaintext, fake.URL, "ws-previous")
 			target := credential.SourceKeyring
 			var oldStore credential.Store = plaintext
-			var newStore credential.Store = credential.NewKeyringStore()
+			var newStore credential.Store = testKeyring(t)
 			args := []string{"auth", "login"}
 			if previousSource == credential.SourceKeyring {
 				oldStore, newStore = newStore, oldStore
@@ -312,10 +312,13 @@ func TestLoginRestoresPreviousStoreWhenConfigurationSaveFails(t *testing.T) {
 			}
 			_, _, err := runLoginScenario(t, fake, loginScenario{
 				args: args,
-				credentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
-					store, err := credential.New(kind, paths)
+				credentialStore: func(kind string, paths config.Paths, reference string) (credential.Store, error) {
+					store, err := credential.New(kind, paths, reference)
 					if kind == target {
 						return &interruptSaveStore{Store: store, afterSave: func() error {
+							if err := os.Remove(paths.Config); err != nil {
+								return err
+							}
 							return os.Mkdir(paths.Config, 0o700)
 						}}, err
 					}
@@ -340,8 +343,8 @@ func TestLoginRevokesUnusedGrantWhenBothStoresFail(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
 		args: []string{"auth", "login"},
-		credentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
-			store, err := credential.New(kind, paths)
+		credentialStore: func(kind string, paths config.Paths, reference string) (credential.Store, error) {
+			store, err := credential.New(kind, paths, reference)
 			failure := os.ErrPermission
 			if kind == credential.SourceKeyring {
 				failure = &credential.KeyringError{Op: "write", Err: failure}
@@ -362,11 +365,11 @@ func TestLoginRevokesUnusedGrantWhenBothStoresFail(t *testing.T) {
 func TestRefreshFailureDoesNotMoveKeyringLoginToPlaintext(t *testing.T) {
 	fake, plaintext := setupCLITest(t)
 	state := saveLogin(t, plaintext, fake.URL, "", time.Now().Add(-time.Minute), time.Now().Add(time.Hour))
-	require.NoError(t, credential.NewKeyringStore().Save(fake.URL, state))
+	require.NoError(t, testKeyring(t).Save(fake.URL, state))
 	require.NoError(t, plaintext.Delete(fake.URL))
 	_, diagnostics, err := runCommandWith(t, Dependencies{
-		CredentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
-			store, err := credential.New(kind, paths)
+		CredentialStore: func(kind string, paths config.Paths, reference string) (credential.Store, error) {
+			store, err := credential.New(kind, paths, reference)
 			if kind == credential.SourceKeyring {
 				return credentialWriteFailureStore{Store: store, err: &credential.KeyringError{Op: "write", Err: os.ErrPermission}}, err
 			}

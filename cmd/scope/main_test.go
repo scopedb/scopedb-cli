@@ -49,7 +49,7 @@ func TestCommandErrorsAtProcessBoundary(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("SCOPEDB_HOME", t.TempDir())
 			const controlURL = "https://control.example.com"
-			store := credential.NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
+			store := credential.NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"), "")
 			require.NoError(t, store.Save(controlURL, credential.State{
 				AccessToken: "fixture-token", AccessTokenExpiresAt: time.Now().Add(time.Hour),
 				RefreshToken: "fixture-refresh", WorkspaceID: "ws-1",
@@ -57,7 +57,7 @@ func TestCommandErrorsAtProcessBoundary(t *testing.T) {
 			var out, diagnostics bytes.Buffer
 			code := execute(t.Context(), command.Dependencies{
 				Out: &out, ErrOut: &diagnostics, Getenv: func(string) string { return "" },
-				CredentialStore: func(string, config.Paths) (credential.Store, error) { return store, nil },
+				CredentialStore: func(string, config.Paths, string) (credential.Store, error) { return store, nil },
 				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 					if tc.cause != nil {
 						return nil, tc.cause
