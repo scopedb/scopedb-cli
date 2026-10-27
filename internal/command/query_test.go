@@ -85,24 +85,11 @@ func runQueryWithTransport(t *testing.T, transport roundTripFunc, args ...string
 
 func runQueryWithWriter(t *testing.T, transport roundTripFunc, out io.Writer, args ...string) error {
 	t.Helper()
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
-	t.Setenv("SCOPEDB_CONTROL_URL", "")
-	t.Setenv("SCOPEDB_CONSOLE_URL", "")
-	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
+	fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 	var diagnostics bytes.Buffer
 	root := NewRoot(Dependencies{
 		Out: out, ErrOut: &diagnostics,
-		Getenv: func(name string) string {
-			switch name {
-			case "SCOPEDB_ENDPOINT":
-				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
-				return "fixture-secret"
-			default:
-				return ""
-			}
-		},
-		HTTPClient: &http.Client{Transport: transport},
+		HTTPClient: fake.dataClient(transport),
 	})
 	root.SetArgs(append([]string{"query", "SELECT 1 AS ready"}, args...))
 	err := NormalizeError(root.ExecuteContext(t.Context()))

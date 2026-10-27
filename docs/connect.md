@@ -2,7 +2,7 @@
 
 This guide follows the selected repository revision; `main` can include unreleased changes. For an installed release, browse the guide at its matching [release tag](https://github.com/scopedb/scopedb-cli/tags). Run `scope version` to identify your version and `scope --help` to check its commands. See the [changelog](../CHANGELOG.md) for migration steps when upgrading.
 
-Use `scope auth login` for terminal exploration. Use a workspace endpoint and API key for application SDKs and CI. The CLI login is stored in your OS keyring when available, with a plaintext fallback; SDKs do not read it.
+Use `scope auth login` for the CLI. Use a workspace endpoint and API key for application SDKs. The CLI login is stored in your OS keyring when available, with a plaintext fallback; SDKs do not read it.
 
 ## Verify your login
 
@@ -29,7 +29,7 @@ Login keeps a valid workspace selection or automatically selects the first works
 
 If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id>`.
 
-`scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`, and the credential file path when using plaintext. In login mode it verifies your login against ScopeDB and reports when the login expires; in environment mode it displays the configured endpoint without validating the API key, and also shows the signed-in account and workspace when a login is stored. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
+`scope auth status` verifies your login against ScopeDB and reports its credential source, `keyring` or `plaintext`, the credential file path when using plaintext, and when the login expires. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
 
 `scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
 
@@ -37,21 +37,9 @@ If your account is awaiting approval or has no workspace, follow the instruction
 
 On Linux, the OS keyring requires a working D-Bus session and a Secret Service provider, such as GNOME Keyring, with an accessible login collection. Servers, SSH sessions, and containers may not have these services available. If keyring storage fails during a new login, the CLI prints a warning to stderr and saves the credentials unencrypted in `credentials.json`. Device authorization and storage selection are independent.
 
-For servers and CI, use a workspace endpoint and API key:
-
-```sh
-export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
-export SCOPEDB_API_KEY="your-api-key"
-scope doctor
-scope query --format json 'SELECT 1 AS ready'
-```
-
-With both variables set, `scope query`, `scope auth status`, and `scope doctor` skip the keyring and do not require `scope auth login`. Setting only one variable fails. Workspace and API key management still require a CLI login.
-
 For a CLI login on a host without a usable keyring:
 
 ```sh
-unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
 scope auth login --use-device-code --no-browser
 scope auth status
 scope query 'SELECT 1 AS ready'
@@ -76,27 +64,15 @@ The key is shown only once on stdout. Store it in your application's secret mana
 
 Revoke a key with `scope api-key revoke <id>`, using the ID from `scope api-key list`. A unique name also works, but repeated names require an ID; if an ID also matches another key's name, the ID wins. The confirmation shows the selected name and ID, and declining it sends no deletion.
 
-Copy the workspace's data-plane endpoint, without appending `/v1/statements`. Set both values in your application environment or local shell:
+Copy the workspace's data-plane endpoint, without appending `/v1/statements`. The key only grants access to the workspace it was created in. The CLI does not read API keys: `scope query`, `scope catalog`, and `scope doctor` always use your login and the workspace selected with `scope workspace use`. The CLI ignores `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, so you can keep them set for SDK applications, but they do not choose the CLI's workspace. Run `scope auth status` to confirm the target before changing the catalog.
 
-```sh
-export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
-export SCOPEDB_API_KEY="your-api-key"
-scope auth status
-scope doctor --timeout 15s
-scope query --format json 'SELECT 1 AS ready'
-```
+The CLI is meant for interactive use. In CI and other unattended jobs, connect through an SDK with an API key. Do not copy CLI login credentials to another host: the refresh token rotates on every use, and reusing an old one revokes the login.
 
-`scope auth status` reports `environment` as the credential source and the environment endpoint when both variables are set, and still shows the account and workspace of your login when one is stored. Queries and connection checks then use the environment credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login session and warns when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
-
-```sh
-unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
-```
-
-To end your login session, run `scope auth logout`. It removes and revokes the login even while both variables are set, and warns that data commands keep using the environment credentials; unset both to stop using them. Logout does not revoke application API keys.
+To end your login session, run `scope auth logout`. Logout does not revoke application API keys.
 
 ## Connect an SDK
 
-Use the same endpoint and key that passed the CLI connection check. Pass them explicitly to your SDK client; the CLI does not configure SDKs or export its short-lived login credentials.
+Pass the endpoint and key explicitly to your SDK client; the CLI does not configure SDKs or export its short-lived login credentials.
 
 | Client                | Setup and runnable examples                                                                 |
 | --------------------- | ------------------------------------------------------------------------------------------- |
@@ -112,18 +88,16 @@ Start with `SELECT 1 AS ready` before querying application tables. Keep keys in 
 scope doctor --format json --timeout 15s
 ```
 
-Each remote check has its own timeout, defaulting to five seconds. Resolving login credentials and running the test query share one check's timeout. `--timeout 0` disables this per-check limit; individual control-plane HTTP requests retain their 15-second limit. Ctrl+C can interrupt checks in either mode. Cancellation may take an additional five seconds while the CLI attempts to cancel an already-submitted query.
+Each remote check has its own timeout, defaulting to five seconds. Resolving login credentials and running the test query share one check's timeout. `--timeout 0` disables this per-check limit; individual control-plane HTTP requests retain their 15-second limit. Ctrl+C can interrupt checks. Cancellation may take an additional five seconds while the CLI attempts to cancel an already-submitted query.
 
 If a timed-out query reports that server cancellation could not be confirmed, retain the statement ID and check its outcome before retrying. The statement may have completed or still be running; repeating a write could duplicate its effects. A successful cancellation request only confirms cancellation when the returned statement status is `cancelled`.
 
-| Symptom                          | Next step                                                                                                 |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| Only one connection variable set | Set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or unset both to use your login.                       |
-| Not logged in                    | Run `scope auth login`, or configure both connection variables.                                           |
-| OS keyring unavailable           | See [headless Linux setup](#use-headless-linux) for API key access or explicit plaintext login.           |
-| No workspace selected            | Run `scope workspace list`, then `scope workspace use <id>`.                                              |
-| Workspace is still provisioning  | Check `scope workspace get` or the Console and retry when the workspace is ready.                         |
-| API key rejected                 | Check that the endpoint and key belong to the same workspace and the key has not expired or been revoked. |
-| Operation timed out              | Check connectivity; increase `doctor --timeout` only if the per-check limit is too short.                 |
+| Symptom                         | Next step                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Not logged in                   | Run `scope auth login`.                                                                                |
+| OS keyring unavailable          | See [headless Linux setup](#use-headless-linux) for device authorization and explicit plaintext login. |
+| No workspace selected           | Run `scope workspace list`, then `scope workspace use <id>`.                                           |
+| Workspace is still provisioning | Check `scope workspace get` or the Console and retry when the workspace is ready.                      |
+| Operation timed out             | Check connectivity; increase `doctor --timeout` only if the per-check limit is too short.              |
 
 JSON diagnostics keep the same `ok` and `checks` fields as table diagnostics. Failed checks exit with code 1; invalid flags exit with code 2; Ctrl+C exits with code 130. Include a reported request ID when asking for support, and omit API keys and session credentials.

@@ -450,7 +450,6 @@ func TestLoginWithoutOAuthSupportReportsGuidance(t *testing.T) {
 	_, _, err := runInteractiveCommand(t, "--control-url", server.URL, "auth", "login", "--insecure-storage")
 	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
 	require.Contains(t, clierror.Render(err), "requires ScopeDB v0.23.0 or newer")
-	require.Contains(t, clierror.Render(err), "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 }
 
 func TestLoginKeepsCredentialsWhenAccountLookupFails(t *testing.T) {
@@ -891,32 +890,6 @@ func TestLogoutKeepsLocalRemovalWhenRevocationFails(t *testing.T) {
 	require.Contains(t, clierror.Render(err), "revoked in the Console")
 	_, loadErr := store.Load(fake.URL)
 	require.ErrorIs(t, loadErr, credential.ErrNotFound)
-}
-
-func TestLogoutRemovesTheLoginWithEnvironmentCredentials(t *testing.T) {
-	fake, store := setupCLITest(t)
-	saveStoredLogin(t, store, fake.URL, "ws-1")
-
-	out, diagnostics, err := runCommandWith(t, Dependencies{
-		Getenv: machineCredentials,
-	}, "--control-url", fake.URL, "auth", "logout", "--format", "json")
-	require.NoError(t, err)
-	require.JSONEq(t, `{"changed":true}`, out)
-	require.Contains(t, diagnostics, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
-	require.NotContains(t, out+diagnostics, "machine-secret")
-	require.Equal(t, []string{"ort_refresh"}, fake.RevokedTokens)
-	_, loadErr := store.Load(fake.URL)
-	require.ErrorIs(t, loadErr, credential.ErrNotFound)
-}
-
-func TestLogoutWithoutLoginIgnoresEnvironmentCredentials(t *testing.T) {
-	fake, _ := setupCLITest(t)
-	out, diagnostics, err := runCommandWith(t, Dependencies{
-		Getenv: machineCredentials,
-	}, "--control-url", fake.URL, "auth", "logout", "--format", "json")
-	require.NoError(t, err)
-	require.JSONEq(t, `{"changed":false}`, out)
-	require.Empty(t, diagnostics)
 }
 
 func TestLoginReportsUnreachableControlPlane(t *testing.T) {

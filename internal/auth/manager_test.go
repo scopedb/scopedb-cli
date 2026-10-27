@@ -202,22 +202,7 @@ func newManager(t *testing.T, store CredentialStore, control ControlPlane, oauth
 		LockFile:    filepath.Join(t.TempDir(), "credentials.lock"),
 		Now:         func() time.Time { return now },
 		Sleep:       func(time.Duration) {},
-		Getenv:      func(string) string { return "" },
 	}
-}
-
-func TestMachineAccessRequiresCompletePair(t *testing.T) {
-	values := map[string]string{"SCOPEDB_ENDPOINT": "https://data.example.com"}
-	manager := Manager{Getenv: func(key string) string { return values[key] }}
-	_, active, err := manager.MachineAccess()
-	require.False(t, active)
-	require.ErrorIs(t, err, ErrInvalidMachineEnv)
-
-	values["SCOPEDB_API_KEY"] = "secret"
-	access, active, err := manager.MachineAccess()
-	require.NoError(t, err)
-	require.True(t, active)
-	require.Equal(t, Access{Endpoint: "https://data.example.com", APIKey: "secret", Mode: "api_key"}, access)
 }
 
 func TestLoadAccessReturnsFreshTokenWithoutRefresh(t *testing.T) {
@@ -558,7 +543,7 @@ func TestResolveDataAccessKeepsWorkspaceDuringRefresh(t *testing.T) {
 			require.Equal(t, []string{"ws-1", "ws-1"}, workspaces)
 			require.Equal(t, []string{"oat_old", "oat_new"}, tokens)
 			require.Equal(t, Access{
-				Endpoint: "https://ws-1.example.com", APIKey: "data-token-for-ws-1", WorkspaceID: "ws-1", Mode: "oauth",
+				Endpoint: "https://ws-1.example.com", APIKey: "data-token-for-ws-1", WorkspaceID: "ws-1",
 			}, access)
 			saved := store.saved()
 			require.Equal(t, selection, saved.WorkspaceID)
@@ -613,7 +598,6 @@ func TestResolveDataAccessUsesCachedToken(t *testing.T) {
 		Endpoint:    "https://data.example.com",
 		APIKey:      "cached-data-token",
 		WorkspaceID: "ws-1",
-		Mode:        "oauth",
 	}, access)
 	require.Zero(t, control.exchangeCalls)
 }

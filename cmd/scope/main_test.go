@@ -131,48 +131,33 @@ func TestInterruptedQueryReportsStatementOutcome(t *testing.T) {
 	const statementID = "01989a4e-4ee2-7e63-87a5-65ac3b5161dc"
 	for _, outcome := range []string{"before_submit", "finished"} {
 		t.Run(outcome, func(t *testing.T) {
-			t.Setenv("SCOPEDB_HOME", t.TempDir())
-			t.Setenv("SCOPEDB_CONTROL_URL", "")
-			t.Setenv("SCOPEDB_CONSOLE_URL", "")
-			t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			cancelCalls := 0
 			var out, diagnostics bytes.Buffer
-			code := execute(ctx, command.Dependencies{
-				Out: &out, ErrOut: &diagnostics,
-				Getenv: func(name string) string {
-					switch name {
-					case "SCOPEDB_ENDPOINT":
-						return "https://data.example.com"
-					case "SCOPEDB_API_KEY":
-						return "fixture-secret"
-					default:
-						return ""
-					}
-				},
-				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-					body := `{"statement_id":"` + statementID + `","status":"running","created_at":"2026-09-09T00:00:00Z","progress":{}}`
-					switch r.Method + " " + r.URL.Path {
-					case "POST /v1/statements":
-						if outcome == "before_submit" {
-							cancel()
-							return nil, ctx.Err()
-						}
-					case "GET /v1/statements/" + statementID:
+			deps := loginDependencies(t, func(r *http.Request) (*http.Response, error) {
+				body := `{"statement_id":"` + statementID + `","status":"running","created_at":"2026-09-09T00:00:00Z","progress":{}}`
+				switch r.Method + " " + r.URL.Path {
+				case "POST /v1/statements":
+					if outcome == "before_submit" {
 						cancel()
 						return nil, ctx.Err()
-					case "POST /v1/statements/" + statementID + "/cancel":
-						cancelCalls++
-						require.NoError(t, r.Context().Err(), "cancellation must use a fresh context")
-						require.Equal(t, "json", r.URL.Query().Get("format"))
-						body = `{"statement_id":"` + statementID + `","status":"finished","created_at":"2026-09-09T00:00:00Z","progress":{},"result_set":{"metadata":{"fields":[{"name":"ready","data_type":"int"}],"num_rows":1},"format":"json","rows":[["1"]]}}`
-					default:
-						t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 					}
-					return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
-				})},
-			}, []string{"query", "SELECT 1 AS ready"})
+				case "GET /v1/statements/" + statementID:
+					cancel()
+					return nil, ctx.Err()
+				case "POST /v1/statements/" + statementID + "/cancel":
+					cancelCalls++
+					require.NoError(t, r.Context().Err(), "cancellation must use a fresh context")
+					require.Equal(t, "json", r.URL.Query().Get("format"))
+					body = `{"statement_id":"` + statementID + `","status":"finished","created_at":"2026-09-09T00:00:00Z","progress":{},"result_set":{"metadata":{"fields":[{"name":"ready","data_type":"int"}],"num_rows":1},"format":"json","rows":[["1"]]}}`
+				default:
+					t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			})
+			deps.Out, deps.ErrOut = &out, &diagnostics
+			code := execute(ctx, deps, []string{"query", "SELECT 1 AS ready"})
 			require.Equal(t, clierror.ExitInterrupted, code)
 			require.Empty(t, out.String())
 			if outcome == "before_submit" {
@@ -194,29 +179,54 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestInterruptedCatalogWriteReportsUnknownOutcome(t *testing.T) {
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var out, diagnostics bytes.Buffer
 	writes := 0
-	code := execute(ctx, command.Dependencies{
-		In: strings.NewReader("databases: []\n"), Out: &out, ErrOut: &diagnostics,
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			if r.URL.Query().Get("dry_run") == "true" {
-				return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}},
-					Body: io.NopCloser(strings.NewReader(`{"before":{"databases":[]},"after":{"databases":[]},"destructive":false}`)), Request: r}, nil
-			}
-			writes++
-			cancel()
-			return nil, ctx.Err()
-		})},
-	}, []string{"catalog", "apply", "-f", "-", "--yes"})
+	deps := loginDependencies(t, func(r *http.Request) (*http.Response, error) {
+		if r.URL.Query().Get("dry_run") == "true" {
+			return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}},
+				Body: io.NopCloser(strings.NewReader(`{"before":{"databases":[]},"after":{"databases":[]},"destructive":false}`)), Request: r}, nil
+		}
+		writes++
+		cancel()
+		return nil, ctx.Err()
+	})
+	deps.In, deps.Out, deps.ErrOut = strings.NewReader("databases: []\n"), &out, &diagnostics
+	code := execute(ctx, deps, []string{"catalog", "apply", "-f", "-", "--yes"})
 	require.Equal(t, clierror.ExitInterrupted, code)
 	require.Equal(t, 1, writes)
 	require.Empty(t, out.String())
 	require.Contains(t, diagnostics.String(), "catalog_commit_outcome_unknown")
 	require.Contains(t, diagnostics.String(), "read the catalog and plan again before retrying")
 	require.NotContains(t, diagnostics.String(), "fixture-secret")
+}
+
+func loginDependencies(t *testing.T, data roundTripFunc) command.Dependencies {
+	t.Helper()
+	const controlURL = "https://control.example.com"
+	t.Setenv("SCOPEDB_HOME", t.TempDir())
+	t.Setenv("SCOPEDB_CONTROL_URL", controlURL)
+	store := credential.NewPlaintextStore(filepath.Join(t.TempDir(), "credentials.json"))
+	require.NoError(t, store.Save(controlURL, credential.State{
+		AccessToken: "fixture-token", AccessTokenExpiresAt: time.Now().Add(time.Hour),
+		RefreshToken: "fixture-refresh", WorkspaceID: "ws-1",
+		DataToken: "fixture-secret", DataTokenWorkspaceID: "ws-1", DataTokenExpiresAt: time.Now().Add(time.Hour),
+	}))
+	control := map[string]string{
+		"/api/user":            `{"id":"user-1","email":"dev@example.com","status":"active"}`,
+		"/api/workspaces":      `{"workspaces":[{"id":"ws-1","provisioning_status":"ready"}]}`,
+		"/api/workspaces/ws-1": `{"workspace":{"id":"ws-1"},"connection":{"api_base_url":"https://data.example.com"},"provisioning":{"status":"ready"}}`,
+	}
+	return command.Dependencies{
+		CredentialStore: func(string, config.Paths) (credential.Store, error) { return store, nil },
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Host != "data.example.com" {
+				body, ok := control[r.URL.Path]
+				require.True(t, ok, "unexpected control-plane request: %s", r.URL)
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+			}
+			return data(r)
+		})},
+	}
 }

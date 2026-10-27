@@ -17,7 +17,7 @@ The global working agreements apply. Keep this file limited to constraints speci
 - Keep configuration precedence explicit: flags, environment, config file, defaults. Do not add Viper or implicit environment binding.
 - Use `SCOPEDB_HOME` for the local configuration and plaintext credential directory; connection variables use the `SCOPEDB_` prefix.
 - New logins prefer the OS keyring and fall back to plaintext with a stderr warning if keyring storage fails. `--insecure-storage` affects only the current login, never a persistent backend preference. Resolve existing credentials for reads and updates; refresh must keep their storage location. Clean old copies when switching, prevent stale credentials from reappearing after logout, and use restrictive plaintext file permissions.
-- Machine authentication requires both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; a partial pair must fail without falling back to human credentials.
+- Data commands authenticate only through the CLI login and its selected workspace. Do not add flags, environment variables, or config entries that supply a data-plane endpoint or API key.
 - Preserve the documented exit-code contract and machine-readable output shapes.
 - Any destructive command must require confirmation on a TTY and an explicit flag when non-interactive.
 

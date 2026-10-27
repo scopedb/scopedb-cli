@@ -7,12 +7,11 @@ All significant changes to this project will be documented in this file.
 ### Breaking changes
 
 * `scope workspace use <id>` and `scope auth login --workspace <id>` now require a workspace ID. Display names are no longer accepted; use `scope workspace list` to find the ID and update commands and scripts that select workspaces by name.
-* Rename the CLI configuration directory override from `SCOPEDB_CONFIG_DIR` to `SCOPEDB_HOME`. Set `SCOPEDB_HOME` to the same directory and remove the old variable from your environment. The CLI no longer reads the old name. Default storage locations, existing configuration files, and credential storage are unchanged; connection variables retain their existing `SCOPEDB_` names.
+* Rename the CLI configuration directory override from `SCOPEDB_CONFIG_DIR` to `SCOPEDB_HOME`. Set `SCOPEDB_HOME` to the same directory and remove the old variable from your environment. The CLI no longer reads the old name. Default storage locations, existing configuration files, and credential storage are unchanged.
+* `scope query`, `scope catalog`, and `scope doctor` no longer read `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; they always use your `scope auth login` login and the workspace selected with `scope workspace use`. `scope auth status` no longer reports `environment` as its `credential_source`, and catalog plans no longer contain `credential_hash`. The variables can stay set for SDK applications. To migrate CLI usage, run `scope auth login` (with `--use-device-code --no-browser` on headless hosts, and `--insecure-storage` without a usable keyring), and select the workspace with `scope workspace use <id>`.
 
 ### Improvements
 
-* `scope auth status` shows the signed-in account and selected workspace when `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` are set, while `credential_source` and `endpoint` continue to report the environment credentials. The command still succeeds without a usable login.
-* `scope auth logout` removes and revokes the saved login while `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` are set instead of refusing, and warns that data commands keep using the environment credentials.
 * Source installations require Go 1.27.3 or newer to include its certificate-validation security fix.
 * Hide service URL override flags from command help and shell completion.
 

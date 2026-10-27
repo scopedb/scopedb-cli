@@ -60,7 +60,7 @@ scope query 'FROM system.tables LIMIT 10'
 
 Login does not require an interactive terminal. Authorization instructions and progress go to stderr; `--format text|json` selects the result format on stdout.
 
-Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves credentials unencrypted in a file (`0600` on Unix); `scope auth status` shows its location. `--insecure-storage` selects plaintext for that login only. For servers and CI, set both `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, or use device authorization for a CLI login. See [headless Linux setup](docs/connect.md#use-headless-linux).
+Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves credentials unencrypted in a file (`0600` on Unix); `scope auth status` shows its location. `--insecure-storage` selects plaintext for that login only. On servers and other hosts without a browser, use device authorization. See [headless Linux setup](docs/connect.md#use-headless-linux).
 
 Set `SCOPEDB_HOME` to override the directory used for configuration and plaintext credentials. Otherwise, the CLI uses a `scopedb` subdirectory of your operating system's user configuration directory.
 
@@ -120,7 +120,7 @@ scope catalog apply --plan plan.yaml
 scope catalog apply --table scopedb.public.events -f events.yaml --yes --format json > applied.json
 ```
 
-`plan` writes the plan to stdout and the diff to stderr. A plan contains the requested change, its preview, and the target connection and catalog version. Machine-authenticated plans are bound to the API key used to create them. Plans can contain custom storage credentials from the source definition; protect them like the source configuration.
+`plan` writes the plan to stdout and the diff to stderr. A plan contains the requested change, its preview, and the target connection, workspace, and catalog version. Plans can contain custom storage credentials from the source definition; protect them like the source configuration.
 
 `apply --plan` submits the saved request without another preview or prompt; destructive plans require `--allow-destructive`. If the catalog or connection has changed, apply fails. Regenerate and review the plan after editing its source or changing the target. `--plan -` reads a saved plan from stdin.
 
@@ -155,21 +155,9 @@ Use an ID from `scope api-key list` in scripts; unique names are accepted, and I
 
 Run `scope --help` or `scope <command> --help` for the complete command reference. See the [ScopeDB documentation](https://docs.scopedb.io/) for ScopeQL and service documentation.
 
-## Automation
+## Applications
 
-For CI and other non-interactive environments, set the data-plane endpoint and API key:
-
-```sh
-export SCOPEDB_ENDPOINT="https://your-workspace.example.com"
-export SCOPEDB_API_KEY="your-api-key"
-
-scope doctor
-scope query --format json 'SELECT 1 AS ready'
-```
-
-Both variables are required and override the saved login for queries and connection checks. `scope auth status` reports them as the credential source and endpoint, and still shows the signed-in account and workspace when a login is stored. Setting only one fails instead of falling back to your login. Unset both to return to your logged-in workspace.
-
-For SDK setup, get the endpoint with `scope workspace get` and create an application key with `scope api-key create <name>`. Use the same endpoint and key in your SDK configuration, then run `scope doctor` to verify them. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
+The CLI connects with your login and its selected workspace; it does not accept API keys. For an application, get the endpoint with `scope workspace get` and create an API key with `scope api-key create <name>`, then pass both to your SDK client. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
 
 ## Development
 

@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -31,7 +30,6 @@ import (
 var (
 	ErrNotLoggedIn           = errors.New("not logged in")
 	ErrAlreadyLoggedIn       = errors.New("a renewable login is already stored")
-	ErrInvalidMachineEnv     = errors.New("invalid machine credentials")
 	ErrApprovalRequired      = errors.New("account is awaiting approval")
 	ErrNoWorkspaces          = errors.New("account has no workspaces")
 	ErrNoWorkspaceSelected   = errors.New("no workspace is selected")
@@ -80,7 +78,6 @@ type Manager struct {
 	LockFile    string
 	Now         func() time.Time
 	Sleep       func(time.Duration)
-	Getenv      func(string) string
 }
 
 // Access contains everything needed to connect to the data plane.
@@ -88,7 +85,6 @@ type Access struct {
 	Endpoint    string
 	APIKey      string
 	WorkspaceID string
-	Mode        string
 }
 
 type Account struct {
@@ -110,26 +106,6 @@ func (m *Manager) sleep(duration time.Duration) {
 		return
 	}
 	time.Sleep(duration)
-}
-
-func (m *Manager) getenv(name string) string {
-	if m.Getenv != nil {
-		return m.Getenv(name)
-	}
-	return os.Getenv(name)
-}
-
-// A partial environment is rejected instead of falling through to a human login.
-func (m *Manager) MachineAccess() (Access, bool, error) {
-	endpoint := strings.TrimSpace(m.getenv("SCOPEDB_ENDPOINT"))
-	apiKey := strings.TrimSpace(m.getenv("SCOPEDB_API_KEY"))
-	if endpoint == "" && apiKey == "" {
-		return Access{}, false, nil
-	}
-	if endpoint == "" || apiKey == "" {
-		return Access{}, false, fmt.Errorf("%w: SCOPEDB_ENDPOINT and SCOPEDB_API_KEY must be set together", ErrInvalidMachineEnv)
-	}
-	return Access{Endpoint: endpoint, APIKey: apiKey, Mode: "api_key"}, true, nil
 }
 
 // RenewableLogin reports the stored login that can still be renewed, without refreshing it.
@@ -371,10 +347,6 @@ func (m *Manager) deleteIgnoringMissing() error {
 }
 
 func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
-	if access, active, err := m.MachineAccess(); active || err != nil {
-		return access, err
-	}
-
 	account, state, err := m.Account(ctx)
 	if err != nil {
 		return Access{}, err
@@ -400,7 +372,6 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 			Endpoint:    details.Connection.APIBaseURL,
 			APIKey:      state.DataToken,
 			WorkspaceID: workspaceID,
-			Mode:        "oauth",
 		}, nil
 	}
 
@@ -425,7 +396,6 @@ func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 		Endpoint:    details.Connection.APIBaseURL,
 		APIKey:      exchanged.AccessToken,
 		WorkspaceID: workspaceID,
-		Mode:        "oauth",
 	}, nil
 }
 

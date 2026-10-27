@@ -28,8 +28,6 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const environmentCredentialSource = "environment"
-
 type statusView struct {
 	ControlURL            string `json:"control_url,omitempty"`
 	Email                 string `json:"email,omitempty"`
@@ -47,10 +45,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "status",
 		Short: "Show authentication source, identity, and connection target",
-		Long: "Show authentication source, identity, and connection target.\n" +
-			"With SCOPEDB_ENDPOINT and SCOPEDB_API_KEY set, reports them as the credential source and endpoint,\n" +
-			"and also shows the signed-in account and workspace when a login is stored.\n" +
-			"Otherwise verifies your CLI login.\n" +
+		Long: "Show authentication source, identity, and connection target after verifying your CLI login.\n" +
 			"Run 'scope doctor' to verify query access or 'scope workspace get' for deployment details.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -61,29 +56,9 @@ func (a *app) newStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			access, machine, machineErr := runtime.auth.MachineAccess()
-			if machineErr != nil {
-				return machineErr
-			}
-
 			view, err := a.readStatus(cmd.Context(), runtime)
 			if err != nil {
-				if !machine {
-					return err
-				}
-				if ctxErr := cmd.Context().Err(); ctxErr != nil {
-					return ctxErr
-				}
-				// Environment credentials remain usable without a login, so an unreadable
-				// login must not hide the configured connection target.
-				return renderStatus(a.out, format, statusView{
-					CredentialSource: environmentCredentialSource, Endpoint: access.Endpoint,
-				})
-			}
-			if machine {
-				view.CredentialSource = environmentCredentialSource
-				view.CredentialFile = ""
-				view.Endpoint = access.Endpoint
+				return err
 			}
 			return renderStatus(a.out, format, view)
 		},

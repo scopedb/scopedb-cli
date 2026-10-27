@@ -387,6 +387,31 @@ func saveLogin(t *testing.T, store *credential.PlaintextStore, controlURL, works
 	return state
 }
 
+func setupDataPlaneLogin(t *testing.T, endpoint string) (*fakeControlPlane, *credential.PlaintextStore) {
+	t.Helper()
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+	fake.Details["ws-1"] = controlplane.WorkspaceDetails{
+		Workspace:    fake.Workspaces[0],
+		Connection:   controlplane.Connection{APIBaseURL: endpoint},
+		Provisioning: controlplane.Provisioning{Status: "ready"},
+	}
+	fake.Exchange = controlplane.TokenExchangeResponse{
+		AccessToken: "fixture-secret", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Hour).UTC(),
+	}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+	return fake, store
+}
+
+func (f *fakeControlPlane) dataClient(data roundTripFunc) *http.Client {
+	return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if strings.HasPrefix(r.URL.String(), f.URL+"/") {
+			return http.DefaultTransport.RoundTrip(r)
+		}
+		return data(r)
+	})}
+}
+
 func runFakeCommand(t *testing.T, fake *fakeControlPlane, args ...string) (string, string, error) {
 	t.Helper()
 	return runCommandWith(t, Dependencies{OpenURL: fake.authorizationURL(t)}, append([]string{"--control-url", fake.URL}, args...)...)

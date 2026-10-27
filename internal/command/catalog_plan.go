@@ -16,7 +16,6 @@ package command
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -29,13 +28,12 @@ import (
 )
 
 type catalogPlan struct {
-	Version        int             `json:"version"`
-	Endpoint       string          `json:"endpoint"`
-	WorkspaceID    string          `json:"workspace_id,omitempty"`
-	CredentialHash string          `json:"credential_hash,omitempty"`
-	Resource       catalogResource `json:"resource"`
-	Definition     json.RawMessage `json:"definition"`
-	ETag           string          `json:"etag"`
+	Version     int             `json:"version"`
+	Endpoint    string          `json:"endpoint"`
+	WorkspaceID string          `json:"workspace_id,omitempty"`
+	Resource    catalogResource `json:"resource"`
+	Definition  json.RawMessage `json:"definition"`
+	ETag        string          `json:"etag"`
 	scopedb.CatalogResult[json.RawMessage]
 }
 
@@ -98,11 +96,6 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 		return err
 	}
 	endpoint := strings.TrimRight(access.Endpoint, "/")
-	credentialHash := ""
-	if access.WorkspaceID == "" {
-		// Machine credentials carry no workspace ID, so pin the credential without storing it.
-		credentialHash = fmt.Sprintf("%x", sha256.Sum256([]byte(access.APIKey)))
-	}
 	client, err := scopedb.NewClient(scopedb.Config{
 		Endpoint: access.Endpoint, APIKey: access.APIKey, HTTPClient: a.httpClient,
 		// Use the CLI request budget instead of the SDK's default write timeout.
@@ -120,8 +113,8 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 		return catalog.Apply(ctx, plan.Definition, controls)
 	}
 	if options.plan != "" {
-		if plan.Endpoint != endpoint || plan.WorkspaceID != access.WorkspaceID || plan.CredentialHash != credentialHash {
-			return usageError("plan targets a different connection, workspace, or machine credential; select its connection or generate a new plan")
+		if plan.Endpoint != endpoint || plan.WorkspaceID != access.WorkspaceID {
+			return usageError("plan targets a different connection or workspace; select its workspace or generate a new plan")
 		}
 	} else {
 		ctx, cancel := timeoutContext(cmd.Context(), options.requestTimeout)
@@ -131,7 +124,6 @@ func (a *app) changeCatalog(cmd *cobra.Command, action string, options catalogOp
 			return err
 		}
 		plan.Version, plan.Endpoint, plan.WorkspaceID = 1, endpoint, access.WorkspaceID
-		plan.CredentialHash = credentialHash
 		plan.ETag, plan.CatalogResult = change.ETag, change
 		diff, err := catalogDiff(plan.Resource, plan.CatalogResult)
 		if err != nil {

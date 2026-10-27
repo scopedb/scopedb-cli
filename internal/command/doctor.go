@@ -49,7 +49,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 		Use:   "doctor",
 		Short: "Check local configuration and ScopeDB connectivity",
 		Long: "Check configuration, authentication, and connectivity by running SELECT 1 AS ready.\n" +
-			"Uses SCOPEDB_ENDPOINT and SCOPEDB_API_KEY when both are set; otherwise uses your login.\n" +
+			"Uses your CLI login and its selected workspace.\n" +
 			"Incomplete account setup is reported as a warning without running a query.\n" +
 			"--timeout 0 disables the per-check limit; individual control-plane requests still have a 15s limit.",
 		Args: cobra.NoArgs,
@@ -68,52 +68,41 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				{Name: "configuration", Status: "pass", Details: runtime.paths.Config},
 			}}
 
-			access, machine, machineErr := runtime.auth.MachineAccess()
-			switch {
-			case machineErr != nil:
+			healthCtx, cancel := timeoutContext(cmd.Context(), timeout)
+			healthErr := runtime.control.Health(healthCtx)
+			cancel()
+			if healthErr != nil {
 				report.OK = false
-				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: machineErr.Error()})
-			case machine:
-				report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: "environment"})
-				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: "API key from environment for " + access.Endpoint})
-				a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
-			default:
-				healthCtx, cancel := timeoutContext(cmd.Context(), timeout)
-				healthErr := runtime.control.Health(healthCtx)
-				cancel()
-				if healthErr != nil {
-					report.OK = false
-					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "fail", Details: clierror.Compact(NormalizeError(healthErr))})
-				} else {
-					report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "pass", Details: runtime.config.ControlURL})
-				}
+				report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "fail", Details: clierror.Compact(NormalizeError(healthErr))})
+			} else {
+				report.Checks = append(report.Checks, doctorCheck{Name: "control plane", Status: "pass", Details: runtime.config.ControlURL})
+			}
 
-				state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
-				if errors.Is(loadErr, credential.ErrNotFound) || errors.Is(loadErr, credential.ErrInvalidState) {
-					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login' or set SCOPEDB_ENDPOINT and SCOPEDB_API_KEY"})
-				} else if loadErr != nil {
+			state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
+			if errors.Is(loadErr, credential.ErrNotFound) || errors.Is(loadErr, credential.ErrInvalidState) {
+				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login'"})
+			} else if loadErr != nil {
+				report.OK = false
+				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(loadErr))})
+			} else {
+				source := state.Source
+				if source == credential.SourcePlaintext {
+					source += " (" + runtime.paths.CredentialsFile + ")"
+				}
+				report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: source})
+				accountCtx, accountCancel := timeoutContext(cmd.Context(), timeout)
+				account, _, accountErr := runtime.auth.Account(accountCtx)
+				accountCancel()
+				if accountErr != nil {
 					report.OK = false
-					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(loadErr))})
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(accountErr))})
 				} else {
-					source := state.Source
-					if source == credential.SourcePlaintext {
-						source += " (" + runtime.paths.CredentialsFile + ")"
-					}
-					report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: source})
-					accountCtx, accountCancel := timeoutContext(cmd.Context(), timeout)
-					account, _, accountErr := runtime.auth.Account(accountCtx)
-					accountCancel()
-					if accountErr != nil {
-						report.OK = false
-						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(accountErr))})
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: account.User.Email})
+					if setupErr := workspaceSetupError(auth.RequireWorkspace(account)); setupErr != nil {
+						report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "warn", Details: fmt.Sprintf("%s; %s", setupErr.Message, setupErr.Hint)})
 					} else {
-						report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: account.User.Email})
-						if setupErr := workspaceSetupError(auth.RequireWorkspace(account)); setupErr != nil {
-							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "warn", Details: fmt.Sprintf("%s; %s", setupErr.Message, setupErr.Hint)})
-						} else {
-							report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "pass", Details: account.SelectedWorkspaceID})
-							a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
-						}
+						report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "pass", Details: account.SelectedWorkspaceID})
+						a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 					}
 				}
 			}
@@ -148,9 +137,6 @@ func (a *app) checkDoctorDataPlane(ctx context.Context, runtime *runtimeContext,
 		check.Status = "fail"
 		err = NormalizeError(err)
 		check.Details = clierror.Compact(err)
-		if clierror.ExitCode(err) == clierror.ExitAuth && access.Mode == "api_key" {
-			check.Details += "; check SCOPEDB_ENDPOINT and SCOPEDB_API_KEY belong to the same workspace and the key has not expired or been revoked"
-		}
 	}
 	report.Checks = append(report.Checks, check)
 }

@@ -17,7 +17,6 @@ package command
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -169,98 +168,27 @@ func TestStatusWithoutLogin(t *testing.T) {
 	require.Contains(t, clierror.Render(err), "scope auth login")
 }
 
-func TestStatusMachineCredentialsSkipTheLogin(t *testing.T) {
-	fake, _ := setupCLITest(t)
-	out, diagnostics, err := runCommandWith(t, Dependencies{
-		Getenv: machineCredentials,
-	}, "--control-url", fake.URL, "auth", "status", "--format", "json")
-	require.NoError(t, err)
-	require.JSONEq(t, `{"credential_source":"environment","endpoint":"https://data.example.com"}`, out)
-	require.NotContains(t, out+diagnostics, "machine-secret")
-}
+func TestLoginWorkspaceIgnoresEnvironmentCredentials(t *testing.T) {
+	fake, _ := setupDataPlaneLogin(t, "https://workspace.example.com")
+	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
+	t.Setenv("SCOPEDB_API_KEY", "machine-secret")
 
-func TestStatusMachineCredentialsKeepTheLoginIdentity(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
-	fake.Details["ws-1"] = controlplane.WorkspaceDetails{
-		Workspace:    workspaceFixture("ws-1", "Alpha"),
-		Connection:   controlplane.Connection{APIBaseURL: "https://workspace.example.com"},
-		Provisioning: controlplane.Provisioning{Status: "ready"},
-	}
-	saveStoredLogin(t, store, fake.URL, "ws-1")
-
-	out, _, err := runCommandWith(t, Dependencies{
-		Getenv: machineCredentials,
-	}, "--control-url", fake.URL, "auth", "status", "--format", "json")
+	out, _, err := runCommand(t, "auth", "status", "--format", "json")
 	require.NoError(t, err)
 	var view statusView
 	require.NoError(t, json.Unmarshal([]byte(out), &view))
-	require.Equal(t, "environment", view.CredentialSource)
-	require.Equal(t, "https://data.example.com", view.Endpoint)
-	require.Equal(t, "dev@example.com", view.Email)
-	require.Equal(t, "active", view.UserStatus)
+	require.Equal(t, credential.SourcePlaintext, view.CredentialSource)
 	require.Equal(t, "ws-1", view.WorkspaceID)
-	require.Equal(t, "Alpha", view.WorkspaceName)
-	require.NotEmpty(t, view.RefreshTokenExpiresAt)
-}
+	require.Equal(t, "https://workspace.example.com", view.Endpoint)
 
-func machineCredentials(name string) string {
-	switch name {
-	case "SCOPEDB_ENDPOINT":
-		return "https://data.example.com"
-	case "SCOPEDB_API_KEY":
-		return "machine-secret"
-	}
-	return ""
-}
-
-func TestStatusRefreshesExpiredLogin(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
-	fake.Details["ws-1"] = controlplane.WorkspaceDetails{
-		Workspace:    controlplane.Workspace{ID: "ws-1"},
-		Provisioning: controlplane.Provisioning{Status: "ready"},
-	}
-	state := saveStoredLogin(t, store, fake.URL, "ws-1")
-	state.AccessTokenExpiresAt = time.Now().Add(-time.Hour)
-	require.NoError(t, store.Save(fake.URL, state))
-
-	_, _, err := runCommand(t, "--control-url", fake.URL, "auth", "status", "--format", "json")
-	require.NoError(t, err, "an expired access token refreshes before the account lookup")
-	require.Equal(t, 1, fake.Refreshes)
-}
-
-func TestQueryClearsARevokedGrant(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
-	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/user" {
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"message":"invalid access token"}`))
-			return
-		}
-		fake.serve(w, r)
-	}))
-	t.Cleanup(controlServer.Close)
-	fake.URL = controlServer.URL
-	fake.Issuer = controlServer.URL
-	fake.TokenStatus = http.StatusBadRequest
-	fake.TokenError = "invalid_grant"
-	saveStoredLogin(t, store, fake.URL, "ws-1")
-
-	out, _, err := runCommand(t, "--control-url", fake.URL, "query", "show tables")
-	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
-	require.Empty(t, out)
-	require.Contains(t, clierror.Render(err), "scope auth login")
-	require.Equal(t, 1, fake.Refreshes)
-	_, loadErr := store.Load(fake.URL)
-	require.ErrorIs(t, loadErr, credential.ErrNotFound)
-}
-
-func TestQueryWithoutLoginReportsLoginHint(t *testing.T) {
-	fake, _ := setupCLITest(t)
-	out, _, err := runCommand(t, "--control-url", fake.URL, "query", "SELECT 1 AS ready")
-	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(NormalizeError(err)))
-	require.Empty(t, out)
-	require.Contains(t, clierror.Render(NormalizeError(err)), "scope auth login")
+	queries := 0
+	out, _, err = runCommandWith(t, Dependencies{HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
+		queries++
+		require.Equal(t, "https://workspace.example.com/v1/statements", r.URL.String())
+		require.NotContains(t, r.Header.Get("Authorization"), "machine-secret")
+		return finishedQueryResponse(r), nil
+	})}, "query", "SELECT 1 AS ready", "--format", "json")
+	require.NoError(t, err)
+	require.Equal(t, 1, queries)
+	require.JSONEq(t, `[{"ready":1}]`, out)
 }
