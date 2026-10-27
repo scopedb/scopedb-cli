@@ -11,6 +11,8 @@ All significant changes to this project will be documented in this file.
 
 ### Improvements
 
+* `scope auth status` shows the signed-in account and selected workspace when `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` are set, while `credential_source` and `endpoint` continue to report the environment credentials. The command still succeeds without a usable login.
+* `scope auth logout` removes and revokes the saved login while `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY` are set instead of refusing, and warns that data commands keep using the environment credentials.
 * Source installations require Go 1.27.3 or newer to include its certificate-validation security fix.
 * Hide service URL override flags from command help and shell completion.
 

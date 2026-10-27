@@ -29,7 +29,7 @@ Login keeps a valid workspace selection or automatically selects the first works
 
 If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id>`.
 
-`scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`, and the credential file path when using plaintext. In login mode it verifies your login against ScopeDB and reports when the login expires; in environment mode it displays the configured endpoint without validating the API key. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
+`scope auth status` reports the active credential source: `environment`, `keyring`, or `plaintext`, and the credential file path when using plaintext. In login mode it verifies your login against ScopeDB and reports when the login expires; in environment mode it displays the configured endpoint without validating the API key, and also shows the signed-in account and workspace when a login is stored. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
 
 `scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
 
@@ -86,13 +86,13 @@ scope doctor --timeout 15s
 scope query --format json 'SELECT 1 AS ready'
 ```
 
-`scope auth status` reports `environment` as the credential source when both variables are set. Queries and connection checks then use those credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login session and warns when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
+`scope auth status` reports `environment` as the credential source and the environment endpoint when both variables are set, and still shows the account and workspace of your login when one is stored. Queries and connection checks then use the environment credentials even if you are logged in to another workspace. `scope workspace use` selects a workspace for your login session and warns when environment credentials override data commands. Workspace details and API key management also use your login. A partial environment pair prevents data access even after selecting a workspace. To return to login-based queries, unset both variables:
 
 ```sh
 unset SCOPEDB_ENDPOINT SCOPEDB_API_KEY
 ```
 
-To end your login session, run `scope auth logout` after unsetting both variables. The command refuses to log out while machine credentials are configured; it does not revoke application API keys.
+To end your login session, run `scope auth logout`. It removes and revokes the login even while both variables are set, and warns that data commands keep using the environment credentials; unset both to stop using them. Logout does not revoke application API keys.
 
 ## Connect an SDK
 

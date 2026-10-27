@@ -893,21 +893,30 @@ func TestLogoutKeepsLocalRemovalWhenRevocationFails(t *testing.T) {
 	require.ErrorIs(t, loadErr, credential.ErrNotFound)
 }
 
-func TestLogoutRejectsEnvironmentCredentials(t *testing.T) {
+func TestLogoutRemovesTheLoginWithEnvironmentCredentials(t *testing.T) {
+	fake, store := setupCLITest(t)
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
 	out, diagnostics, err := runCommandWith(t, Dependencies{
-		Getenv: func(name string) string {
-			switch name {
-			case "SCOPEDB_ENDPOINT":
-				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
-				return "machine-secret"
-			}
-			return ""
-		},
-	}, "auth", "logout", "--format", "json")
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Empty(t, out)
-	require.NotContains(t, diagnostics, "machine-secret")
+		Getenv: machineCredentials,
+	}, "--control-url", fake.URL, "auth", "logout", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"changed":true}`, out)
+	require.Contains(t, diagnostics, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
+	require.NotContains(t, out+diagnostics, "machine-secret")
+	require.Equal(t, []string{"ort_refresh"}, fake.RevokedTokens)
+	_, loadErr := store.Load(fake.URL)
+	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+}
+
+func TestLogoutWithoutLoginIgnoresEnvironmentCredentials(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	out, diagnostics, err := runCommandWith(t, Dependencies{
+		Getenv: machineCredentials,
+	}, "--control-url", fake.URL, "auth", "logout", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"changed":false}`, out)
+	require.Empty(t, diagnostics)
 }
 
 func TestLoginReportsUnreachableControlPlane(t *testing.T) {

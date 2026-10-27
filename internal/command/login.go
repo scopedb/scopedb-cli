@@ -544,11 +544,6 @@ func (a *app) newLogoutCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, active, machineErr := runtime.auth.MachineAccess(); machineErr != nil {
-				return machineErr
-			} else if active {
-				return clierror.WithHint(clierror.New(clierror.ExitUsage, "environment-provided API keys cannot be logged out"), "unset SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
-			}
 
 			err = runtime.auth.Logout(cmd.Context())
 			if errors.Is(err, auth.ErrNotLoggedIn) {
@@ -561,6 +556,11 @@ func (a *app) newLogoutCommand() *cobra.Command {
 
 			if err != nil {
 				return err
+			}
+			if _, active, machineErr := runtime.auth.MachineAccess(); machineErr == nil && active {
+				if _, err := fmt.Fprintln(a.errOut, "Warning: data commands still use SCOPEDB_ENDPOINT and SCOPEDB_API_KEY from the environment; unset both to stop using them."); err != nil {
+					return err
+				}
 			}
 			if format == structuredFormatJSON {
 				return writeJSON(a.out, logoutResult{Changed: true})

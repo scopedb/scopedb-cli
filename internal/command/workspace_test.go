@@ -170,21 +170,48 @@ func TestStatusWithoutLogin(t *testing.T) {
 }
 
 func TestStatusMachineCredentialsSkipTheLogin(t *testing.T) {
+	fake, _ := setupCLITest(t)
 	out, diagnostics, err := runCommandWith(t, Dependencies{
-		Sleep: func(time.Duration) {},
-		Getenv: func(name string) string {
-			switch name {
-			case "SCOPEDB_ENDPOINT":
-				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
-				return "machine-secret"
-			}
-			return ""
-		},
-	}, "auth", "status", "--format", "json")
+		Getenv: machineCredentials,
+	}, "--control-url", fake.URL, "auth", "status", "--format", "json")
 	require.NoError(t, err)
 	require.JSONEq(t, `{"credential_source":"environment","endpoint":"https://data.example.com"}`, out)
 	require.NotContains(t, out+diagnostics, "machine-secret")
+}
+
+func TestStatusMachineCredentialsKeepTheLoginIdentity(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+	fake.Details["ws-1"] = controlplane.WorkspaceDetails{
+		Workspace:    workspaceFixture("ws-1", "Alpha"),
+		Connection:   controlplane.Connection{APIBaseURL: "https://workspace.example.com"},
+		Provisioning: controlplane.Provisioning{Status: "ready"},
+	}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runCommandWith(t, Dependencies{
+		Getenv: machineCredentials,
+	}, "--control-url", fake.URL, "auth", "status", "--format", "json")
+	require.NoError(t, err)
+	var view statusView
+	require.NoError(t, json.Unmarshal([]byte(out), &view))
+	require.Equal(t, "environment", view.CredentialSource)
+	require.Equal(t, "https://data.example.com", view.Endpoint)
+	require.Equal(t, "dev@example.com", view.Email)
+	require.Equal(t, "active", view.UserStatus)
+	require.Equal(t, "ws-1", view.WorkspaceID)
+	require.Equal(t, "Alpha", view.WorkspaceName)
+	require.NotEmpty(t, view.RefreshTokenExpiresAt)
+}
+
+func machineCredentials(name string) string {
+	switch name {
+	case "SCOPEDB_ENDPOINT":
+		return "https://data.example.com"
+	case "SCOPEDB_API_KEY":
+		return "machine-secret"
+	}
+	return ""
 }
 
 func TestStatusRefreshesExpiredLogin(t *testing.T) {

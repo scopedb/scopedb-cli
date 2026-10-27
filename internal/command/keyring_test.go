@@ -152,6 +152,19 @@ func TestQueryEnvironmentCredentialsBypassUnavailableKeyring(t *testing.T) {
 	require.Empty(t, diagnostics)
 }
 
+func TestStatusEnvironmentCredentialsIgnoreUnavailableKeyring(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	keyring.MockInitWithError(errors.New("D-Bus session is unavailable"))
+	t.Cleanup(keyring.MockInit)
+
+	out, diagnostics, err := runCommandWith(t, Dependencies{
+		Getenv: machineCredentials,
+	}, "--control-url", fake.URL, "auth", "status", "--format", "json")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"credential_source":"environment","endpoint":"https://data.example.com"}`, out)
+	require.Empty(t, diagnostics)
+}
+
 func TestDeviceLoginWithExplicitPlaintextBypassesUnavailableKeyring(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
