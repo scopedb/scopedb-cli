@@ -15,7 +15,6 @@
 package command
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -56,8 +55,40 @@ func (a *app) newStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			view, err := a.readStatus(cmd.Context(), runtime)
+			ctx := cmd.Context()
+			account, state, err := runtime.auth.Account(ctx)
 			if err != nil {
+				return err
+			}
+			if account.SelectedWorkspaceID != "" && errors.Is(auth.RequireWorkspace(account), auth.ErrWorkspaceUnavailable) {
+				if err := runtime.auth.SelectWorkspace(ctx, ""); err != nil {
+					return err
+				}
+				account.SelectedWorkspaceID = ""
+				if _, err := fmt.Fprintln(a.errOut, "The selected workspace is no longer available; no workspace is selected."); err != nil {
+					return err
+				}
+			}
+			view := statusView{
+				ControlURL:            runtime.config.ControlURL,
+				Email:                 account.User.Email,
+				CredentialSource:      state.Source,
+				UserStatus:            account.User.Status,
+				RefreshTokenExpiresAt: refreshTokenExpiry(state.RefreshTokenExpiresAt),
+				WorkspaceID:           account.SelectedWorkspaceID,
+			}
+			if state.Source == credential.SourcePlaintext {
+				view.CredentialFile = runtime.paths.CredentialsFile
+			}
+			if account.SelectedWorkspaceID != "" {
+				details, err := runtime.control.GetWorkspace(ctx, state.AccessToken, account.SelectedWorkspaceID)
+				if err != nil {
+					return err
+				}
+				view.WorkspaceName = details.Workspace.Name()
+				view.Endpoint = details.Connection.APIBaseURL
+			}
+			if err := a.writeWorkspaceSetup(account); err != nil {
 				return err
 			}
 			return renderStatus(a.out, format, view)
@@ -65,45 +96,6 @@ func (a *app) newStatusCommand() *cobra.Command {
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatTable, "output format: table or json")
 	return command
-}
-
-func (a *app) readStatus(ctx context.Context, runtime *runtimeContext) (statusView, error) {
-	account, state, err := runtime.auth.Account(ctx)
-	if err != nil {
-		return statusView{}, err
-	}
-	if account.SelectedWorkspaceID != "" && errors.Is(auth.RequireWorkspace(account), auth.ErrWorkspaceUnavailable) {
-		if err := runtime.auth.SelectWorkspace(ctx, ""); err != nil {
-			return statusView{}, err
-		}
-		account.SelectedWorkspaceID = ""
-		if _, err := fmt.Fprintln(a.errOut, "The selected workspace is no longer available; no workspace is selected."); err != nil {
-			return statusView{}, err
-		}
-	}
-	view := statusView{
-		ControlURL:            runtime.config.ControlURL,
-		Email:                 account.User.Email,
-		CredentialSource:      state.Source,
-		UserStatus:            account.User.Status,
-		RefreshTokenExpiresAt: refreshTokenExpiry(state.RefreshTokenExpiresAt),
-		WorkspaceID:           account.SelectedWorkspaceID,
-	}
-	if state.Source == credential.SourcePlaintext {
-		view.CredentialFile = runtime.paths.CredentialsFile
-	}
-	if account.SelectedWorkspaceID != "" {
-		details, err := runtime.control.GetWorkspace(ctx, state.AccessToken, account.SelectedWorkspaceID)
-		if err != nil {
-			return statusView{}, err
-		}
-		view.WorkspaceName = details.Workspace.Name()
-		view.Endpoint = details.Connection.APIBaseURL
-	}
-	if err := a.writeWorkspaceSetup(account); err != nil {
-		return statusView{}, err
-	}
-	return view, nil
 }
 
 func refreshTokenExpiry(expiresAt time.Time) string {
