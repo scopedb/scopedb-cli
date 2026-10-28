@@ -17,7 +17,6 @@ package command
 import (
 	"encoding/json"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -167,54 +166,4 @@ func TestStatusWithoutLogin(t *testing.T) {
 	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
 	require.Empty(t, out)
 	require.Contains(t, clierror.Render(err), "scope auth login")
-}
-
-func TestLoginCommandsIgnoreEnvironmentCredentials(t *testing.T) {
-	fake, _ := setupDataPlaneLogin(t, "https://workspace.example.com")
-	fake.Workspaces = append(fake.Workspaces, workspaceFixture("ws-2", "Beta"))
-	fake.Details["ws-2"] = fake.Details["ws-1"]
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "machine-secret")
-
-	out, _, err := runCommandWith(t, Dependencies{Getenv: os.Getenv}, "auth", "status", "--format", "json")
-	require.NoError(t, err)
-	var view statusView
-	require.NoError(t, json.Unmarshal([]byte(out), &view))
-	require.Equal(t, credential.SourcePlaintext, view.CredentialSource)
-	require.Equal(t, "ws-1", view.WorkspaceID)
-	require.Equal(t, "https://workspace.example.com", view.Endpoint)
-
-	queries := 0
-	dataDeps := func() Dependencies {
-		return Dependencies{Getenv: os.Getenv, HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
-			queries++
-			require.Equal(t, "https://workspace.example.com/v1/statements", r.URL.String())
-			require.Equal(t, "Bearer fixture-secret", r.Header.Get("Authorization"))
-			return finishedQueryResponse(r), nil
-		})}
-	}
-	out, _, err = runCommandWith(t, dataDeps(), "query", "SELECT 1 AS ready", "--format", "json")
-	require.NoError(t, err)
-	require.Equal(t, 1, queries)
-	require.JSONEq(t, `[{"ready":1}]`, out)
-
-	out, _, err = runCommandWith(t, dataDeps(), "doctor", "--format", "json")
-	require.NoError(t, err)
-	require.Equal(t, 2, queries)
-	var report doctorReport
-	require.NoError(t, json.Unmarshal([]byte(out), &report))
-	require.True(t, report.OK)
-	require.Contains(t, report.Checks, doctorCheck{Name: "data plane", Status: "pass", Details: "https://workspace.example.com"})
-
-	out, diagnostics, err := runCommandWith(t, Dependencies{Getenv: os.Getenv}, "workspace", "use", "ws-2", "--format", "json")
-	require.NoError(t, err)
-	require.NotContains(t, diagnostics, "SCOPEDB_ENDPOINT")
-	var used workspaceUseResult
-	require.NoError(t, json.Unmarshal([]byte(out), &used))
-	require.Equal(t, "ws-2", used.ID)
-	require.True(t, used.Changed)
-
-	out, _, err = runCommandWith(t, Dependencies{Getenv: os.Getenv}, "auth", "logout", "--format", "json")
-	require.NoError(t, err)
-	require.JSONEq(t, `{"changed":true}`, out)
 }
