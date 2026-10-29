@@ -801,6 +801,118 @@ func TestSelectWorkspaceRequiresLogin(t *testing.T) {
 	require.ErrorIs(t, manager.SelectWorkspace(t.Context(), ""), ErrNotLoggedIn)
 }
 
+func workloadState(now time.Time, expiresAt time.Time) credential.State {
+	return credential.State{
+		Kind:            credential.KindWorkload,
+		WorkspaceID:     "ws-1",
+		Endpoint:        "https://data.example.com",
+		APIKey:          "sk_workload",
+		APIKeyExpiresAt: expiresAt,
+		Workload: &credential.WorkloadIdentity{
+			PolicyID: "wip_1", Name: "catalog-ci", Provider: "github", Subject: "repo:acme/infra:environment:production",
+		},
+	}
+}
+
+func TestResolveDataAccessWorkloadReturnsTheStoredCredential(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: workloadState(now, now.Add(30*time.Minute))}
+	control := &fakeControl{getUser: func(string) (controlplane.User, error) {
+		return controlplane.User{}, errors.New("GetUser must not be called for a workload login")
+	}}
+	manager := newManager(t, store, control, &fakeOAuth{}, now)
+
+	access, err := manager.ResolveDataAccess(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, Access{
+		Endpoint:    "https://data.example.com",
+		APIKey:      "sk_workload",
+		WorkspaceID: "ws-1",
+	}, access)
+	require.Zero(t, control.exchangeCalls)
+}
+
+func TestResolveDataAccessRejectsAnExpiredWorkloadCredential(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: workloadState(now, now.Add(-time.Minute))}
+	oauth := &fakeOAuth{}
+	manager := newManager(t, store, &fakeControl{}, oauth, now)
+
+	_, err := manager.ResolveDataAccess(t.Context())
+	require.ErrorIs(t, err, ErrWorkloadExpired)
+	require.Zero(t, oauth.refreshCalls(), "an expired workload credential must not attempt an OAuth refresh")
+}
+
+func TestAccountCommandsRejectAWorkloadCredential(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: workloadState(now, now.Add(30*time.Minute))}
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
+
+	_, err := manager.LoadAccess(t.Context())
+	require.ErrorIs(t, err, ErrWorkloadLogin)
+	_, _, err = manager.Account(t.Context())
+	require.ErrorIs(t, err, ErrWorkloadLogin)
+	_, err = manager.LoadWorkspaceAccess(t.Context())
+	require.ErrorIs(t, err, ErrWorkloadLogin)
+	require.ErrorIs(t, manager.SelectWorkspace(t.Context(), "ws-2"), ErrWorkloadLogin)
+	require.Equal(t, "ws-1", store.saved().WorkspaceID, "a rejected selection must not rewrite the binding")
+}
+
+func TestSaveWorkloadLoginReplacesAWorkloadCredential(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: workloadState(now, now.Add(30*time.Minute))}
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
+
+	replacement := workloadState(now, now.Add(45*time.Minute))
+	replacement.APIKey = "sk_new"
+	_, found, written, err := manager.SaveWorkloadLogin(t.Context(), replacement)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "sk_new", written)
+	require.Equal(t, "sk_new", store.saved().APIKey)
+}
+
+func TestSaveWorkloadLoginNeverReplacesAnOAuthLogin(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour))}
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
+
+	_, _, _, err := manager.SaveWorkloadLogin(t.Context(), workloadState(now, now.Add(30*time.Minute)))
+	require.ErrorIs(t, err, ErrAlreadyLoggedIn)
+	require.Equal(t, "oat_old", store.saved().AccessToken)
+}
+
+func TestSaveWorkloadLoginReplacesUnreadableStoredState(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{invalidHi: true}
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
+
+	_, _, _, err := manager.SaveWorkloadLogin(t.Context(), workloadState(now, now.Add(30*time.Minute)))
+	require.NoError(t, err)
+	require.Equal(t, "sk_workload", store.saved().APIKey)
+}
+
+func TestLogoutWorkloadDeletesWithoutRevoking(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: workloadState(now, now.Add(30*time.Minute))}
+	oauth := &fakeOAuth{}
+	manager := newManager(t, store, &fakeControl{}, oauth, now)
+
+	require.NoError(t, manager.Logout(t.Context()))
+	require.Empty(t, oauth.revoked, "a workload login has no grant to revoke")
+	require.False(t, store.stored())
+}
+
+func TestOAuthLoginRefusesWhileAWorkloadCredentialIsStored(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{present: true, state: workloadState(now, now.Add(30*time.Minute))}
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
+
+	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	require.ErrorIs(t, err, ErrAlreadyLoggedIn)
+	require.Equal(t, "sk_workload", store.saved().APIKey)
+}
+
 func TestSelectWorkspaceReportsSaveFailure(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{present: true, state: loginState(now, now.Add(time.Hour)), saveErr: errors.New("disk full")}

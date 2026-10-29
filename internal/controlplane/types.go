@@ -79,6 +79,27 @@ type TokenExchangeResponse struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+// WorkloadIdentitySummary names the trust policy the exchange matched. The CLI
+// keeps it for display; the subject is the authorization identity.
+type WorkloadIdentitySummary struct {
+	PolicyID string `json:"policy_id"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Subject  string `json:"subject"`
+}
+
+// WorkloadIdentityExchangeResponse is the data-plane credential the
+// workload-identity exchange issues for a verified CI OIDC token.
+type WorkloadIdentityExchangeResponse struct {
+	AccessToken string                  `json:"access_token"`
+	TokenType   string                  `json:"token_type"`
+	ExpiresIn   int                     `json:"expires_in"`
+	ExpiresAt   time.Time               `json:"expires_at"`
+	WorkspaceID string                  `json:"workspace_id"`
+	Endpoint    string                  `json:"endpoint"`
+	Identity    WorkloadIdentitySummary `json:"identity"`
+}
+
 type CreateAPIKeyRequest struct {
 	Name      string     `json:"name"`
 	Tags      []string   `json:"tags"`

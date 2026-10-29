@@ -58,6 +58,10 @@ type fakeControlPlane struct {
 	Workspaces          []controlplane.Workspace
 	Details             map[string]controlplane.WorkspaceDetails
 	Exchange            controlplane.TokenExchangeResponse
+	WorkloadExchange    controlplane.WorkloadIdentityExchangeResponse
+	WorkloadStatus      int
+	WorkloadBearer      []string
+	WorkloadCalls       int
 	APIKeys             []controlplane.APIKey
 	APIKeyRequests      []controlplane.CreateAPIKeyRequest
 	RevokedAPIKeys      []string
@@ -165,6 +169,19 @@ func (f *fakeControlPlane) serve(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeControlPlane) serveWorkspace(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/workspaces/")
+	if strings.HasSuffix(path, "/workload-identity/exchange") {
+		f.mu.Lock()
+		f.WorkloadCalls++
+		f.WorkloadBearer = append(f.WorkloadBearer, r.Header.Get("Authorization"))
+		status := f.WorkloadStatus
+		f.mu.Unlock()
+		if status != 0 {
+			f.writeJSON(w, status, map[string]string{"message": "workload identity exchange failed"})
+			return
+		}
+		f.writeJSON(w, http.StatusOK, f.WorkloadExchange)
+		return
+	}
 	if strings.HasSuffix(path, "/token-exchange") {
 		f.mu.Lock()
 		f.ExchangeCalls++
@@ -401,6 +418,34 @@ func setupDataPlaneLogin(t *testing.T, endpoint string) (*fakeControlPlane, *cre
 	}
 	saveStoredLogin(t, store, fake.URL, "ws-1")
 	return fake, store
+}
+
+func workloadExchangeFixture(endpoint string) controlplane.WorkloadIdentityExchangeResponse {
+	return controlplane.WorkloadIdentityExchangeResponse{
+		AccessToken: "sk_workload_key", TokenType: "Bearer", ExpiresIn: 1800,
+		ExpiresAt: time.Now().Add(30 * time.Minute).UTC(), WorkspaceID: "ws-1", Endpoint: endpoint,
+		Identity: controlplane.WorkloadIdentitySummary{
+			PolicyID: "wip_1", Name: "catalog-ci", Provider: "github",
+			Subject: "repo:acme/infra:environment:production",
+		},
+	}
+}
+
+func saveWorkloadLogin(t *testing.T, store *credential.PlaintextStore, controlURL, workspaceID string) credential.State {
+	t.Helper()
+	state := credential.State{
+		Kind:            credential.KindWorkload,
+		WorkspaceID:     workspaceID,
+		Endpoint:        "https://data.example.com",
+		APIKey:          "sk_workload_key",
+		APIKeyExpiresAt: time.Now().Add(30 * time.Minute).UTC(),
+		Workload: &credential.WorkloadIdentity{
+			PolicyID: "wip_1", Name: "catalog-ci", Provider: "github",
+			Subject: "repo:acme/infra:environment:production",
+		},
+	}
+	require.NoError(t, store.Save(controlURL, state))
+	return state
 }
 
 func (f *fakeControlPlane) dataClient(data roundTripFunc) *http.Client {

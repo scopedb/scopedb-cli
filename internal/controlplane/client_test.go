@@ -96,6 +96,49 @@ func TestClientEscapesWorkspacePath(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestClientExchangesWorkloadIdentity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, http.MethodPost, request.Method)
+		assert.Equal(t, "/api/workspaces/ws-1/workload-identity/exchange", request.URL.EscapedPath())
+		assert.Equal(t, "Bearer ci-oidc-token", request.Header.Get("Authorization"))
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{
+			"access_token": "sk_data_key", "token_type": "Bearer",
+			"expires_in": 1800, "expires_at": "2026-09-09T01:00:00Z",
+			"workspace_id": "ws-1", "endpoint": "https://data.example.com",
+			"identity": {"policy_id": "wip_1", "name": "ci", "provider": "github", "subject": "repo:acme/x:ref:main"}
+		}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(server.URL, "", server.Client())
+	require.NoError(t, err)
+	response, err := client.ExchangeWorkloadIdentity(t.Context(), "ws-1", "ci-oidc-token")
+	require.NoError(t, err)
+	require.Equal(t, "sk_data_key", response.AccessToken)
+	require.Equal(t, "ws-1", response.WorkspaceID)
+	require.Equal(t, "https://data.example.com", response.Endpoint)
+	require.Equal(t, "repo:acme/x:ref:main", response.Identity.Subject)
+}
+
+func TestClientPreservesWorkloadExchangeRejection(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusUnauthorized)
+		_, _ = writer.Write([]byte(`{"error":{"code":"WORKLOAD_IDENTITY_REJECTED","message":"token rejected"},"request_id":"req-9"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(server.URL, "", server.Client())
+	require.NoError(t, err)
+	_, err = client.ExchangeWorkloadIdentity(t.Context(), "ws-1", "ci-oidc-token")
+	var apiErr *Error
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, http.StatusUnauthorized, apiErr.Status)
+	require.Equal(t, "token rejected", apiErr.Message)
+	require.Equal(t, "req-9", apiErr.RequestID)
+}
+
 func TestClientRevokesAPIKeyByID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		assert.Equal(t, http.MethodDelete, request.Method)

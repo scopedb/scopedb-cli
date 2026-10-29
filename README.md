@@ -78,6 +78,8 @@ The workspace selection is stored locally for the current login, so it does not 
 
 `scope console [page]` provides shortcuts to Console pages: `home` (default), `query`, `data`, `keys`, and `connect`. For example, `scope console query` prints the query page URL; add `--open` to also open it in your browser.
 
+In CI, a job can log in without a browser or a stored secret by exchanging its OIDC token for a short-lived workspace-bound credential: `scope auth login --workload-identity --workspace <id> --insecure-storage`. On GitHub Actions the job only needs `id-token: write` permission; other providers supply the token through `SCOPEDB_OIDC_TOKEN` or `SCOPEDB_OIDC_TOKEN_FILE`. See [Run in CI](docs/connect.md#run-in-ci).
+
 ## Query output
 
 Queries can be provided inline, from a file with `--file` or `-f`, or through stdin. Results go to stdout; use `--format` to select a table, JSON, JSON Lines, or CSV. Use shell redirection to save results to a file.

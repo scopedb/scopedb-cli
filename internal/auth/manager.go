@@ -36,6 +36,8 @@ var (
 	ErrWorkspaceUnavailable  = errors.New("selected workspace is no longer available")
 	ErrLoginExpired          = errors.New("login is no longer valid")
 	ErrCredentialsUnreadable = errors.New("existing credentials could not be read")
+	ErrWorkloadLogin         = errors.New("a CI workload login has no account or workspace management access")
+	ErrWorkloadExpired       = errors.New("the workload credential has expired")
 )
 
 const (
@@ -128,10 +130,19 @@ func (m *Manager) RenewableLogin() (credential.State, bool, error) {
 	return state, true, nil
 }
 
+// StoredLogin returns the stored credential without renewing it, for callers
+// that report on the login itself rather than consume it.
+func (m *Manager) StoredLogin() (credential.State, error) {
+	return m.load()
+}
+
 func (m *Manager) LoadAccess(ctx context.Context) (credential.State, error) {
 	state, err := m.load()
 	if err != nil {
 		return credential.State{}, err
+	}
+	if state.Kind == credential.KindWorkload {
+		return credential.State{}, ErrWorkloadLogin
 	}
 	if state.AccessTokenExpiresAt.After(m.now().Add(accessRefreshAhead)) {
 		return state, nil
@@ -182,6 +193,35 @@ func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (
 	return previous, previousFound, state.AccessToken, nil
 }
 
+// SaveWorkloadLogin stores a CI workload credential under the same lock as
+// SaveLogin. An existing workload credential may be replaced: its key is
+// short-lived and there is no grant to revoke. An OAuth login is never
+// replaced silently, because it holds a grant the user must sign out to end.
+func (m *Manager) SaveWorkloadLogin(ctx context.Context, state credential.State) (credential.State, bool, string, error) {
+	lock, err := filelock.Acquire(ctx, m.LockFile)
+	if err != nil {
+		return credential.State{}, false, "", err
+	}
+	defer func() { _ = lock.Close() }()
+
+	previous, err := m.Credentials.Load(m.ControlURL)
+	previousFound := err == nil
+	var keyringErr *credential.KeyringError
+	switch {
+	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState), errors.As(err, &keyringErr):
+		previous = credential.State{}
+	case err != nil:
+		return credential.State{}, false, "", fmt.Errorf("%w: %w", ErrCredentialsUnreadable, err)
+	}
+	if previousFound && previous.Kind != credential.KindWorkload {
+		return credential.State{}, false, "", ErrAlreadyLoggedIn
+	}
+	if err := m.Credentials.Replace(m.ControlURL, state); err != nil {
+		return credential.State{}, false, "", err
+	}
+	return previous, previousFound, state.APIKey, nil
+}
+
 // RestoreLogin puts back the login SaveLogin replaced, under the same lock, when the surrounding
 // configuration write fails. It only acts while the record still holds the login SaveLogin wrote, so
 // a concurrent logout or newer login is never overwritten or deleted.
@@ -199,7 +239,13 @@ func (m *Manager) RestoreLogin(ctx context.Context, state credential.State, foun
 	case err != nil:
 		return err
 	}
-	if current.AccessToken != writtenAccessToken {
+	// The identifying credential differs per login kind: an OAuth login is its
+	// access token, a workload login its API key.
+	written := current.AccessToken
+	if current.Kind == credential.KindWorkload {
+		written = current.APIKey
+	}
+	if written != writtenAccessToken {
 		return nil
 	}
 	if found {
@@ -278,6 +324,9 @@ func (m *Manager) SelectWorkspace(ctx context.Context, workspaceID string) error
 	if err != nil {
 		return err
 	}
+	if state.Kind == credential.KindWorkload {
+		return ErrWorkloadLogin
+	}
 	if state.WorkspaceID == workspaceID {
 		return nil
 	}
@@ -325,6 +374,12 @@ func (m *Manager) Logout(ctx context.Context) error {
 		return err
 	}
 
+	// A workload credential has no grant to revoke; its data-plane key expires
+	// on its own, so logout only removes the local record.
+	if state.Kind == credential.KindWorkload {
+		return m.deleteIgnoringMissing()
+	}
+
 	token := state.RefreshToken
 	if token == "" {
 		token = state.AccessToken
@@ -347,6 +402,18 @@ func (m *Manager) deleteIgnoringMissing() error {
 }
 
 func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
+	state, err := m.load()
+	if err != nil {
+		return Access{}, err
+	}
+	// A workload credential already carries its endpoint and workspace-bound
+	// key; no account or exchange calls apply, and it is never refreshed.
+	if state.Kind == credential.KindWorkload {
+		if !state.APIKeyExpiresAt.After(m.now()) {
+			return Access{}, ErrWorkloadExpired
+		}
+		return Access{Endpoint: state.Endpoint, APIKey: state.APIKey, WorkspaceID: state.WorkspaceID}, nil
+	}
 	account, state, err := m.Account(ctx)
 	if err != nil {
 		return Access{}, err

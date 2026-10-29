@@ -382,6 +382,12 @@ func NormalizeError(err error) error {
 	if errors.As(err, &keyringErr) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, err.Error(), err), keyringAccessHint)
 	}
+	if errors.Is(err, auth.ErrWorkloadExpired) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "run 'scope auth login --workload-identity' again to issue a new credential")
+	}
+	if errors.Is(err, auth.ErrWorkloadLogin) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "only data commands such as 'scope query' and 'scope catalog' work with this login; run 'scope auth login --workload-identity --workspace <id>' to bind a different workspace, or 'scope auth logout' to remove it")
+	}
 	if errors.Is(err, auth.ErrNotLoggedIn) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "not logged in", err), "run 'scope auth login'")
 	}
