@@ -26,9 +26,7 @@ import (
 	"time"
 
 	"github.com/scopedb/scopedb-cli/internal/clierror"
-	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
-	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -123,92 +121,14 @@ func TestDoctorChecksOAuthDataAccess(t *testing.T) {
 	}
 }
 
-func TestDoctorMachineCredentials(t *testing.T) {
-	for _, scenario := range []struct {
-		name   string
-		key    string
-		status int
-		want   string
-	}{
-		{"valid", "machine-secret", http.StatusOK, ""},
-		{"unauthorized", "machine-secret", http.StatusUnauthorized, "same workspace"},
-		{"partial", "", 0, "must be set together"},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			t.Setenv("SCOPEDB_HOME", t.TempDir())
-			calls := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
-				assert.Equal(t, "Bearer machine-secret", r.Header.Get("Authorization"))
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(scenario.status)
-				if scenario.status == http.StatusOK {
-					_, _ = w.Write([]byte(doctorQueryResult))
-				} else {
-					_, _ = w.Write([]byte(`{"message":"invalid credential"}`))
-				}
-			}))
-			t.Cleanup(server.Close)
-			out, diagnostics, err := runCommandWith(t, Dependencies{
-				Getenv: func(name string) string {
-					if name == "SCOPEDB_ENDPOINT" {
-						return server.URL
-					}
-					if name == "SCOPEDB_API_KEY" {
-						return scenario.key
-					}
-					return ""
-				},
-				CredentialStore: func(string, config.Paths) (credential.Store, error) {
-					return doctorUnusedStore{t: t}, nil
-				},
-			}, "doctor", "--format", "json")
-			var report doctorReport
-			require.NoError(t, json.Unmarshal([]byte(out), &report))
-			require.NotContains(t, out+diagnostics, "machine-secret")
-			require.Empty(t, diagnostics)
-			if scenario.want == "" {
-				require.NoError(t, err)
-				require.True(t, report.OK)
-			} else {
-				require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
-				require.False(t, report.OK)
-				require.Contains(t, out, scenario.want)
-			}
-			if scenario.key == "" {
-				require.Zero(t, calls)
-			} else {
-				require.Equal(t, 1, calls)
-			}
-		})
-	}
-}
-
-type doctorUnusedStore struct{ t *testing.T }
-
-func (s doctorUnusedStore) Load(string) (credential.State, error) {
-	s.t.Error("machine mode must not load human credentials")
-	return credential.State{}, credential.ErrNotFound
-}
-func (s doctorUnusedStore) Save(string, credential.State) error {
-	s.t.Error("machine mode must not save human credentials")
-	return nil
-}
-func (s doctorUnusedStore) Delete(string) error {
-	s.t.Error("machine mode must not delete human credentials")
-	return nil
-}
-
 func TestDoctorCheckTimeout(t *testing.T) {
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 	for _, disabled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "default", true: "disabled"}[disabled], func(t *testing.T) {
 			requests := 0
 			root := NewRoot(Dependencies{
 				Out: io.Discard, ErrOut: io.Discard,
-				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 					requests++
 					deadline, ok := r.Context().Deadline()
 					if disabled {
@@ -218,7 +138,7 @@ func TestDoctorCheckTimeout(t *testing.T) {
 						require.InDelta(t, 5, time.Until(deadline).Seconds(), 1)
 					}
 					return finishedQueryResponse(r), nil
-				})},
+				}),
 			})
 			args := []string{"doctor"}
 			if disabled {
@@ -234,28 +154,19 @@ func TestDoctorCheckTimeout(t *testing.T) {
 func TestDoctorTimeoutAndCancellation(t *testing.T) {
 	for _, interrupt := range []bool{false, true} {
 		t.Run(map[bool]string{false: "timeout", true: "interrupt"}[interrupt], func(t *testing.T) {
-			t.Setenv("SCOPEDB_HOME", t.TempDir())
+			fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var out bytes.Buffer
 			root := NewRoot(Dependencies{
 				Out: &out,
-				Getenv: func(name string) string {
-					if name == "SCOPEDB_ENDPOINT" {
-						return "https://data.example.com"
-					}
-					if name == "SCOPEDB_API_KEY" {
-						return "machine-secret"
-					}
-					return ""
-				},
-				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 					if interrupt {
 						cancel()
 					}
 					<-r.Context().Done()
 					return nil, r.Context().Err()
-				})},
+				}),
 			})
 			root.SetArgs([]string{"doctor", "--format", "json", "--timeout", "20ms"})
 			err := NormalizeError(root.ExecuteContext(ctx))
@@ -290,7 +201,6 @@ func TestDoctorGuidesNewUsers(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, diagnostics)
 		require.Contains(t, out, "scope auth login")
-		require.Contains(t, out, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 	}
 }
 

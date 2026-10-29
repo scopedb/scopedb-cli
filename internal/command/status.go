@@ -44,8 +44,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "status",
 		Short: "Show authentication source, identity, and connection target",
-		Long: "Show authentication source, identity, and connection target.\n" +
-			"Uses environment credentials when set; otherwise verifies your CLI login.\n" +
+		Long: "Show authentication source, identity, and connection target after verifying your CLI login.\n" +
 			"Run 'scope doctor' to verify query access or 'scope workspace get' for deployment details.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -56,21 +55,13 @@ func (a *app) newStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if access, active, machineErr := runtime.auth.MachineAccess(); active || machineErr != nil {
-				if machineErr != nil {
-					return machineErr
-				}
-				return renderStatus(a.out, format, statusView{
-					CredentialSource: "environment", Endpoint: access.Endpoint,
-				})
-			}
-
-			account, state, err := runtime.auth.Account(cmd.Context())
+			ctx := cmd.Context()
+			account, state, err := runtime.auth.Account(ctx)
 			if err != nil {
 				return err
 			}
 			if account.SelectedWorkspaceID != "" && errors.Is(auth.RequireWorkspace(account), auth.ErrWorkspaceUnavailable) {
-				if err := runtime.auth.SelectWorkspace(cmd.Context(), ""); err != nil {
+				if err := runtime.auth.SelectWorkspace(ctx, ""); err != nil {
 					return err
 				}
 				account.SelectedWorkspaceID = ""
@@ -90,7 +81,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 				view.CredentialFile = runtime.paths.CredentialsFile
 			}
 			if account.SelectedWorkspaceID != "" {
-				details, err := runtime.control.GetWorkspace(cmd.Context(), state.AccessToken, account.SelectedWorkspaceID)
+				details, err := runtime.control.GetWorkspace(ctx, state.AccessToken, account.SelectedWorkspaceID)
 				if err != nil {
 					return err
 				}

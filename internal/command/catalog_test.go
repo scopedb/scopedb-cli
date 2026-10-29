@@ -34,12 +34,13 @@ import (
 )
 
 func TestCatalogPlanApply(t *testing.T) {
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
+	fake, store := setupDataPlaneLogin(t, "https://data.example.com/prefix/")
+	fake.Workspaces = append(fake.Workspaces, workspaceFixture("ws-2", "Beta"))
+	fake.Details["ws-2"] = fake.Details["ws-1"]
 	var out, diagnostics bytes.Buffer
 	writes, plans := 0, 0
 	stale := false
-	apiKey := "fixture-secret"
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	client := fake.dataClient(func(r *http.Request) (*http.Response, error) {
 		require.Equal(t, "Bearer fixture-secret", r.Header.Get("Authorization"))
 		require.Equal(t, "/prefix/v1/catalog/databases/db/schemas/public/tables/a%2Fb", r.URL.EscapedPath())
 		require.Equal(t, http.MethodPut, r.Method)
@@ -62,20 +63,12 @@ func TestCatalogPlanApply(t *testing.T) {
 			}
 		}
 		return &http.Response{StatusCode: status, Header: http.Header{"Etag": []string{`"7"`}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
-	})}
+	})
 	run := func(input string, args ...string) error {
 		out.Reset()
 		diagnostics.Reset()
 		root := NewRoot(Dependencies{In: strings.NewReader(input), Out: &out, ErrOut: &diagnostics, HTTPClient: client,
-			Getenv: func(name string) string {
-				switch name {
-				case "SCOPEDB_ENDPOINT":
-					return "https://data.example.com/prefix/"
-				case "SCOPEDB_API_KEY":
-					return apiKey
-				}
-				return ""
-			}, IsInputTerminal: func() bool { return false },
+			IsInputTerminal: func() bool { return false },
 		})
 		root.SetArgs(args)
 		return NormalizeError(root.ExecuteContext(t.Context()))
@@ -95,11 +88,11 @@ func TestCatalogPlanApply(t *testing.T) {
 	require.Equal(t, 1, plans, "saved plan must not be refreshed before applying")
 	require.Equal(t, "Applied.\n", diagnostics.String(), "saved plans apply without redisplaying the reviewed diff")
 	require.Contains(t, out.String(), "destructive: true")
-	apiKey = "another-workspace-key"
+	saveStoredLogin(t, store, fake.URL, "ws-2")
 	err := run(saved, "catalog", "apply", "--plan", "-")
 	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Equal(t, 1, writes, "a saved plan must not cross credential identities at the same endpoint")
-	apiKey = "fixture-secret"
+	require.Equal(t, 1, writes, "a saved plan must not cross workspaces at the same endpoint")
+	saveStoredLogin(t, store, fake.URL, "ws-1")
 	stale = true
 	err = run(saved, "catalog", "apply", "--plan", "-", "--allow-destructive")
 	require.Error(t, err)
@@ -111,7 +104,7 @@ func TestCatalogPlanApply(t *testing.T) {
 }
 
 func TestCatalogApplyConfirmation(t *testing.T) {
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
+	fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 	definition := filepath.Join(t.TempDir(), "table.yaml")
 	require.NoError(t, os.WriteFile(definition, []byte("name: t\ncolumns: []\n"), 0o600))
 	for _, tc := range []struct {
@@ -135,16 +128,7 @@ func TestCatalogApplyConfirmation(t *testing.T) {
 			var out, diagnostics bytes.Buffer
 			root := NewRoot(Dependencies{In: strings.NewReader(tc.input), Out: &out, ErrOut: &diagnostics,
 				IsInputTerminal: func() bool { return !tc.yes && !tc.nonInteractive },
-				Getenv: func(name string) string {
-					switch name {
-					case "SCOPEDB_ENDPOINT":
-						return "https://data.example.com"
-					case "SCOPEDB_API_KEY":
-						return "fixture-secret"
-					}
-					return ""
-				},
-				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 					if r.URL.Query().Get("dry_run") != "true" {
 						writes++
 						require.Equal(t, tc.destructive, r.URL.Query().Get("allow_destructive") == "true")
@@ -152,7 +136,7 @@ func TestCatalogApplyConfirmation(t *testing.T) {
 					}
 					body := `{"before":{"name":"t","columns":[{"name":"old","data_type":"int"}]},"after":{"name":"t","columns":[]},"destructive":` + strconv.FormatBool(tc.destructive) + `}`
 					return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
-				})},
+				}),
 			})
 			args := []string{"catalog", "apply", "--table", "db.public.t", "-f", definition}
 			if tc.yes {
@@ -178,7 +162,7 @@ func TestCatalogApplyConfirmation(t *testing.T) {
 }
 
 func TestCatalogDrop(t *testing.T) {
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
+	fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 	for _, tc := range []struct {
 		resource                  []string
 		method, path, body, after string
@@ -190,16 +174,7 @@ func TestCatalogDrop(t *testing.T) {
 			var out, diagnostics bytes.Buffer
 			requests := 0
 			deps := Dependencies{Out: &out, ErrOut: &diagnostics,
-				Getenv: func(name string) string {
-					switch name {
-					case "SCOPEDB_ENDPOINT":
-						return "https://data.example.com"
-					case "SCOPEDB_API_KEY":
-						return "fixture-secret"
-					}
-					return ""
-				},
-				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 					requests++
 					require.Equal(t, tc.method, r.Method)
 					require.Equal(t, tc.path, r.URL.Path)
@@ -213,7 +188,7 @@ func TestCatalogDrop(t *testing.T) {
 						require.Equal(t, `"4"`, r.Header.Get("If-Match"))
 					}
 					return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"4"`}}, Body: io.NopCloser(strings.NewReader(`{"before":{"name":"t"},"after":` + tc.after + `,"destructive":true}`)), Request: r}, nil
-				})},
+				}),
 			}
 			root := NewRoot(deps)
 			root.SetArgs(append(append([]string{"catalog", "drop"}, tc.resource...), "--yes", "--allow-destructive", "--format", "json"))
@@ -246,10 +221,8 @@ func TestCatalogInvalidInput(t *testing.T) {
 }
 
 func TestCatalogRequestFailures(t *testing.T) {
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Run("invalid endpoint", func(t *testing.T) {
-		t.Setenv("SCOPEDB_ENDPOINT", "not-a-url")
-		t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+		setupDataPlaneLogin(t, "not-a-url")
 		root := NewRoot(Dependencies{Out: io.Discard, ErrOut: io.Discard})
 		root.SetArgs([]string{"catalog", "get"})
 		err := NormalizeError(root.ExecuteContext(t.Context()))
@@ -274,20 +247,12 @@ func TestCatalogRequestFailures(t *testing.T) {
 		{name: "cancel plan body", action: "plan", cause: context.Canceled, code: clierror.ExitInterrupted, partial: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 			apply := tc.action == "apply"
 			var out, diagnostics bytes.Buffer
 			requests := 0
 			root := NewRoot(Dependencies{In: strings.NewReader("name: t\n"), Out: &out, ErrOut: &diagnostics,
-				Getenv: func(name string) string {
-					switch name {
-					case "SCOPEDB_ENDPOINT":
-						return "https://data.example.com"
-					case "SCOPEDB_API_KEY":
-						return "fixture-secret"
-					}
-					return ""
-				},
-				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 					requests++
 					if apply && requests == 1 {
 						return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(`{"before":null,"after":{"name":"t","columns":[]},"destructive":false}`)), Request: r}, nil
@@ -307,7 +272,7 @@ func TestCatalogRequestFailures(t *testing.T) {
 						response.Body = io.NopCloser(iotest.ErrReader(tc.cause))
 					}
 					return response, nil
-				})},
+				}),
 			})
 			args := []string{"catalog", tc.action, "--table", "db.public.t"}
 			if tc.action != "get" {
@@ -345,9 +310,7 @@ func TestCatalogRequestFailures(t *testing.T) {
 }
 
 func TestCatalogBrowse(t *testing.T) {
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 	tableName := "Events.a/b`c\\d"
 	table := map[string]any{"name": tableName, "columns": []any{map[string]any{"name": "id", "data_type": "int"}}}
 	schema := map[string]any{"name": "public", "tables": []any{table}, "views": []any{map[string]any{"name": "recent", "statement": "from events"}}}
@@ -365,7 +328,7 @@ func TestCatalogBrowse(t *testing.T) {
 		out.Reset()
 		diagnostics.Reset()
 		requests := 0
-		root := NewRoot(Dependencies{Out: &out, ErrOut: &diagnostics, HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		root := NewRoot(Dependencies{Out: &out, ErrOut: &diagnostics, HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 			requests++
 			require.Equal(t, http.MethodGet, r.Method)
 			response, ok := responses[r.URL.Path]
@@ -373,7 +336,7 @@ func TestCatalogBrowse(t *testing.T) {
 			body, err := json.Marshal(response)
 			require.NoError(t, err)
 			return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(bytes.NewReader(body)), Request: r}, nil
-		})}})
+		})})
 		root.SetArgs(append([]string{"catalog"}, args...))
 		require.NoError(t, root.ExecuteContext(t.Context()))
 		require.Equal(t, 1, requests)
@@ -416,13 +379,11 @@ func TestCatalogBrowse(t *testing.T) {
 }
 
 func TestCatalogTenantApply(t *testing.T) {
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 	var out, diagnostics bytes.Buffer
 	requests := 0
 	root := NewRoot(Dependencies{In: strings.NewReader("databases: []\n"), Out: &out, ErrOut: &diagnostics,
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 			requests++
 			require.Equal(t, http.MethodPut, r.Method)
 			require.Equal(t, "/v1/catalog", r.URL.Path)
@@ -435,7 +396,7 @@ func TestCatalogTenantApply(t *testing.T) {
 				require.Equal(t, `"9"`, r.Header.Get("If-Match"))
 			}
 			return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"9"`}}, Body: io.NopCloser(strings.NewReader(`{"before":{"databases":[{"name":"db"}]},"after":{"databases":[]},"destructive":false}`)), Request: r}, nil
-		})},
+		}),
 	})
 	root.SetArgs([]string{"catalog", "apply", "-f", "-", "--yes", "--format", "json"})
 	require.NoError(t, root.ExecuteContext(t.Context()))
@@ -467,13 +428,11 @@ func TestCatalogScopes(t *testing.T) {
 }
 
 func TestCatalogOutput(t *testing.T) {
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 	var out, diagnostics bytes.Buffer
 	writes := 0
 	result := `{"before":{"databases":[]},"after":{"databases":[{"name":"db"}]},"destructive":false}`
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+	client := fake.dataClient(func(r *http.Request) (*http.Response, error) {
 		body := result
 		if r.Method == http.MethodGet {
 			body = `{"databases":[{"name":"db"}]}`
@@ -481,7 +440,7 @@ func TestCatalogOutput(t *testing.T) {
 			writes++
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
-	})}
+	})
 	run := func(writer io.Writer, args ...string) error {
 		out.Reset()
 		diagnostics.Reset()
@@ -514,9 +473,7 @@ func TestCatalogOutput(t *testing.T) {
 }
 
 func TestCatalogRequestTimeout(t *testing.T) {
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
-	t.Setenv("SCOPEDB_ENDPOINT", "https://data.example.com")
-	t.Setenv("SCOPEDB_API_KEY", "fixture-secret")
+	fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 	for _, tc := range []struct {
 		args     []string
 		timeout  time.Duration
@@ -537,7 +494,7 @@ func TestCatalogRequestTimeout(t *testing.T) {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			requests := 0
 			root := NewRoot(Dependencies{In: strings.NewReader("databases: []\n"), Out: io.Discard, ErrOut: io.Discard,
-				HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 					requests++
 					deadline, ok := r.Context().Deadline()
 					if tc.timeout == 0 {
@@ -552,7 +509,7 @@ func TestCatalogRequestTimeout(t *testing.T) {
 						body = `{"databases":[]}`
 					}
 					return &http.Response{StatusCode: 200, Header: http.Header{"Etag": []string{`"1"`}}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
-				})},
+				}),
 			})
 			root.SetArgs(append([]string{"catalog"}, tc.args...))
 			err := NormalizeError(root.ExecuteContext(t.Context()))

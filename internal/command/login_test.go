@@ -450,7 +450,6 @@ func TestLoginWithoutOAuthSupportReportsGuidance(t *testing.T) {
 	_, _, err := runInteractiveCommand(t, "--control-url", server.URL, "auth", "login", "--insecure-storage")
 	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
 	require.Contains(t, clierror.Render(err), "requires ScopeDB v0.23.0 or newer")
-	require.Contains(t, clierror.Render(err), "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
 }
 
 func TestLoginKeepsCredentialsWhenAccountLookupFails(t *testing.T) {
@@ -891,23 +890,6 @@ func TestLogoutKeepsLocalRemovalWhenRevocationFails(t *testing.T) {
 	require.Contains(t, clierror.Render(err), "revoked in the Console")
 	_, loadErr := store.Load(fake.URL)
 	require.ErrorIs(t, loadErr, credential.ErrNotFound)
-}
-
-func TestLogoutRejectsEnvironmentCredentials(t *testing.T) {
-	out, diagnostics, err := runCommandWith(t, Dependencies{
-		Getenv: func(name string) string {
-			switch name {
-			case "SCOPEDB_ENDPOINT":
-				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
-				return "machine-secret"
-			}
-			return ""
-		},
-	}, "auth", "logout", "--format", "json")
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Empty(t, out)
-	require.NotContains(t, diagnostics, "machine-secret")
 }
 
 func TestLoginReportsUnreachableControlPlane(t *testing.T) {

@@ -221,7 +221,6 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 		LockFile:    paths.LockFile,
 		Now:         a.now,
 		Sleep:       a.sleep,
-		Getenv:      a.getenv,
 	}
 	return runtime, nil
 }
@@ -320,8 +319,7 @@ func openURL(target string, getenv func(string) string) error {
 	}
 }
 
-const keyringAccessHint = "restore OS keyring access; for queries without a keyring, set both SCOPEDB_ENDPOINT and SCOPEDB_API_KEY; " +
-	"or explicitly use 'scope auth login --insecure-storage' to store login credentials unencrypted in a 0600 file " +
+const keyringAccessHint = "restore OS keyring access, or explicitly use 'scope auth login --insecure-storage' to store login credentials unencrypted in a 0600 file " +
 	"(add --use-device-code --no-browser on headless hosts)"
 
 // NormalizeError maps domain and HTTP errors to the public CLI exit contract.
@@ -389,9 +387,6 @@ func NormalizeError(err error) error {
 	}
 	if errors.Is(err, auth.ErrLoginExpired) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "run 'scope auth login'")
-	}
-	if errors.Is(err, auth.ErrInvalidMachineEnv) {
-		return clierror.Wrap(clierror.ExitUsage, err.Error(), err)
 	}
 	if setupErr := workspaceSetupError(err); setupErr != nil {
 		return setupErr

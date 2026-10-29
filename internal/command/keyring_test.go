@@ -17,8 +17,6 @@ package command
 import (
 	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -118,40 +116,6 @@ type credentialWriteFailureStore struct {
 
 func (s credentialWriteFailureStore) Save(string, credential.State) error { return s.err }
 
-func TestQueryEnvironmentCredentialsBypassUnavailableKeyring(t *testing.T) {
-	setupCLITest(t)
-	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
-	keyring.MockInitWithError(errors.New("D-Bus session is unavailable"))
-	t.Cleanup(keyring.MockInit)
-	queries := 0
-	out, diagnostics, err := runCommandWith(t, Dependencies{
-		Getenv: func(name string) string {
-			switch name {
-			case "SCOPEDB_ENDPOINT":
-				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
-				return "machine-secret"
-			}
-			return ""
-		},
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-			queries++
-			require.Equal(t, "https://data.example.com/v1/statements", r.URL.String())
-			require.Equal(t, "Bearer machine-secret", r.Header.Get("Authorization"))
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     http.Header{"Content-Type": []string{"application/json"}},
-				Body:       io.NopCloser(strings.NewReader(doctorQueryResult)),
-				Request:    r,
-			}, nil
-		})},
-	}, "query", "SELECT 1 AS ready", "--format", "json")
-	require.NoError(t, err)
-	require.Equal(t, 1, queries)
-	require.JSONEq(t, `[{"ready":1}]`, out)
-	require.Empty(t, diagnostics)
-}
-
 func TestDeviceLoginWithExplicitPlaintextBypassesUnavailableKeyring(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	t.Setenv("SCOPEDB_CREDENTIAL_STORE", "")
@@ -178,8 +142,6 @@ func TestDeviceLoginWithExplicitPlaintextBypassesUnavailableKeyring(t *testing.T
 
 func requireKeyringRecovery(t *testing.T, rendered string) {
 	t.Helper()
-	require.Contains(t, rendered, "SCOPEDB_ENDPOINT")
-	require.Contains(t, rendered, "SCOPEDB_API_KEY")
 	require.Contains(t, rendered, "unencrypted")
 	require.Equal(t, 1, strings.Count(rendered, "scope auth login --insecure-storage"))
 }

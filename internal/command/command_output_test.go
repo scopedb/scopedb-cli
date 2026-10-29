@@ -139,27 +139,6 @@ func TestWorkspaceUseRejectsScheduledWorkspace(t *testing.T) {
 	require.Empty(t, state.WorkspaceID)
 }
 
-func TestWorkspaceUseWarnsAboutEnvironmentCredentials(t *testing.T) {
-	fake, store := setupCLITest(t)
-	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
-	saveStoredLogin(t, store, fake.URL, "")
-	_, diagnostics, err := runCommandWith(t, Dependencies{
-		Sleep: func(time.Duration) {},
-		Getenv: func(name string) string {
-			switch name {
-			case "SCOPEDB_ENDPOINT":
-				return "https://data.example.com"
-			case "SCOPEDB_API_KEY":
-				return "machine-secret"
-			}
-			return ""
-		},
-	}, "--control-url", fake.URL, "workspace", "use", "ws-1")
-	require.NoError(t, err)
-	require.Contains(t, diagnostics, "SCOPEDB_ENDPOINT and SCOPEDB_API_KEY")
-	require.NotContains(t, diagnostics, "machine-secret")
-}
-
 func TestConsoleOutput(t *testing.T) {
 	t.Setenv("SCOPEDB_HOME", t.TempDir())
 	t.Setenv("SCOPEDB_CONSOLE_URL", "https://console.example.com")
