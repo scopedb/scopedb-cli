@@ -113,7 +113,7 @@ type apiKeyListItem struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
-const defaultAPIKeyLifetime = 360 * 24 * time.Hour
+const defaultAPIKeyLifetime = 30 * 24 * time.Hour
 
 func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 	var tags []string
@@ -168,7 +168,7 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringArrayVar(&tags, "tag", nil, "tag to attach; may be repeated")
-	command.Flags().DurationVar(&expiresIn, "expires-in", 0, "relative expiration such as 720h or 12h; defaults to 8640h (360 days) unless --expires-at is set")
+	command.Flags().DurationVar(&expiresIn, "expires-in", 0, "relative expiration such as 720h or 12h; a default expiration applies unless --expires-in or --expires-at is set")
 	command.Flags().StringVar(&expiresAtValue, "expires-at", "", "absolute RFC3339 expiration")
 	command.Flags().StringVar(&format, "format", "value", "output format: value or json")
 	return command

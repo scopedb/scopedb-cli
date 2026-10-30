@@ -122,9 +122,9 @@ func TestAPIKeyCreateSendsRequestedExpiration(t *testing.T) {
 		flags   []string
 		expires time.Time
 	}{
-		{name: "default", expires: now.Add(360 * 24 * time.Hour)},
-		{name: "relative", flags: []string{"--expires-in", "720h"}, expires: now.Add(720 * time.Hour)},
-		{name: "absolute", flags: []string{"--expires-at", now.Add(720 * time.Hour).Format(time.RFC3339)}, expires: now.Add(720 * time.Hour)},
+		{name: "default", expires: now.Add(defaultAPIKeyLifetime)},
+		{name: "relative", flags: []string{"--expires-in", "12h"}, expires: now.Add(12 * time.Hour)},
+		{name: "absolute", flags: []string{"--expires-at", now.Add(48 * time.Hour).Format(time.RFC3339)}, expires: now.Add(48 * time.Hour)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake, store := setupCLITest(t)
