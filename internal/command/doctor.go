@@ -90,6 +90,18 @@ func (a *app) newDoctorCommand() *cobra.Command {
 					source += " (" + runtime.paths.CredentialsFile + ")"
 				}
 				report.Checks = append(report.Checks, doctorCheck{Name: "credential store", Status: "pass", Details: source})
+			}
+			if loadErr == nil && state.Kind == credential.KindWorkload {
+				// A CI workload credential has no user account to check; the
+				// data-plane query below is the meaningful verification.
+				details := fmt.Sprintf("CI workload login bound to workspace %s; account checks are unavailable", state.WorkspaceID)
+				if state.Workload != nil && state.Workload.Name != "" {
+					details = fmt.Sprintf("CI workload login %q bound to workspace %s; account checks are unavailable", state.Workload.Name, state.WorkspaceID)
+				}
+				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: details})
+				report.Checks = append(report.Checks, doctorCheck{Name: "workspace", Status: "pass", Details: state.WorkspaceID})
+				a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
+			} else if loadErr == nil {
 				accountCtx, accountCancel := timeoutContext(cmd.Context(), timeout)
 				account, _, accountErr := runtime.auth.Account(accountCtx)
 				accountCancel()

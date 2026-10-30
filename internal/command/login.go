@@ -42,11 +42,11 @@ const (
 )
 
 func (a *app) newLoginCommand() *cobra.Command {
-	var insecureStorage, noBrowser, useDeviceCode bool
+	var insecureStorage, noBrowser, useDeviceCode, workloadIdentity bool
 	var format, workspace string
 	command := &cobra.Command{
 		Use:   "login",
-		Short: "Log in through the ScopeDB Console",
+		Short: "Log in through the ScopeDB Console, or as a CI workload identity",
 		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
 			"Opens your browser and completes the login through a callback on this device. If the browser\n" +
 			"does not open, open the printed URL on the same device. Use --use-device-code to approve\n" +
@@ -54,14 +54,27 @@ func (a *app) newLoginCommand() *cobra.Command {
 			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
 			"name and ID. Use 'scope workspace use <id>' to switch afterwards.\n" +
 			"Login does not require an interactive terminal.\n\n" +
+			"For unattended CI jobs, --workload-identity exchanges the job's OIDC token for a short-lived\n" +
+			"credential bound to the workspace named by required flag --workspace. The token comes from\n" +
+			"SCOPEDB_OIDC_TOKEN_FILE, SCOPEDB_OIDC_TOKEN, or the GitHub Actions OIDC request variables.\n" +
+			"A workload login only runs data commands on its bound workspace; it cannot renew itself and\n" +
+			"expires with the issued credential.\n\n" +
 			"Prefers the OS keyring, with a warning and plaintext fallback if storage fails.\n" +
 			"On Linux, keyring access requires a D-Bus session and Secret Service.\n" +
 			"--insecure-storage chooses an unencrypted file for this login only.",
-		Example: "  scope auth login\n  scope auth login --use-device-code --no-browser",
+		Example: "  scope auth login\n  scope auth login --use-device-code --no-browser\n  scope auth login --workload-identity --workspace <workspace-id> --insecure-storage",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateTextFormat(format); err != nil {
 				return err
+			}
+			if workloadIdentity {
+				if useDeviceCode || noBrowser {
+					return usageError("--workload-identity cannot be combined with --use-device-code or --no-browser")
+				}
+				if strings.TrimSpace(workspace) == "" {
+					return usageError("--workload-identity requires --workspace <workspace-id>")
+				}
 			}
 			paths, cfg, err := a.loadConfig(cmd)
 			if err != nil {
@@ -72,6 +85,9 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return err
 			}
 			runtime.credentials.InsecureStorage = insecureStorage
+			if workloadIdentity {
+				return a.workloadLogin(cmd, runtime, strings.TrimSpace(workspace), format)
+			}
 			if _, stored, err := runtime.auth.RenewableLogin(); err != nil {
 				return clierror.Wrap(clierror.ExitGeneral, "existing credentials could not be read", err)
 			} else if stored {
@@ -123,9 +139,10 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
-	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace by ID; defaults to the first available workspace by ID")
+	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace by ID; defaults to the first available workspace by ID; required with --workload-identity")
 	command.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open the browser automatically")
 	command.Flags().BoolVar(&useDeviceCode, "use-device-code", false, "use a device code to approve login from any device")
+	command.Flags().BoolVar(&workloadIdentity, "workload-identity", false, "log in as a CI workload identity instead of a user")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store this login's credentials unencrypted in a file")
 	return command
 }

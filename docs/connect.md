@@ -68,9 +68,32 @@ Revoke a key with `scope api-key revoke <id>`, using the ID from `scope api-key 
 
 Copy the workspace's data-plane endpoint, without appending `/v1/statements`. The key only grants access to the workspace it was created in. The CLI does not read API keys: `scope query`, `scope catalog`, and `scope doctor` always use your login and the workspace selected with `scope workspace use`. The CLI ignores `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, so you can keep them set for SDK applications, but they do not choose the CLI's workspace. Run `scope auth status` to confirm the target before changing the catalog.
 
-The CLI is meant for interactive use. In CI and other unattended jobs, connect through an SDK with an API key. Do not copy CLI login credentials to another host: the refresh token rotates on every use, and reusing an old one revokes the login.
+The CLI is meant for interactive use. In CI and other unattended jobs, use [workload identity](#run-in-ci) when your provider can issue an OIDC token, or connect through an SDK with an API key. Do not copy CLI login credentials to another host: the refresh token rotates on every use, and reusing an old one revokes the login.
 
 To end your login session, run `scope auth logout`. Logout does not revoke application API keys.
+
+## Run in CI
+
+A CI job can exchange its OIDC identity token for a short-lived credential bound to one workspace, without a browser and without storing a platform secret. A workspace owner first creates a workload identity policy in the ScopeDB Console that names the CI provider and the exact token subject, such as `repo:acme/infra:environment:production`.
+
+```sh
+scope auth login --workload-identity --workspace <workspace-id> --insecure-storage
+```
+
+`--workspace` is required and takes a workspace ID. The login reads the job's OIDC token from `SCOPEDB_OIDC_TOKEN_FILE`, then `SCOPEDB_OIDC_TOKEN`, then the GitHub Actions OIDC request variables. On GitHub Actions, grant the job `id-token: write` permission and the CLI requests a token itself; no token variable is needed. Other CI providers must place a JWT in one of the `SCOPEDB_OIDC_TOKEN` variables, with the control-plane origin as its audience — the origin is the configured `control_url` without a path, query, or fragment, which is also the audience the GitHub request uses. A token issued for another service is rejected, and a provider that cannot set the audience cannot use this exchange.
+
+A workload login only runs data commands such as `scope query`, `scope catalog`, and `scope doctor` against its bound workspace. It does not create a ScopeDB user session, so `scope workspace` and `scope api-key` commands are unavailable, and there is no refresh token. The login expires with the issued credential; rerun the same login to re-exchange. `scope auth status` shows the bound workspace, matched policy, and expiry; `scope auth logout` removes the local credential.
+
+Prefer an ephemeral credential directory and plaintext storage in CI, since the credential is short-lived and the job discards it:
+
+```yaml
+env:
+  SCOPEDB_HOME: ${{ runner.temp }}/scopedb
+steps:
+  - run: scope auth login --workload-identity --workspace "$SCOPEDB_WORKSPACE_ID" --insecure-storage
+```
+
+A deployment older than the workload identity feature rejects the exchange; upgrade the platform and retry. `scope auth login --workload-identity` needs a CLI release that includes it, so check `scope version` before rollout.
 
 ## Connect an SDK
 

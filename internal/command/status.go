@@ -29,6 +29,7 @@ import (
 
 type statusView struct {
 	ControlURL            string `json:"control_url,omitempty"`
+	LoginKind             string `json:"login_kind,omitempty"`
 	Email                 string `json:"email,omitempty"`
 	CredentialSource      string `json:"credential_source"`
 	CredentialFile        string `json:"credential_file,omitempty"`
@@ -37,6 +38,10 @@ type statusView struct {
 	WorkspaceID           string `json:"workspace_id,omitempty"`
 	WorkspaceName         string `json:"workspace_name,omitempty"`
 	Endpoint              string `json:"endpoint,omitempty"`
+	WorkloadPolicy        string `json:"workload_policy,omitempty"`
+	WorkloadProvider      string `json:"workload_provider,omitempty"`
+	WorkloadSubject       string `json:"workload_subject,omitempty"`
+	CredentialExpiresAt   string `json:"credential_expires_at,omitempty"`
 }
 
 func (a *app) newStatusCommand() *cobra.Command {
@@ -56,6 +61,15 @@ func (a *app) newStatusCommand() *cobra.Command {
 				return err
 			}
 			ctx := cmd.Context()
+			stored, storedErr := runtime.auth.StoredLogin()
+			switch {
+			case errors.Is(storedErr, auth.ErrNotLoggedIn):
+				// Fall through to the account flow for the standard not-logged-in error.
+			case storedErr != nil:
+				return storedErr
+			case stored.Kind == credential.KindWorkload:
+				return a.renderWorkloadStatus(a.out, format, runtime, stored)
+			}
 			account, state, err := runtime.auth.Account(ctx)
 			if err != nil {
 				return err

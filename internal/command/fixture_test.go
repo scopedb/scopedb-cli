@@ -58,6 +58,11 @@ type fakeControlPlane struct {
 	Workspaces          []controlplane.Workspace
 	Details             map[string]controlplane.WorkspaceDetails
 	Exchange            controlplane.TokenExchangeResponse
+	WorkloadExchange    controlplane.WorkloadIdentityExchangeResponse
+	WorkloadStatus      int
+	WorkloadScript      []workloadExchangeOutcome
+	WorkloadBearer      []string
+	WorkloadCalls       int
 	APIKeys             []controlplane.APIKey
 	APIKeyRequests      []controlplane.CreateAPIKeyRequest
 	RevokedAPIKeys      []string
@@ -163,8 +168,51 @@ func (f *fakeControlPlane) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// workloadExchangeOutcome scripts one workload identity exchange response. Entries
+// are consumed in call order and the last one repeats once the script runs out. A
+// zero status answers 200 with WorkloadExchange.
+type workloadExchangeOutcome struct {
+	Status     int
+	RetryAfter string
+	RequestID  string
+	Message    string
+}
+
 func (f *fakeControlPlane) serveWorkspace(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/workspaces/")
+	if strings.HasSuffix(path, "/workload-identity/exchange") {
+		f.mu.Lock()
+		callIndex := f.WorkloadCalls
+		f.WorkloadCalls++
+		f.WorkloadBearer = append(f.WorkloadBearer, r.Header.Get("Authorization"))
+		status := f.WorkloadStatus
+		var outcome workloadExchangeOutcome
+		scripted := len(f.WorkloadScript) > 0
+		if scripted {
+			outcome = f.WorkloadScript[min(callIndex, len(f.WorkloadScript)-1)]
+			status = outcome.Status
+		}
+		f.mu.Unlock()
+		if outcome.RequestID != "" {
+			w.Header().Set("X-Request-ID", outcome.RequestID)
+		}
+		if outcome.RetryAfter != "" {
+			w.Header().Set("Retry-After", outcome.RetryAfter)
+		}
+		if status == 0 {
+			status = http.StatusOK
+		}
+		if status >= http.StatusMultipleChoices {
+			message := outcome.Message
+			if message == "" {
+				message = "workload identity exchange failed"
+			}
+			f.writeJSON(w, status, map[string]string{"message": message})
+			return
+		}
+		f.writeJSON(w, status, f.WorkloadExchange)
+		return
+	}
 	if strings.HasSuffix(path, "/token-exchange") {
 		f.mu.Lock()
 		f.ExchangeCalls++
@@ -402,6 +450,34 @@ func setupDataPlaneLogin(t *testing.T, endpoint string) (*fakeControlPlane, *cre
 	}
 	saveStoredLogin(t, store, fake.URL, "ws-1")
 	return fake, store
+}
+
+func workloadExchangeFixture(endpoint string) controlplane.WorkloadIdentityExchangeResponse {
+	return controlplane.WorkloadIdentityExchangeResponse{
+		AccessToken: "sk_workload_key", TokenType: "Bearer", ExpiresIn: 1800,
+		ExpiresAt: time.Now().Add(30 * time.Minute).UTC(), WorkspaceID: "ws-1", Endpoint: endpoint,
+		Identity: controlplane.WorkloadIdentitySummary{
+			PolicyID: "wip_1", Name: "catalog-ci", Provider: "github",
+			Subject: "repo:acme/infra:environment:production",
+		},
+	}
+}
+
+func saveWorkloadLogin(t *testing.T, store *credential.PlaintextStore, controlURL, workspaceID string) credential.State {
+	t.Helper()
+	state := credential.State{
+		Kind:            credential.KindWorkload,
+		WorkspaceID:     workspaceID,
+		Endpoint:        "https://data.example.com",
+		APIKey:          "sk_workload_key",
+		APIKeyExpiresAt: time.Now().Add(30 * time.Minute).UTC(),
+		Workload: &credential.WorkloadIdentity{
+			PolicyID: "wip_1", Name: "catalog-ci", Provider: "github",
+			Subject: "repo:acme/infra:environment:production",
+		},
+	}
+	require.NoError(t, store.Save(controlURL, state))
+	return state
 }
 
 func (f *fakeControlPlane) dataClient(data roundTripFunc) *http.Client {
