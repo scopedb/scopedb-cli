@@ -73,7 +73,7 @@ func (a *app) workloadLogin(cmd *cobra.Command, runtime *runtimeContext, workspa
 		if errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized {
 			result := clierror.Wrap(clierror.ExitAuth, controlErr.Error(), err)
 			result.RequestID = controlErr.RequestID
-			result.Hint = "check that the CI OIDC token audience is the control plane origin and its subject exactly matches an enabled workload identity policy in this workspace"
+			result.Hint = fmt.Sprintf("check that workspace %s is correct, the CI OIDC token audience is the control plane origin, and its subject exactly matches an enabled workload identity policy in that workspace", workspaceID)
 			return result
 		}
 		return err
@@ -138,7 +138,7 @@ func (a *app) exchangeWorkloadIdentity(ctx context.Context, runtime *runtimeCont
 			return exchange, err
 		}
 		wait := min(controlErr.RetryAfter, workloadExchangeMaxWait)
-		if _, err := fmt.Fprintf(a.errOut, "workload identity exchange temporarily unavailable; retrying in %s (attempt %d of %d)\n",
+		if _, err := fmt.Fprintf(a.errOut, "workload identity exchange failed; retrying in %s (attempt %d of %d)\n",
 			wait.Round(time.Second), attempt+1, workloadExchangeAttempts); err != nil {
 			return exchange, err
 		}
