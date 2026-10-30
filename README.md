@@ -157,7 +157,7 @@ Run `scope --help` or `scope <command> --help` for the complete command referenc
 
 ## Applications
 
-The CLI connects with your login and its selected workspace; it does not accept API keys. For an application, get the endpoint with `scope workspace get` and create an API key with `scope api-key create <name>`, then pass both to your SDK client. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
+The CLI connects with your login and its selected workspace; it does not accept API keys. For an application, get the endpoint with `scope workspace get` and create an API key with `scope api-key create <name> --expires-in 720h`, then pass both to your SDK client. See the [CLI and SDK connection guide](docs/connect.md) for the complete workflow and troubleshooting.
 
 ## Development
 

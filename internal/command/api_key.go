@@ -166,37 +166,39 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringArrayVar(&tags, "tag", nil, "tag to attach; may be repeated")
-	command.Flags().DurationVar(&expiresIn, "expires-in", 0, "relative expiration such as 720h or 12h")
-	command.Flags().StringVar(&expiresAtValue, "expires-at", "", "absolute RFC3339 expiration")
+	command.Flags().DurationVar(&expiresIn, "expires-in", 0, "relative expiration such as 720h or 12h; required unless --expires-at is set")
+	command.Flags().StringVar(&expiresAtValue, "expires-at", "", "absolute RFC3339 expiration; required unless --expires-in is set")
 	command.Flags().StringVar(&format, "format", "value", "output format: value or json")
 	return command
 }
 
-func (a *app) resolveAPIKeyExpiry(cmd *cobra.Command, expiresIn time.Duration, expiresAtValue string) (*time.Time, error) {
+func (a *app) resolveAPIKeyExpiry(cmd *cobra.Command, expiresIn time.Duration, expiresAtValue string) (time.Time, error) {
 	inChanged := cmd.Flags().Changed("expires-in")
 	atChanged := cmd.Flags().Changed("expires-at")
 	if inChanged && atChanged {
-		return nil, usageError("--expires-in and --expires-at are mutually exclusive")
+		return time.Time{}, usageError("--expires-in and --expires-at are mutually exclusive")
 	}
 	if inChanged {
 		if expiresIn <= 0 {
-			return nil, usageError("--expires-in must be positive")
+			return time.Time{}, usageError("--expires-in must be positive")
 		}
-		value := a.now().UTC().Add(expiresIn)
-		return &value, nil
+		return a.now().UTC().Add(expiresIn), nil
 	}
 	if atChanged {
 		value, err := time.Parse(time.RFC3339, strings.TrimSpace(expiresAtValue))
 		if err != nil {
-			return nil, usageError("--expires-at must be an RFC3339 timestamp")
+			return time.Time{}, usageError("--expires-at must be an RFC3339 timestamp")
 		}
 		value = value.UTC()
 		if !value.After(a.now().UTC()) {
-			return nil, usageError("--expires-at must be in the future")
+			return time.Time{}, usageError("--expires-at must be in the future")
 		}
-		return &value, nil
+		return value, nil
 	}
-	return nil, nil
+	return time.Time{}, clierror.WithHint(
+		clierror.New(clierror.ExitUsage, "--expires-in or --expires-at is required"),
+		"for example, use --expires-in 2160h for 90 days",
+	)
 }
 
 func (a *app) newAPIKeyRevokeCommand() *cobra.Command {

@@ -115,6 +115,47 @@ func TestAPIKeyListIdentifiesDuplicateNamesByCreator(t *testing.T) {
 	}
 }
 
+func TestAPIKeyCreateRequiresExpiration(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Shared")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	out, _, err := runCommand(t, "--control-url", fake.URL, "api-key", "create", "automation")
+	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+	rendered := clierror.Render(err)
+	require.Contains(t, rendered, "--expires-in")
+	require.Contains(t, rendered, "--expires-at")
+	require.Empty(t, out)
+	require.Empty(t, fake.APIKeyRequests)
+}
+
+func TestAPIKeyCreateSendsRequestedExpiration(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, tc := range []struct {
+		name    string
+		flags   []string
+		expires time.Time
+	}{
+		{name: "relative", flags: []string{"--expires-in", "720h"}, expires: now.Add(720 * time.Hour)},
+		{name: "absolute", flags: []string{"--expires-at", now.Add(720 * time.Hour).Format(time.RFC3339)}, expires: now.Add(720 * time.Hour)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Shared")}
+			saveStoredLogin(t, store, fake.URL, "ws-1")
+
+			args := append([]string{"--control-url", fake.URL, "api-key", "create", "automation"}, tc.flags...)
+			out, _, err := runCommandWith(t, Dependencies{
+				Now: func() time.Time { return now },
+			}, args...)
+			require.NoError(t, err)
+			require.Equal(t, "secret-key\n", out)
+			require.Len(t, fake.APIKeyRequests, 1)
+			require.Equal(t, tc.expires, fake.APIKeyRequests[0].ExpiresAt)
+		})
+	}
+}
+
 func TestAPIKeyRevokeResolvesIDOrUniqueName(t *testing.T) {
 	fullKey := "sk_" + strings.Repeat("a", 16) + strings.Repeat("b", 48)
 	for _, tc := range []struct {

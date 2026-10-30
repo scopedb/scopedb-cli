@@ -60,6 +60,8 @@ scope workspace get
 scope api-key create my-app --expires-in 720h
 ```
 
+Every key needs an expiration: pass `--expires-in` with a duration such as `720h`, or `--expires-at` with an RFC3339 timestamp. Create a replacement key and update your application before the old key expires.
+
 The key is shown only once on stdout. Store it in your application's secret manager. The command requires a CLI login; an existing API key cannot manage keys through the CLI. The workspace owner sees every key in the workspace, while a member sees and manages only keys they created. `scope api-key list` shows each key's creator to help distinguish keys with the same name. Use separate keys for development, staging, and production.
 
 Revoke a key with `scope api-key revoke <id>`, using the ID from `scope api-key list`. A unique name also works, but repeated names require an ID; if an ID also matches another key's name, the ID wins. The confirmation shows the selected name and ID, and declining it sends no deletion.
