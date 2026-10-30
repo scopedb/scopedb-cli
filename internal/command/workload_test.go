@@ -36,13 +36,16 @@ func (e workloadEnv) getenv(key string) string { return e[key] }
 
 func runWorkloadLogin(t *testing.T, fake *fakeControlPlane, env workloadEnv, httpClient *http.Client, args ...string) (string, string, error) {
 	t.Helper()
+	return runWorkloadLoginDeps(t, fake, env, Dependencies{HTTPClient: httpClient}, args...)
+}
+
+func runWorkloadLoginDeps(t *testing.T, fake *fakeControlPlane, env workloadEnv, deps Dependencies, args ...string) (string, string, error) {
+	t.Helper()
 	if len(args) == 0 || args[0] != "auth" {
 		args = append([]string{"auth", "login", "--workload-identity", "--insecure-storage"}, args...)
 	}
-	return runCommandWith(t, Dependencies{
-		Getenv:     env.getenv,
-		HTTPClient: httpClient,
-	}, append([]string{"--control-url", fake.URL}, args...)...)
+	deps.Getenv = env.getenv
+	return runCommandWith(t, deps, append([]string{"--control-url", fake.URL}, args...)...)
 }
 
 func TestWorkloadLoginStoresTheIssuedCredential(t *testing.T) {
@@ -210,6 +213,95 @@ func TestWorkloadLoginReportsARejectedToken(t *testing.T) {
 	require.NotContains(t, clierror.Render(err), "oidc-env-token")
 	_, loadErr := store.Load(fake.URL)
 	require.ErrorIs(t, loadErr, credential.ErrNotFound)
+}
+
+func TestWorkloadLoginRejectionHintsAtTheExpectedSubject(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.WorkloadScript = []workloadExchangeOutcome{{
+		Status: http.StatusUnauthorized, RequestID: "req-wl-reject",
+		Message: "workload identity token was rejected",
+	}}
+	var sleeps []time.Duration
+	_, _, err := runWorkloadLoginDeps(t, fake,
+		workloadEnv{"SCOPEDB_OIDC_TOKEN": "oidc-env-token"},
+		Dependencies{Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }},
+		"--workspace", "ws-1")
+	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
+	rendered := clierror.Render(err)
+	require.Contains(t, rendered, "subject exactly matches an enabled workload identity policy")
+	require.Contains(t, rendered, "req-wl-reject")
+	require.Equal(t, 1, fake.WorkloadCalls)
+	require.Empty(t, sleeps)
+}
+
+func TestWorkloadLoginRetriesAnUnavailableExchange(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.WorkloadExchange = workloadExchangeFixture("https://data.example.com")
+	fake.WorkloadScript = []workloadExchangeOutcome{
+		{Status: http.StatusServiceUnavailable, RetryAfter: "5"},
+		{Status: http.StatusOK},
+	}
+	var sleeps []time.Duration
+	out, diagnostics, err := runWorkloadLoginDeps(t, fake,
+		workloadEnv{"SCOPEDB_OIDC_TOKEN": "oidc-env-token"},
+		Dependencies{Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }},
+		"--workspace", "ws-1")
+	require.NoError(t, err)
+	require.Contains(t, out, "Logged in as workload identity catalog-ci")
+	require.Contains(t, diagnostics, "workload identity exchange temporarily unavailable; retrying in 5s (attempt 2 of 3)")
+	require.Equal(t, []time.Duration{5 * time.Second}, sleeps)
+	require.Equal(t, 2, fake.WorkloadCalls)
+	state, loadErr := store.Load(fake.URL)
+	require.NoError(t, loadErr)
+	require.Equal(t, "sk_workload_key", state.APIKey)
+}
+
+func TestWorkloadLoginGivesUpWhenTheExchangeStaysUnavailable(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.WorkloadScript = []workloadExchangeOutcome{{Status: http.StatusServiceUnavailable, RetryAfter: "5"}}
+	var sleeps []time.Duration
+	_, diagnostics, err := runWorkloadLoginDeps(t, fake,
+		workloadEnv{"SCOPEDB_OIDC_TOKEN": "oidc-env-token"},
+		Dependencies{Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }},
+		"--workspace", "ws-1")
+	require.Equal(t, clierror.ExitTemporary, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "retry after 5s")
+	require.Contains(t, diagnostics, "retrying in 5s (attempt 3 of 3)")
+	require.Equal(t, 3, fake.WorkloadCalls)
+	require.Equal(t, []time.Duration{5 * time.Second, 5 * time.Second}, sleeps)
+}
+
+func TestWorkloadLoginDoesNotRetryACredentialLimit(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.WorkloadScript = []workloadExchangeOutcome{{
+		Status: http.StatusTooManyRequests, Message: "too many active credentials for this workload identity",
+	}}
+	var sleeps []time.Duration
+	_, _, err := runWorkloadLoginDeps(t, fake,
+		workloadEnv{"SCOPEDB_OIDC_TOKEN": "oidc-env-token"},
+		Dependencies{Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }},
+		"--workspace", "ws-1")
+	require.Equal(t, clierror.ExitTemporary, clierror.ExitCode(err))
+	require.Equal(t, 1, fake.WorkloadCalls)
+	require.Empty(t, sleeps)
+}
+
+func TestWorkloadLoginCapsTheRetryWait(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.WorkloadExchange = workloadExchangeFixture("https://data.example.com")
+	fake.WorkloadScript = []workloadExchangeOutcome{
+		{Status: http.StatusServiceUnavailable, RetryAfter: "120"},
+		{Status: http.StatusOK},
+	}
+	var sleeps []time.Duration
+	_, diagnostics, err := runWorkloadLoginDeps(t, fake,
+		workloadEnv{"SCOPEDB_OIDC_TOKEN": "oidc-env-token"},
+		Dependencies{Sleep: func(d time.Duration) { sleeps = append(sleeps, d) }},
+		"--workspace", "ws-1")
+	require.NoError(t, err)
+	require.Equal(t, []time.Duration{30 * time.Second}, sleeps)
+	require.Contains(t, diagnostics, "retrying in 30s")
+	require.Equal(t, 2, fake.WorkloadCalls)
 }
 
 func TestWorkloadLoginRefusesToReplaceAnOAuthLogin(t *testing.T) {

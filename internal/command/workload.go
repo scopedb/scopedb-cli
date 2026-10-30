@@ -46,6 +46,11 @@ const (
 	maxOIDCTokenSize = 16 << 10
 	// maxOIDCResponseSize bounds the provider's token response document.
 	maxOIDCResponseSize = 64 << 10
+
+	// The exchange retries only when the server directs it to, and the job's
+	// OIDC token is short-lived, so attempts and the wait between them stay small.
+	workloadExchangeAttempts = 3
+	workloadExchangeMaxWait  = 30 * time.Second
 )
 
 // workloadLogin performs the non-interactive CI login: it resolves the job's
@@ -56,7 +61,7 @@ func (a *app) workloadLogin(cmd *cobra.Command, runtime *runtimeContext, workspa
 	if err != nil {
 		return err
 	}
-	exchange, err := runtime.control.ExchangeWorkloadIdentity(cmd.Context(), workspaceID, token)
+	exchange, err := a.exchangeWorkloadIdentity(cmd.Context(), runtime, workspaceID, token)
 	if err != nil {
 		var controlErr *controlplane.Error
 		if errors.As(err, &controlErr) && controlErr.Status == http.StatusNotFound {
@@ -64,6 +69,12 @@ func (a *app) workloadLogin(cmd *cobra.Command, runtime *runtimeContext, workspa
 				clierror.New(clierror.ExitUsage, "this ScopeDB deployment does not support workload identity yet"),
 				"upgrade the platform",
 			)
+		}
+		if errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized {
+			result := clierror.Wrap(clierror.ExitAuth, controlErr.Error(), err)
+			result.RequestID = controlErr.RequestID
+			result.Hint = "check that the CI OIDC token audience is the control plane origin and its subject exactly matches an enabled workload identity policy in this workspace"
+			return result
 		}
 		return err
 	}
@@ -110,6 +121,50 @@ func (a *app) workloadLogin(cmd *cobra.Command, runtime *runtimeContext, workspa
 	}
 	_, err = fmt.Fprintf(a.out, "Using workspace %s; the credential expires at %s.\n", bound, state.APIKeyExpiresAt.Format(time.RFC3339))
 	return err
+}
+
+// exchangeWorkloadIdentity calls the control plane exchange, retrying only when the
+// server directs a retry with a retryable error carrying Retry-After (an unavailable
+// provider or an address rate limit). The same OIDC token is reused across attempts;
+// a credential-limit 429 carries no Retry-After and is never retried.
+func (a *app) exchangeWorkloadIdentity(ctx context.Context, runtime *runtimeContext, workspaceID, token string) (controlplane.WorkloadIdentityExchangeResponse, error) {
+	var exchange controlplane.WorkloadIdentityExchangeResponse
+	for attempt := 1; ; attempt++ {
+		var err error
+		exchange, err = runtime.control.ExchangeWorkloadIdentity(ctx, workspaceID, token)
+		var controlErr *controlplane.Error
+		if !errors.As(err, &controlErr) || !controlErr.Retryable || controlErr.RetryAfter <= 0 ||
+			attempt >= workloadExchangeAttempts {
+			return exchange, err
+		}
+		wait := min(controlErr.RetryAfter, workloadExchangeMaxWait)
+		if _, err := fmt.Fprintf(a.errOut, "workload identity exchange temporarily unavailable; retrying in %s (attempt %d of %d)\n",
+			wait.Round(time.Second), attempt+1, workloadExchangeAttempts); err != nil {
+			return exchange, err
+		}
+		if err := a.waitForExchangeRetry(ctx, wait); err != nil {
+			return exchange, err
+		}
+	}
+}
+
+// waitForExchangeRetry pauses for the server-directed delay while still aborting
+// promptly on cancellation; the sleep seam itself cannot be interrupted.
+func (a *app) waitForExchangeRetry(ctx context.Context, wait time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	done := make(chan struct{})
+	go func() {
+		a.sleep(wait)
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 type workloadLoginResult struct {
