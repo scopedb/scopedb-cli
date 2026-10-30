@@ -113,6 +113,8 @@ type apiKeyListItem struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
+const defaultAPIKeyLifetime = 360 * 24 * time.Hour
+
 func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 	var tags []string
 	var expiresIn time.Duration
@@ -159,15 +161,15 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 			if _, err := fmt.Fprintln(a.out, created.Key); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(a.errOut, "Created API key %s. This secret is shown only once.\n", created.Name); err != nil {
+			if _, err := fmt.Fprintf(a.errOut, "Created API key %s, expiring %s. This secret is shown only once.\n", created.Name, expiresAt.Format(time.RFC3339)); err != nil {
 				return err
 			}
 			return nil
 		},
 	}
 	command.Flags().StringArrayVar(&tags, "tag", nil, "tag to attach; may be repeated")
-	command.Flags().DurationVar(&expiresIn, "expires-in", 0, "relative expiration such as 720h or 12h; required unless --expires-at is set")
-	command.Flags().StringVar(&expiresAtValue, "expires-at", "", "absolute RFC3339 expiration; required unless --expires-in is set")
+	command.Flags().DurationVar(&expiresIn, "expires-in", 0, "relative expiration such as 720h or 12h; defaults to 8640h (360 days) unless --expires-at is set")
+	command.Flags().StringVar(&expiresAtValue, "expires-at", "", "absolute RFC3339 expiration")
 	command.Flags().StringVar(&format, "format", "value", "output format: value or json")
 	return command
 }
@@ -195,10 +197,7 @@ func (a *app) resolveAPIKeyExpiry(cmd *cobra.Command, expiresIn time.Duration, e
 		}
 		return value, nil
 	}
-	return time.Time{}, clierror.WithHint(
-		clierror.New(clierror.ExitUsage, "--expires-in or --expires-at is required"),
-		"for example, use --expires-in 2160h for 90 days",
-	)
+	return a.now().UTC().Add(defaultAPIKeyLifetime), nil
 }
 
 func (a *app) newAPIKeyRevokeCommand() *cobra.Command {

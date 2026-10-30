@@ -1106,7 +1106,7 @@ func TestAPIKeyCommandsReportWorkspaceSetup(t *testing.T) {
 
 			for _, args := range [][]string{
 				{"api-key", "list"},
-				{"api-key", "create", "automation", "--expires-in", "720h"},
+				{"api-key", "create", "automation"},
 				{"api-key", "revoke", "automation", "--yes"},
 			} {
 				command := append([]string{"--control-url", fake.URL}, args...)
