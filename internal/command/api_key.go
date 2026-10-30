@@ -168,7 +168,7 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringArrayVar(&tags, "tag", nil, "tag to attach; may be repeated")
-	command.Flags().DurationVar(&expiresIn, "expires-in", 0, "relative expiration such as 720h or 12h; a default expiration applies unless --expires-in or --expires-at is set")
+	command.Flags().DurationVar(&expiresIn, "expires-in", 0, "relative expiration such as 720h or 12h")
 	command.Flags().StringVar(&expiresAtValue, "expires-at", "", "absolute RFC3339 expiration")
 	command.Flags().StringVar(&format, "format", "value", "output format: value or json")
 	return command
