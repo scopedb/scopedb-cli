@@ -256,9 +256,10 @@ func (f *fakeControlPlane) serveAPIKeys(w http.ResponseWriter, r *http.Request) 
 		f.mu.Lock()
 		f.APIKeyRequests = append(f.APIKeyRequests, request)
 		f.mu.Unlock()
+		expiresAt := request.ExpiresAt
 		f.writeJSON(w, http.StatusCreated, controlplane.APIKey{
 			ID: "key-new", Name: request.Name, Tags: request.Tags, Status: "active",
-			CreatedAt: time.Now().UTC(), ExpiresAt: request.ExpiresAt, Key: "secret-key",
+			CreatedAt: time.Now().UTC(), ExpiresAt: &expiresAt, Key: "secret-key",
 		})
 	default:
 		f.t.Errorf("unexpected API key method: %s %s", r.Method, r.URL.Path)

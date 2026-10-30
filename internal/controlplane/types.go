@@ -101,9 +101,9 @@ type WorkloadIdentityExchangeResponse struct {
 }
 
 type CreateAPIKeyRequest struct {
-	Name      string     `json:"name"`
-	Tags      []string   `json:"tags"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Name      string    `json:"name"`
+	Tags      []string  `json:"tags"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type APIKey struct {

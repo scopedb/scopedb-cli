@@ -113,6 +113,8 @@ type apiKeyListItem struct {
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
 
+const defaultAPIKeyLifetime = 30 * 24 * time.Hour
+
 func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 	var tags []string
 	var expiresIn time.Duration
@@ -159,7 +161,7 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 			if _, err := fmt.Fprintln(a.out, created.Key); err != nil {
 				return err
 			}
-			if _, err := fmt.Fprintf(a.errOut, "Created API key %s. This secret is shown only once.\n", created.Name); err != nil {
+			if _, err := fmt.Fprintf(a.errOut, "Created API key %s, expiring %s. This secret is shown only once.\n", created.Name, expiresAt.Format(time.RFC3339)); err != nil {
 				return err
 			}
 			return nil
@@ -172,31 +174,30 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 	return command
 }
 
-func (a *app) resolveAPIKeyExpiry(cmd *cobra.Command, expiresIn time.Duration, expiresAtValue string) (*time.Time, error) {
+func (a *app) resolveAPIKeyExpiry(cmd *cobra.Command, expiresIn time.Duration, expiresAtValue string) (time.Time, error) {
 	inChanged := cmd.Flags().Changed("expires-in")
 	atChanged := cmd.Flags().Changed("expires-at")
 	if inChanged && atChanged {
-		return nil, usageError("--expires-in and --expires-at are mutually exclusive")
+		return time.Time{}, usageError("--expires-in and --expires-at are mutually exclusive")
 	}
 	if inChanged {
 		if expiresIn <= 0 {
-			return nil, usageError("--expires-in must be positive")
+			return time.Time{}, usageError("--expires-in must be positive")
 		}
-		value := a.now().UTC().Add(expiresIn)
-		return &value, nil
+		return a.now().UTC().Add(expiresIn), nil
 	}
 	if atChanged {
 		value, err := time.Parse(time.RFC3339, strings.TrimSpace(expiresAtValue))
 		if err != nil {
-			return nil, usageError("--expires-at must be an RFC3339 timestamp")
+			return time.Time{}, usageError("--expires-at must be an RFC3339 timestamp")
 		}
 		value = value.UTC()
 		if !value.After(a.now().UTC()) {
-			return nil, usageError("--expires-at must be in the future")
+			return time.Time{}, usageError("--expires-at must be in the future")
 		}
-		return &value, nil
+		return value, nil
 	}
-	return nil, nil
+	return a.now().UTC().Add(defaultAPIKeyLifetime), nil
 }
 
 func (a *app) newAPIKeyRevokeCommand() *cobra.Command {

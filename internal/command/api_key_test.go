@@ -115,6 +115,35 @@ func TestAPIKeyListIdentifiesDuplicateNamesByCreator(t *testing.T) {
 	}
 }
 
+func TestAPIKeyCreateSendsRequestedExpiration(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, tc := range []struct {
+		name    string
+		flags   []string
+		expires time.Time
+	}{
+		{name: "default", expires: now.Add(defaultAPIKeyLifetime)},
+		{name: "relative", flags: []string{"--expires-in", "12h"}, expires: now.Add(12 * time.Hour)},
+		{name: "absolute", flags: []string{"--expires-at", now.Add(48 * time.Hour).Format(time.RFC3339)}, expires: now.Add(48 * time.Hour)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Shared")}
+			saveStoredLogin(t, store, fake.URL, "ws-1")
+
+			args := append([]string{"--control-url", fake.URL, "api-key", "create", "automation"}, tc.flags...)
+			out, diagnostics, err := runCommandWith(t, Dependencies{
+				Now: func() time.Time { return now },
+			}, args...)
+			require.NoError(t, err)
+			require.Equal(t, "secret-key\n", out)
+			require.Contains(t, diagnostics, "expiring "+tc.expires.Format(time.RFC3339))
+			require.Len(t, fake.APIKeyRequests, 1)
+			require.Equal(t, tc.expires, fake.APIKeyRequests[0].ExpiresAt)
+		})
+	}
+}
+
 func TestAPIKeyRevokeResolvesIDOrUniqueName(t *testing.T) {
 	fullKey := "sk_" + strings.Repeat("a", 16) + strings.Repeat("b", 48)
 	for _, tc := range []struct {
