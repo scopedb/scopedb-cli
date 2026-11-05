@@ -80,7 +80,16 @@ func (a *app) newDoctorCommand() *cobra.Command {
 
 			state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
 			if errors.Is(loadErr, credential.ErrNotFound) || errors.Is(loadErr, credential.ErrInvalidState) {
-				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login'"})
+				if runtime.auth.OIDC != nil {
+					details := "OIDC exchange"
+					if workspaceID := runtime.auth.OIDC.WorkspaceID(); workspaceID != "" {
+						details += " (workspace " + workspaceID + ")"
+					}
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: details})
+					a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
+				} else {
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login'"})
+				}
 			} else if loadErr != nil {
 				report.OK = false
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(loadErr))})

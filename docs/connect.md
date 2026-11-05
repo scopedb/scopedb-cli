@@ -68,9 +68,30 @@ Revoke a key with `scope api-key revoke <id>`, using the ID from `scope api-key 
 
 Copy the workspace's data-plane endpoint, without appending `/v1/statements`. The key only grants access to the workspace it was created in. The CLI does not read API keys: `scope query`, `scope catalog`, and `scope doctor` always use your login and the workspace selected with `scope workspace use`. The CLI ignores `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, so you can keep them set for SDK applications, but they do not choose the CLI's workspace. Run `scope auth status` to confirm the target before changing the catalog.
 
-The CLI is meant for interactive use. In CI and other unattended jobs, connect through an SDK with an API key. Do not copy CLI login credentials to another host: the refresh token rotates on every use, and reusing an old one revokes the login.
+Do not copy CLI login credentials to another host: the refresh token rotates on every use, and reusing an old one revokes the login. For unattended jobs, see [Run in CI without a login](#run-in-ci-without-a-login); other automation connects through an SDK with an API key.
 
 To end your login session, run `scope auth logout`. Logout does not revoke application API keys.
+
+## Run in CI without a login
+
+Data commands (`scope query`, `scope catalog`, and `scope doctor`) can authenticate with an OIDC token issued by the CI provider, without `scope auth login` and without a stored credential. When no login exists and the environment offers a token, the CLI exchanges it for a short-lived workspace credential; nothing is written to disk. A stored login takes precedence when one exists, and management commands such as `scope workspace` and `scope api-key` still require one.
+
+The exchange needs two things from the environment: `SCOPEDB_WORKSPACE_ID`, the target workspace ID, and a CI OIDC token requested with the control-plane origin as its audience. A workspace owner must first create an OpenID Connect trust policy in the Console whose subject matches the token's `sub` claim; the exchange fails when no policy matches.
+
+In GitHub Actions, grant the job `id-token: write` and the CLI requests the token itself:
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+env:
+  SCOPEDB_WORKSPACE_ID: "0123456789ab"
+steps:
+  - run: scope catalog plan --file catalog.yaml --format json > plan.json
+  - run: scope catalog apply --plan plan.json
+```
+
+Prefer a GitHub Environment subject such as `repo:acme/infra:environment:production` for applies, so GitHub's environment protection rules gate the token before it is issued. The exchanged credential is short-lived; a job that outlives it exchanges again on the next `scope` invocation.
 
 ## Connect an SDK
 

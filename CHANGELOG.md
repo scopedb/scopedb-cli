@@ -11,6 +11,10 @@ All significant changes to this project will be documented in this file.
 * `scope query`, `scope catalog`, and `scope doctor` no longer read `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`; they always use your `scope auth login` login and the workspace selected with `scope workspace use`. `scope auth status` no longer reports `environment` as its `credential_source`, and catalog plans no longer contain `credential_hash`. The variables can stay set for SDK applications. To migrate CLI usage, run `scope auth login` (with `--use-device-code --no-browser` on headless hosts, and `--insecure-storage` without a usable keyring), and select the workspace with `scope workspace use <id>`. Plans saved while environment credentials were set contain `credential_hash` and must be regenerated with `scope catalog plan`.
 * `scope api-key create` gives keys created without `--expires-in` or `--expires-at` a default expiration instead of never expiring, because ScopeDB no longer accepts API keys without an expiration, and reports the expiration on stderr. Pass `--expires-in` or `--expires-at` to choose the lifetime explicitly, and replace keys before they expire.
 
+### New features
+
+* `scope query`, `scope catalog`, and `scope doctor` authenticate in CI without a stored login: set `SCOPEDB_WORKSPACE_ID` and let the job issue an OIDC token, and the CLI exchanges it for a short-lived workspace credential that is never written to disk. In GitHub Actions the job needs `permissions: id-token: write`. A workspace owner must first create a matching OpenID Connect trust policy in the Console.
+
 ### Improvements
 
 * Source installations require Go 1.27.3 or newer to include its certificate-validation security fix.

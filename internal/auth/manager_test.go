@@ -93,14 +93,27 @@ func (s *memoryStore) stored() bool {
 }
 
 type fakeControl struct {
-	user           controlplane.User
-	workspaces     []controlplane.Workspace
-	details        controlplane.WorkspaceDetails
-	exchange       controlplane.TokenExchangeResponse
-	exchangeToken  func(string, string) (controlplane.TokenExchangeResponse, error)
-	getUser        func(string) (controlplane.User, error)
-	listWorkspaces func(string) ([]controlplane.Workspace, error)
-	exchangeCalls  int
+	user            controlplane.User
+	workspaces      []controlplane.Workspace
+	details         controlplane.WorkspaceDetails
+	exchange        controlplane.TokenExchangeResponse
+	exchangeToken   func(string, string) (controlplane.TokenExchangeResponse, error)
+	exchangeOIDC    func(string, string) (controlplane.OIDCExchangeResponse, error)
+	getUser         func(string) (controlplane.User, error)
+	listWorkspaces  func(string) ([]controlplane.Workspace, error)
+	exchangeCalls   int
+	oidcExchangeArg []string
+}
+
+func (f *fakeControl) ExchangeOIDC(_ context.Context, token, workspaceID string) (controlplane.OIDCExchangeResponse, error) {
+	f.oidcExchangeArg = []string{token, workspaceID}
+	if f.exchangeOIDC != nil {
+		return f.exchangeOIDC(token, workspaceID)
+	}
+	return controlplane.OIDCExchangeResponse{
+		AccessToken: "oidc-key", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Hour),
+		WorkspaceID: workspaceID, Endpoint: "https://data.example.com",
+	}, nil
 }
 
 func (f *fakeControl) GetUser(_ context.Context, token string) (controlplane.User, error) {
@@ -627,6 +640,143 @@ func TestResolveDataAccessExchangesExpiringToken(t *testing.T) {
 	require.Equal(t, "fresh-data-token", access.APIKey)
 	require.Equal(t, "fresh-data-token", store.saved().DataToken)
 	require.Equal(t, 1, control.exchangeCalls)
+}
+
+type fakeOIDC struct {
+	workspaceID string
+	token       string
+	tokenErr    error
+	calls       int
+	audience    string
+}
+
+func (f *fakeOIDC) WorkspaceID() string { return f.workspaceID }
+
+func (f *fakeOIDC) Token(_ context.Context, audience string) (string, error) {
+	f.calls++
+	f.audience = audience
+	if f.tokenErr != nil {
+		return "", f.tokenErr
+	}
+	return f.token, nil
+}
+
+func TestResolveDataAccessWithoutOIDCEnvironment(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	manager := newManager(t, &memoryStore{}, &fakeControl{}, &fakeOAuth{}, now)
+
+	_, err := manager.ResolveDataAccess(t.Context())
+	require.ErrorIs(t, err, ErrNotLoggedIn)
+}
+
+func TestResolveDataAccessExchangesOIDCToken(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	store := &memoryStore{}
+	control := &fakeControl{}
+	manager := newManager(t, store, control, &fakeOAuth{}, now)
+	signIn := &fakeOIDC{workspaceID: "ws-1", token: "ci.jwt.token"}
+	manager.OIDC = signIn
+
+	access, err := manager.ResolveDataAccess(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, Access{
+		Endpoint:    "https://data.example.com",
+		APIKey:      "oidc-key",
+		WorkspaceID: "ws-1",
+	}, access)
+	require.Equal(t, []string{"ci.jwt.token", "ws-1"}, control.oidcExchangeArg)
+	// The exchanged credential is never stored.
+	require.False(t, store.stored())
+	// The audience is the control-plane origin.
+	require.Equal(t, "https://control.example.com", signIn.audience)
+}
+
+func TestResolveDataAccessLoginTakesPrecedence(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	state := loginState(now, now.Add(time.Hour))
+	state.DataToken = "cached-data-token"
+	state.DataTokenWorkspaceID = "ws-1"
+	state.DataTokenExpiresAt = now.Add(time.Hour)
+	store := &memoryStore{present: true, state: state}
+	control := &fakeControl{
+		user:       controlplane.User{Status: "active"},
+		workspaces: []controlplane.Workspace{{ID: "ws-1"}},
+		details: controlplane.WorkspaceDetails{
+			Connection:   controlplane.Connection{APIBaseURL: "https://data.example.com"},
+			Provisioning: controlplane.Provisioning{Status: "ready"},
+		},
+	}
+	manager := newManager(t, store, control, &fakeOAuth{}, now)
+	signIn := &fakeOIDC{workspaceID: "ws-2", token: "ci.jwt.token"}
+	manager.OIDC = signIn
+
+	access, err := manager.ResolveDataAccess(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "cached-data-token", access.APIKey)
+	require.Equal(t, "ws-1", access.WorkspaceID)
+	require.Zero(t, signIn.calls)
+	require.Empty(t, control.oidcExchangeArg)
+}
+
+func TestResolveDataAccessOIDCErrors(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+
+	t.Run("missing workspace", func(t *testing.T) {
+		control := &fakeControl{}
+		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
+		manager.OIDC = &fakeOIDC{token: "ci.jwt.token"}
+		_, err := manager.ResolveDataAccess(t.Context())
+		require.ErrorIs(t, err, ErrOIDCNoWorkspace)
+		require.Empty(t, control.oidcExchangeArg)
+	})
+
+	t.Run("token source failure", func(t *testing.T) {
+		control := &fakeControl{}
+		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
+		manager.OIDC = &fakeOIDC{workspaceID: "ws-1", tokenErr: errors.New("no token")}
+		_, err := manager.ResolveDataAccess(t.Context())
+		require.ErrorContains(t, err, "no token")
+		require.Empty(t, control.oidcExchangeArg)
+	})
+
+	t.Run("rejected token", func(t *testing.T) {
+		control := &fakeControl{
+			exchangeOIDC: func(string, string) (controlplane.OIDCExchangeResponse, error) {
+				return controlplane.OIDCExchangeResponse{}, &controlplane.Error{Status: http.StatusUnauthorized}
+			},
+		}
+		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
+		manager.OIDC = &fakeOIDC{workspaceID: "ws-1", token: "ci.jwt.token"}
+		_, err := manager.ResolveDataAccess(t.Context())
+		require.ErrorIs(t, err, ErrOIDCRejected)
+	})
+
+	t.Run("old deployment", func(t *testing.T) {
+		control := &fakeControl{
+			exchangeOIDC: func(string, string) (controlplane.OIDCExchangeResponse, error) {
+				return controlplane.OIDCExchangeResponse{}, &controlplane.Error{Status: http.StatusNotFound}
+			},
+		}
+		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
+		manager.OIDC = &fakeOIDC{workspaceID: "ws-1", token: "ci.jwt.token"}
+		_, err := manager.ResolveDataAccess(t.Context())
+		require.ErrorIs(t, err, ErrOIDCUnsupported)
+	})
+
+	t.Run("wrong workspace returned", func(t *testing.T) {
+		control := &fakeControl{
+			exchangeOIDC: func(_, workspaceID string) (controlplane.OIDCExchangeResponse, error) {
+				return controlplane.OIDCExchangeResponse{
+					AccessToken: "oidc-key", TokenType: "Bearer", ExpiresAt: now.Add(time.Hour),
+					WorkspaceID: "ws-other", Endpoint: "https://data.example.com",
+				}, nil
+			},
+		}
+		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
+		manager.OIDC = &fakeOIDC{workspaceID: "ws-1", token: "ci.jwt.token"}
+		_, err := manager.ResolveDataAccess(t.Context())
+		require.ErrorContains(t, err, "ws-other")
+	})
 }
 
 func TestResolveDataAccessRequiresSelection(t *testing.T) {

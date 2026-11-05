@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -36,6 +37,10 @@ var (
 	ErrWorkspaceUnavailable  = errors.New("selected workspace is no longer available")
 	ErrLoginExpired          = errors.New("login is no longer valid")
 	ErrCredentialsUnreadable = errors.New("existing credentials could not be read")
+
+	ErrOIDCNoWorkspace = errors.New("SCOPEDB_WORKSPACE_ID is not set")
+	ErrOIDCRejected    = errors.New("the OIDC token was rejected")
+	ErrOIDCUnsupported = errors.New("this deployment does not support OIDC sign-in")
 )
 
 const (
@@ -56,6 +61,7 @@ type ControlPlane interface {
 	ListWorkspaces(context.Context, string) ([]controlplane.Workspace, error)
 	GetWorkspace(context.Context, string, string) (controlplane.WorkspaceDetails, error)
 	ExchangeToken(context.Context, string, string) (controlplane.TokenExchangeResponse, error)
+	ExchangeOIDC(context.Context, string, string) (controlplane.OIDCExchangeResponse, error)
 }
 
 type OAuthClient interface {
@@ -70,14 +76,26 @@ type CredentialStore interface {
 	Replace(controlURL string, state credential.State) error
 }
 
+// OIDCSignIn supplies an unattended CI environment's OIDC token and workspace
+// target. It is consulted only when no stored login exists.
+type OIDCSignIn interface {
+	// WorkspaceID returns the configured exchange target; empty means unset.
+	WorkspaceID() string
+	// Token returns the provider-issued OIDC token for the audience.
+	Token(ctx context.Context, audience string) (string, error)
+}
+
 type Manager struct {
 	ControlURL  string
 	Control     ControlPlane
 	OAuth       OAuthClient
 	Credentials CredentialStore
 	LockFile    string
-	Now         func() time.Time
-	Sleep       func(time.Duration)
+	// OIDC, when set, is the CI environment's sign-in offer. It authenticates
+	// data commands that have no stored login; it never replaces one.
+	OIDC  OIDCSignIn
+	Now   func() time.Time
+	Sleep func(time.Duration)
 }
 
 // Access contains everything needed to connect to the data plane.
@@ -348,6 +366,9 @@ func (m *Manager) deleteIgnoringMissing() error {
 
 func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	account, state, err := m.Account(ctx)
+	if errors.Is(err, ErrNotLoggedIn) {
+		return m.resolveOIDCAccess(ctx)
+	}
 	if err != nil {
 		return Access{}, err
 	}
@@ -425,6 +446,52 @@ func (m *Manager) saveDataToken(ctx context.Context, accessToken, workspaceID st
 		return fmt.Errorf("save short-lived data credential: %w", err)
 	}
 	return nil
+}
+
+// resolveOIDCAccess exchanges a CI-issued OIDC token for a short-lived
+// workspace credential. Nothing is stored: each process exchanges its own
+// credential, which expires with the platform's credential TTL.
+func (m *Manager) resolveOIDCAccess(ctx context.Context) (Access, error) {
+	if m.OIDC == nil {
+		return Access{}, ErrNotLoggedIn
+	}
+	workspaceID := strings.TrimSpace(m.OIDC.WorkspaceID())
+	if workspaceID == "" {
+		return Access{}, ErrOIDCNoWorkspace
+	}
+	token, err := m.OIDC.Token(ctx, oidcAudience(m.ControlURL))
+	if err != nil {
+		return Access{}, err
+	}
+	exchanged, err := m.Control.ExchangeOIDC(ctx, token, workspaceID)
+	if err != nil {
+		var controlErr *controlplane.Error
+		switch {
+		case errors.As(err, &controlErr) && controlErr.Status == http.StatusNotFound:
+			return Access{}, ErrOIDCUnsupported
+		case errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized:
+			return Access{}, fmt.Errorf("%w for workspace %s", ErrOIDCRejected, workspaceID)
+		}
+		return Access{}, err
+	}
+	if !strings.EqualFold(exchanged.TokenType, "Bearer") || exchanged.AccessToken == "" ||
+		exchanged.Endpoint == "" || exchanged.ExpiresAt.IsZero() {
+		return Access{}, errors.New("the OIDC exchange returned an invalid credential")
+	}
+	if exchanged.WorkspaceID != "" && exchanged.WorkspaceID != workspaceID {
+		return Access{}, fmt.Errorf("the OIDC exchange returned a credential for workspace %s", exchanged.WorkspaceID)
+	}
+	return Access{Endpoint: exchanged.Endpoint, APIKey: exchanged.AccessToken, WorkspaceID: workspaceID}, nil
+}
+
+// oidcAudience is the token audience the platform expects: the control-plane
+// origin without a path, query, or fragment.
+func oidcAudience(controlURL string) string {
+	parsed, err := url.Parse(controlURL)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return strings.TrimRight(controlURL, "/")
+	}
+	return parsed.Scheme + "://" + parsed.Host
 }
 
 func RequireWorkspace(account Account) error {

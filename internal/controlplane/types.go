@@ -79,6 +79,27 @@ type TokenExchangeResponse struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+// OIDCExchangeIdentity identifies the workspace trust policy that accepted a
+// CI OIDC token.
+type OIDCExchangeIdentity struct {
+	PolicyID string `json:"policy_id"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Subject  string `json:"subject"`
+}
+
+// OIDCExchangeResponse is the short-lived data-plane credential issued for a
+// verified CI OIDC token, with the endpoint it belongs to.
+type OIDCExchangeResponse struct {
+	AccessToken string               `json:"access_token"`
+	TokenType   string               `json:"token_type"`
+	ExpiresIn   int                  `json:"expires_in"`
+	ExpiresAt   time.Time            `json:"expires_at"`
+	WorkspaceID string               `json:"workspace_id"`
+	Endpoint    string               `json:"endpoint"`
+	Identity    OIDCExchangeIdentity `json:"identity"`
+}
+
 type CreateAPIKeyRequest struct {
 	Name      string    `json:"name"`
 	Tags      []string  `json:"tags"`

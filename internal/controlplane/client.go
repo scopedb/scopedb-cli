@@ -109,6 +109,15 @@ func (c *Client) ExchangeToken(ctx context.Context, token, workspaceID string) (
 	return response, err
 }
 
+// ExchangeOIDC trades a CI-issued OIDC token for a short-lived data-plane
+// credential. The token is its own credential: it travels in the
+// Authorization header and the request has no body.
+func (c *Client) ExchangeOIDC(ctx context.Context, oidcToken, workspaceID string) (OIDCExchangeResponse, error) {
+	var response OIDCExchangeResponse
+	err := c.doJSON(ctx, http.MethodPost, workspacePath(workspaceID)+"/workload-identity/exchange", oidcToken, nil, &response)
+	return response, err
+}
+
 func (c *Client) ListAPIKeys(ctx context.Context, token, workspaceID string) ([]APIKey, error) {
 	var response []APIKey
 	err := c.doJSON(ctx, http.MethodGet, workspacePath(workspaceID)+"/api-keys", token, nil, &response)

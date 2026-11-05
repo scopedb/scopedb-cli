@@ -34,6 +34,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/scopedb/scopedb-cli/internal/dataplane"
+	"github.com/scopedb/scopedb-cli/internal/oidc"
 	"github.com/scopedb/scopedb-cli/internal/version"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -222,6 +223,9 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 		Now:         a.now,
 		Sleep:       a.sleep,
 	}
+	if signIn, ok := oidc.FromEnvironment(a.getenv, a.httpClient); ok {
+		runtime.auth.OIDC = signIn
+	}
 	return runtime, nil
 }
 
@@ -387,6 +391,18 @@ func NormalizeError(err error) error {
 	}
 	if errors.Is(err, auth.ErrLoginExpired) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "run 'scope auth login'")
+	}
+	if errors.Is(err, auth.ErrOIDCNoWorkspace) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, err.Error(), err), "set SCOPEDB_WORKSPACE_ID to the target workspace ID")
+	}
+	if errors.Is(err, oidc.ErrNoToken) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "in GitHub Actions, grant the job 'permissions: id-token: write'")
+	}
+	if errors.Is(err, auth.ErrOIDCRejected) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "check the workspace's OpenID Connect trust policies in the Console")
+	}
+	if errors.Is(err, auth.ErrOIDCUnsupported) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, err.Error(), err), "upgrade the platform, or run 'scope auth login'")
 	}
 	if setupErr := workspaceSetupError(err); setupErr != nil {
 		return setupErr
