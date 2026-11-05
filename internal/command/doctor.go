@@ -79,7 +79,10 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			}
 
 			state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
-			if errors.Is(loadErr, credential.ErrNotFound) || errors.Is(loadErr, credential.ErrInvalidState) {
+			var keyringErr *credential.KeyringError
+			noLogin := errors.Is(loadErr, credential.ErrNotFound) || errors.Is(loadErr, credential.ErrInvalidState) ||
+				(errors.As(loadErr, &keyringErr) && runtime.auth.OIDC != nil)
+			if noLogin {
 				if runtime.auth.OIDC != nil {
 					details := "OIDC exchange"
 					if workspaceID := runtime.auth.OIDC.WorkspaceID(); workspaceID != "" {

@@ -366,8 +366,8 @@ func (m *Manager) deleteIgnoringMissing() error {
 
 func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	account, state, err := m.Account(ctx)
-	if errors.Is(err, ErrNotLoggedIn) {
-		return m.resolveOIDCAccess(ctx)
+	if err != nil && oidcFallbackable(err) {
+		return m.resolveOIDCAccess(ctx, err)
 	}
 	if err != nil {
 		return Access{}, err
@@ -448,12 +448,21 @@ func (m *Manager) saveDataToken(ctx context.Context, accessToken, workspaceID st
 	return nil
 }
 
+// oidcFallbackable reports whether an unattended OIDC exchange may stand in
+// for a missing login: none is stored, or the credential store cannot be read
+// at all, as on a CI host without an OS keyring.
+func oidcFallbackable(err error) bool {
+	var keyringErr *credential.KeyringError
+	return errors.Is(err, ErrNotLoggedIn) || errors.As(err, &keyringErr)
+}
+
 // resolveOIDCAccess exchanges a CI-issued OIDC token for a short-lived
 // workspace credential. Nothing is stored: each process exchanges its own
-// credential, which expires with the platform's credential TTL.
-func (m *Manager) resolveOIDCAccess(ctx context.Context) (Access, error) {
+// credential, which expires with the platform's credential TTL. When the
+// environment offers no OIDC sign-in, the original error stands.
+func (m *Manager) resolveOIDCAccess(ctx context.Context, cause error) (Access, error) {
 	if m.OIDC == nil {
-		return Access{}, ErrNotLoggedIn
+		return Access{}, cause
 	}
 	workspaceID := strings.TrimSpace(m.OIDC.WorkspaceID())
 	if workspaceID == "" {

@@ -15,6 +15,7 @@
 package command
 
 import (
+	"errors"
 	"net/http"
 	"os"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
+	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -76,6 +78,39 @@ func TestQueryWithOIDCExchange(t *testing.T) {
 	_, statErr := os.Stat(paths.CredentialsFile)
 	require.True(t, os.IsNotExist(statErr))
 	require.NotContains(t, diagnostics, "oidc-key")
+}
+
+// brokenStore stands in for a credential backend the host cannot serve, such
+// as a CI runner without an OS keyring.
+type brokenStore struct{ err error }
+
+func (s *brokenStore) Load(string) (credential.State, error) { return credential.State{}, s.err }
+func (s *brokenStore) Save(string, credential.State) error   { return s.err }
+func (s *brokenStore) Delete(string) error                   { return s.err }
+
+func TestQueryOIDCWithoutKeyring(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.OIDCExchange = oidcExchangeFixture()
+	keyringFailure := &credential.KeyringError{Op: "read", Err: errors.New("no secret service")}
+
+	var apiKeys []string
+	out, _, err := runCommandWith(t, Dependencies{
+		Getenv: oidcEnvironment(fake),
+		CredentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
+			if kind == credential.SourceKeyring {
+				return &brokenStore{err: keyringFailure}, nil
+			}
+			return credential.NewPlaintextStore(paths.CredentialsFile), nil
+		},
+		HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
+			apiKeys = append(apiKeys, r.Header.Get("Authorization"))
+			return finishedQueryResponse(r), nil
+		}),
+	}, "--control-url", fake.URL, "query", "--format", "json", "SELECT 1 AS ready")
+	require.NoError(t, err)
+	require.JSONEq(t, `[{"ready":1}]`, out)
+	require.Equal(t, 1, fake.OIDCExchanges)
+	require.Equal(t, []string{"Bearer oidc-key"}, apiKeys)
 }
 
 func TestQueryOIDCLoginTakesPrecedence(t *testing.T) {

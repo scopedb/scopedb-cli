@@ -779,6 +779,30 @@ func TestResolveDataAccessOIDCErrors(t *testing.T) {
 	})
 }
 
+func TestResolveDataAccessOIDCAfterStoreFailure(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	keyringFailure := &credential.KeyringError{Op: "read", Err: errors.New("no secret service")}
+	control := &fakeControl{}
+	manager := newManager(t, &memoryStore{loadErr: keyringFailure}, control, &fakeOAuth{}, now)
+	manager.OIDC = &fakeOIDC{workspaceID: "ws-1", token: "ci.jwt.token"}
+
+	access, err := manager.ResolveDataAccess(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "oidc-key", access.APIKey)
+	require.Equal(t, []string{"ci.jwt.token", "ws-1"}, control.oidcExchangeArg)
+}
+
+func TestResolveDataAccessKeepsStoreFailureWithoutOIDC(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	keyringFailure := &credential.KeyringError{Op: "read", Err: errors.New("no secret service")}
+	control := &fakeControl{}
+	manager := newManager(t, &memoryStore{loadErr: keyringFailure}, control, &fakeOAuth{}, now)
+
+	_, err := manager.ResolveDataAccess(t.Context())
+	require.ErrorIs(t, err, keyringFailure)
+	require.Empty(t, control.oidcExchangeArg)
+}
+
 func TestResolveDataAccessRequiresSelection(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	state := loginState(now, now.Add(time.Hour))
