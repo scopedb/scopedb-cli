@@ -25,6 +25,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/scopedb/scopedb-cli/internal/filelock"
+	"github.com/scopedb/scopedb-cli/internal/oidc"
 )
 
 var (
@@ -74,15 +75,6 @@ type CredentialStore interface {
 	Replace(controlURL string, state credential.State) error
 }
 
-// OIDCSignIn supplies an unattended CI environment's OIDC token and workspace
-// target. It is consulted only when no stored login exists.
-type OIDCSignIn interface {
-	// WorkspaceID returns the configured exchange target; empty means unset.
-	WorkspaceID() string
-	// Token returns the provider-issued OIDC token.
-	Token() (string, error)
-}
-
 type Manager struct {
 	ControlURL  string
 	Control     ControlPlane
@@ -91,7 +83,7 @@ type Manager struct {
 	LockFile    string
 	// OIDC, when set, is the CI environment's sign-in offer. It authenticates
 	// data commands that have no stored login; it never replaces one.
-	OIDC  OIDCSignIn
+	OIDC  *oidc.SignIn
 	Now   func() time.Time
 	Sleep func(time.Duration)
 }
@@ -466,11 +458,7 @@ func (m *Manager) resolveOIDCAccess(ctx context.Context, cause error) (Access, e
 	if workspaceID == "" {
 		return Access{}, ErrOIDCNoWorkspace
 	}
-	token, err := m.OIDC.Token()
-	if err != nil {
-		return Access{}, err
-	}
-	exchanged, err := m.Control.ExchangeOIDC(ctx, token, workspaceID)
+	exchanged, err := m.Control.ExchangeOIDC(ctx, m.OIDC.Token(), workspaceID)
 	if err != nil {
 		var controlErr *controlplane.Error
 		if errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized {

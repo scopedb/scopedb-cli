@@ -135,7 +135,7 @@ func TestQueryOIDCMissingWorkspace(t *testing.T) {
 	require.Zero(t, fake.OIDCExchanges)
 }
 
-func TestQueryOIDCWithoutTokenSource(t *testing.T) {
+func TestQueryOIDCWorkspaceWithoutToken(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	_, _, err := runCommandWith(t, Dependencies{
 		Getenv: func(name string) string {
@@ -147,7 +147,7 @@ func TestQueryOIDCWithoutTokenSource(t *testing.T) {
 	}, "--control-url", fake.URL, "query", "SELECT 1")
 	require.Error(t, err)
 	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "SCOPEDB_OIDC_TOKEN")
+	require.Contains(t, clierror.Render(err), "not logged in")
 	require.Zero(t, fake.OIDCExchanges)
 }
 

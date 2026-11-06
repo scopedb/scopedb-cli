@@ -223,9 +223,7 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 		Now:         a.now,
 		Sleep:       a.sleep,
 	}
-	if signIn, ok := oidc.FromEnvironment(a.getenv); ok {
-		runtime.auth.OIDC = signIn
-	}
+	runtime.auth.OIDC = oidc.FromEnvironment(a.getenv)
 	return runtime, nil
 }
 
@@ -394,9 +392,6 @@ func NormalizeError(err error) error {
 	}
 	if errors.Is(err, auth.ErrOIDCNoWorkspace) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, err.Error(), err), "set SCOPEDB_WORKSPACE_ID to the target workspace ID")
-	}
-	if errors.Is(err, oidc.ErrNoToken) {
-		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "set SCOPEDB_OIDC_TOKEN to a token trusted by the workspace")
 	}
 	if errors.Is(err, auth.ErrOIDCRejected) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "check the workspace's OpenID Connect trust policies in the Console")

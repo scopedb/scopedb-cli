@@ -16,7 +16,6 @@
 package oidc
 
 import (
-	"errors"
 	"strings"
 )
 
@@ -29,39 +28,31 @@ const (
 	envToken = "SCOPEDB_OIDC_TOKEN"
 )
 
-// ErrNoToken reports that the environment cannot provide an OIDC token.
-var ErrNoToken = errors.New("the environment did not provide an OIDC token")
-
-// SignIn is an unattended CI sign-in resolved from the environment: a
-// workspace target plus a provider-issued OIDC token.
+// SignIn is an unattended CI sign-in: a workspace target plus a
+// provider-issued OIDC token. The token is used once, for the credential
+// exchange, and is never stored.
 type SignIn struct {
 	workspaceID string
 	token       string
 }
 
-// FromEnvironment returns a SignIn when the environment asks for OIDC
-// exchange: a workspace target or a token is set. ok is false in ordinary
-// interactive environments, where data commands should keep requiring a
-// stored login.
-func FromEnvironment(getenv func(string) string) (*SignIn, bool) {
-	signIn := &SignIn{
+// FromEnvironment returns the CI sign-in the environment configures, or nil
+// in ordinary interactive environments, where data commands should keep
+// requiring a stored login. A blank token means no sign-in: without a token
+// there is nothing to exchange.
+func FromEnvironment(getenv func(string) string) *SignIn {
+	token := strings.TrimSpace(getenv(envToken))
+	if token == "" {
+		return nil
+	}
+	return &SignIn{
 		workspaceID: strings.TrimSpace(getenv(envWorkspaceID)),
-		token:       strings.TrimSpace(getenv(envToken)),
+		token:       token,
 	}
-	if signIn.workspaceID == "" && signIn.token == "" {
-		return nil, false
-	}
-	return signIn, true
 }
 
 // WorkspaceID returns the configured exchange target; empty means unset.
 func (s *SignIn) WorkspaceID() string { return s.workspaceID }
 
-// Token returns the provider-issued OIDC token. The token is used once, for
-// the credential exchange, and is never stored.
-func (s *SignIn) Token() (string, error) {
-	if s.token == "" {
-		return "", ErrNoToken
-	}
-	return s.token, nil
-}
+// Token returns the provider-issued OIDC token.
+func (s *SignIn) Token() string { return s.token }

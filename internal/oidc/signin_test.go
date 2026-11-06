@@ -29,10 +29,11 @@ func TestFromEnvironment(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		values map[string]string
-		ok     bool
+		want   bool
 	}{
 		{"empty environment", map[string]string{}, false},
-		{"workspace only", map[string]string{"SCOPEDB_WORKSPACE_ID": "ws-1"}, true},
+		{"workspace only", map[string]string{"SCOPEDB_WORKSPACE_ID": "ws-1"}, false},
+		{"blank token", map[string]string{"SCOPEDB_OIDC_TOKEN": "  "}, false},
 		{"token only", map[string]string{"SCOPEDB_OIDC_TOKEN": "jwt"}, true},
 		{"all set", map[string]string{
 			"SCOPEDB_WORKSPACE_ID": "ws-1",
@@ -40,28 +41,12 @@ func TestFromEnvironment(t *testing.T) {
 		}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			signIn, ok := FromEnvironment(environment(tc.values))
-			require.Equal(t, tc.ok, ok)
-			if ok {
+			signIn := FromEnvironment(environment(tc.values))
+			require.Equal(t, tc.want, signIn != nil)
+			if signIn != nil {
 				require.Equal(t, strings.TrimSpace(tc.values["SCOPEDB_WORKSPACE_ID"]), signIn.WorkspaceID())
+				require.Equal(t, strings.TrimSpace(tc.values["SCOPEDB_OIDC_TOKEN"]), signIn.Token())
 			}
 		})
 	}
-}
-
-func TestSignInToken(t *testing.T) {
-	t.Run("literal token", func(t *testing.T) {
-		signIn, ok := FromEnvironment(environment(map[string]string{"SCOPEDB_OIDC_TOKEN": "  env.jwt.token  "}))
-		require.True(t, ok)
-		token, err := signIn.Token()
-		require.NoError(t, err)
-		require.Equal(t, "env.jwt.token", token)
-	})
-
-	t.Run("no token", func(t *testing.T) {
-		signIn, ok := FromEnvironment(environment(map[string]string{"SCOPEDB_WORKSPACE_ID": "ws-1"}))
-		require.True(t, ok)
-		_, err := signIn.Token()
-		require.ErrorIs(t, err, ErrNoToken)
-	})
 }

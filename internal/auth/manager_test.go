@@ -25,6 +25,7 @@ import (
 
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
+	"github.com/scopedb/scopedb-cli/internal/oidc"
 	"github.com/stretchr/testify/require"
 )
 
@@ -641,21 +642,16 @@ func TestResolveDataAccessExchangesExpiringToken(t *testing.T) {
 	require.Equal(t, 1, control.exchangeCalls)
 }
 
-type fakeOIDC struct {
-	workspaceID string
-	token       string
-	tokenErr    error
-	calls       int
-}
-
-func (f *fakeOIDC) WorkspaceID() string { return f.workspaceID }
-
-func (f *fakeOIDC) Token() (string, error) {
-	f.calls++
-	if f.tokenErr != nil {
-		return "", f.tokenErr
-	}
-	return f.token, nil
+func oidcEnv(workspaceID, token string) *oidc.SignIn {
+	return oidc.FromEnvironment(func(name string) string {
+		switch name {
+		case "SCOPEDB_WORKSPACE_ID":
+			return workspaceID
+		case "SCOPEDB_OIDC_TOKEN":
+			return token
+		}
+		return ""
+	})
 }
 
 func TestResolveDataAccessWithoutOIDCEnvironment(t *testing.T) {
@@ -671,8 +667,7 @@ func TestResolveDataAccessExchangesOIDCToken(t *testing.T) {
 	store := &memoryStore{}
 	control := &fakeControl{}
 	manager := newManager(t, store, control, &fakeOAuth{}, now)
-	signIn := &fakeOIDC{workspaceID: "ws-1", token: "ci.jwt.token"}
-	manager.OIDC = signIn
+	manager.OIDC = oidcEnv("ws-1", "ci.jwt.token")
 
 	access, err := manager.ResolveDataAccess(t.Context())
 	require.NoError(t, err)
@@ -701,14 +696,12 @@ func TestResolveDataAccessLoginTakesPrecedence(t *testing.T) {
 		},
 	}
 	manager := newManager(t, store, control, &fakeOAuth{}, now)
-	signIn := &fakeOIDC{workspaceID: "ws-2", token: "ci.jwt.token"}
-	manager.OIDC = signIn
+	manager.OIDC = oidcEnv("ws-2", "ci.jwt.token")
 
 	access, err := manager.ResolveDataAccess(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, "cached-data-token", access.APIKey)
 	require.Equal(t, "ws-1", access.WorkspaceID)
-	require.Zero(t, signIn.calls)
 	require.Empty(t, control.oidcExchangeArg)
 }
 
@@ -718,18 +711,9 @@ func TestResolveDataAccessOIDCErrors(t *testing.T) {
 	t.Run("missing workspace", func(t *testing.T) {
 		control := &fakeControl{}
 		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
-		manager.OIDC = &fakeOIDC{token: "ci.jwt.token"}
+		manager.OIDC = oidcEnv("", "ci.jwt.token")
 		_, err := manager.ResolveDataAccess(t.Context())
 		require.ErrorIs(t, err, ErrOIDCNoWorkspace)
-		require.Empty(t, control.oidcExchangeArg)
-	})
-
-	t.Run("token source failure", func(t *testing.T) {
-		control := &fakeControl{}
-		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
-		manager.OIDC = &fakeOIDC{workspaceID: "ws-1", tokenErr: errors.New("no token")}
-		_, err := manager.ResolveDataAccess(t.Context())
-		require.ErrorContains(t, err, "no token")
 		require.Empty(t, control.oidcExchangeArg)
 	})
 
@@ -740,7 +724,7 @@ func TestResolveDataAccessOIDCErrors(t *testing.T) {
 			},
 		}
 		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
-		manager.OIDC = &fakeOIDC{workspaceID: "ws-1", token: "ci.jwt.token"}
+		manager.OIDC = oidcEnv("ws-1", "ci.jwt.token")
 		_, err := manager.ResolveDataAccess(t.Context())
 		require.ErrorIs(t, err, ErrOIDCRejected)
 	})
@@ -755,7 +739,7 @@ func TestResolveDataAccessOIDCErrors(t *testing.T) {
 			},
 		}
 		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
-		manager.OIDC = &fakeOIDC{workspaceID: "ws-1", token: "ci.jwt.token"}
+		manager.OIDC = oidcEnv("ws-1", "ci.jwt.token")
 		_, err := manager.ResolveDataAccess(t.Context())
 		require.ErrorContains(t, err, "ws-other")
 	})
@@ -766,7 +750,7 @@ func TestResolveDataAccessOIDCAfterStoreFailure(t *testing.T) {
 	keyringFailure := &credential.KeyringError{Op: "read", Err: errors.New("no secret service")}
 	control := &fakeControl{}
 	manager := newManager(t, &memoryStore{loadErr: keyringFailure}, control, &fakeOAuth{}, now)
-	manager.OIDC = &fakeOIDC{workspaceID: "ws-1", token: "ci.jwt.token"}
+	manager.OIDC = oidcEnv("ws-1", "ci.jwt.token")
 
 	access, err := manager.ResolveDataAccess(t.Context())
 	require.NoError(t, err)
