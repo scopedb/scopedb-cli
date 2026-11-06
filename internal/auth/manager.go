@@ -455,7 +455,11 @@ func (m *Manager) exchangeAccessFromOIDC(ctx context.Context, cause error) (Acce
 	if err != nil {
 		var controlErr *controlplane.Error
 		if errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized {
-			return Access{}, fmt.Errorf("%w for workspace %s", ErrOIDCRejected, workspaceID)
+			detail := ""
+			if controlErr.RequestID != "" {
+				detail = " (request ID: " + controlErr.RequestID + ")"
+			}
+			return Access{}, fmt.Errorf("%w for workspace %s%s", ErrOIDCRejected, workspaceID, detail)
 		}
 		return Access{}, err
 	}
