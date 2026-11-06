@@ -107,18 +107,11 @@ func newFakeControlPlane(t *testing.T) *fakeControlPlane {
 
 func (f *fakeControlPlane) metadata() controlplane.AuthorizationServerMetadata {
 	metadata := controlplane.AuthorizationServerMetadata{
-		Issuer:                                     f.Issuer,
-		AuthorizationEndpoint:                      f.URL + "/oauth/authorize",
-		DeviceAuthorizationEndpoint:                f.URL + "/oauth/device/authorization",
-		TokenEndpoint:                              f.URL + "/oauth/token",
-		RevocationEndpoint:                         f.URL + "/oauth/revoke",
-		ResponseTypesSupported:                     []string{"code"},
-		GrantTypesSupported:                        []string{"authorization_code", controlplane.GrantTypeDeviceCode, "refresh_token"},
-		CodeChallengeMethodsSupported:              []string{"S256"},
-		TokenEndpointAuthMethodsSupported:          []string{"none"},
-		RevocationEndpointAuthMethodsSupported:     []string{"none"},
-		ScopesSupported:                            []string{"platform"},
-		AuthorizationResponseIssParameterSupported: true,
+		Issuer:                      f.Issuer,
+		AuthorizationEndpoint:       f.URL + "/oauth/authorize",
+		DeviceAuthorizationEndpoint: f.URL + "/oauth/device/authorization",
+		TokenEndpoint:               f.URL + "/oauth/token",
+		RevocationEndpoint:          f.URL + "/oauth/revoke",
 	}
 	if f.MetadataMutate != nil {
 		f.MetadataMutate(&metadata)

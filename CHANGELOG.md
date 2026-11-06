@@ -15,6 +15,7 @@ All significant changes to this project will be documented in this file.
 
 * Source installations require Go 1.27.3 or newer to include its certificate-validation security fix.
 * Hide service URL override flags from command help and shell completion.
+* `scope auth login` reports the server's own error when authorization-server discovery fails instead of a "requires ScopeDB v0.23.0 or newer" prerequisite message, and device authorization or token revocation now fail during discovery if their endpoints are omitted. Credential entries no longer carry a format version; credentials written by pre-OAuth releases are still rejected and replaced by a fresh login.
 
 ## v0.2.0 (2026-10-25)
 

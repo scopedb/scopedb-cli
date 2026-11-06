@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -81,13 +80,6 @@ func (a *app) newLoginCommand() *cobra.Command {
 			}
 			client, err := runtime.oauthClient(cmd.Context())
 			if err != nil {
-				var controlErr *controlplane.Error
-				if errors.As(err, &controlErr) && controlErr.Status == http.StatusNotFound {
-					return clierror.WithHint(
-						clierror.New(clierror.ExitUsage, "CLI login requires ScopeDB v0.23.0 or newer; this deployment is older"),
-						"upgrade the platform",
-					)
-				}
 				return err
 			}
 

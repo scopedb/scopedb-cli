@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 )
@@ -35,18 +34,11 @@ const (
 )
 
 type AuthorizationServerMetadata struct {
-	Issuer                                     string   `json:"issuer"`
-	AuthorizationEndpoint                      string   `json:"authorization_endpoint"`
-	DeviceAuthorizationEndpoint                string   `json:"device_authorization_endpoint"`
-	TokenEndpoint                              string   `json:"token_endpoint"`
-	RevocationEndpoint                         string   `json:"revocation_endpoint"`
-	ResponseTypesSupported                     []string `json:"response_types_supported"`
-	GrantTypesSupported                        []string `json:"grant_types_supported"`
-	CodeChallengeMethodsSupported              []string `json:"code_challenge_methods_supported"`
-	TokenEndpointAuthMethodsSupported          []string `json:"token_endpoint_auth_methods_supported"`
-	RevocationEndpointAuthMethodsSupported     []string `json:"revocation_endpoint_auth_methods_supported"`
-	ScopesSupported                            []string `json:"scopes_supported"`
-	AuthorizationResponseIssParameterSupported bool     `json:"authorization_response_iss_parameter_supported"`
+	Issuer                      string `json:"issuer"`
+	AuthorizationEndpoint       string `json:"authorization_endpoint"`
+	DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint"`
+	TokenEndpoint               string `json:"token_endpoint"`
+	RevocationEndpoint          string `json:"revocation_endpoint"`
 }
 
 // TokenSet is one successful token response. RefreshTokenExpiresIn is the non-standard companion to
@@ -117,26 +109,15 @@ func (c *Client) DiscoverOAuth(ctx context.Context) (*OAuth, error) {
 	if metadata.Issuer != c.baseURL {
 		return nil, fmt.Errorf("the authorization server reports issuer %q, but this CLI is configured for %q", metadata.Issuer, c.baseURL)
 	}
-	// Only the endpoints this deployment claims to have are validated; a flow whose endpoint is
-	// absent reports that it is unavailable instead of failing discovery for every other flow.
 	for name, endpoint := range map[string]string{
 		"authorization_endpoint":        metadata.AuthorizationEndpoint,
 		"token_endpoint":                metadata.TokenEndpoint,
 		"device_authorization_endpoint": metadata.DeviceAuthorizationEndpoint,
 		"revocation_endpoint":           metadata.RevocationEndpoint,
 	} {
-		if endpoint == "" && (name == "device_authorization_endpoint" || name == "revocation_endpoint") {
-			continue
-		}
 		if err := sameOrigin(c.baseURL, endpoint); err != nil {
 			return nil, fmt.Errorf("invalid %s: %s", name, err)
 		}
-	}
-	if !slices.Contains(metadata.CodeChallengeMethodsSupported, "S256") {
-		return nil, fmt.Errorf("the authorization server does not support PKCE with S256")
-	}
-	if !metadata.AuthorizationResponseIssParameterSupported {
-		return nil, fmt.Errorf("the authorization server does not return the iss parameter")
 	}
 	return newOAuth(metadata, c.userAgent, c.http), nil
 }
@@ -157,12 +138,6 @@ func (o *OAuth) AuthorizationURL(state, challenge, redirectURI string) string {
 }
 
 func (o *OAuth) StartDeviceAuthorization(ctx context.Context) (DeviceAuthorization, error) {
-	if o.metadata.DeviceAuthorizationEndpoint == "" {
-		return DeviceAuthorization{}, &OAuthError{
-			Code:        "unsupported_grant_type",
-			Description: "this ScopeDB deployment does not offer device login",
-		}
-	}
 	form := url.Values{"client_id": {ClientID}, "scope": {ScopePlatform}}
 	var response DeviceAuthorization
 	if err := o.postForm(ctx, o.metadata.DeviceAuthorizationEndpoint, form, &response); err != nil {
@@ -217,12 +192,6 @@ func (o *OAuth) RefreshToken(ctx context.Context, refreshToken string) (TokenSet
 func (o *OAuth) RevokeToken(ctx context.Context, token string) error {
 	if token == "" {
 		return nil
-	}
-	if o.metadata.RevocationEndpoint == "" {
-		return &OAuthError{
-			Code:        "unsupported_grant_type",
-			Description: "this ScopeDB deployment does not offer token revocation",
-		}
 	}
 	form := url.Values{"client_id": {ClientID}, "token": {token}}
 	return o.postForm(ctx, o.metadata.RevocationEndpoint, form, nil)

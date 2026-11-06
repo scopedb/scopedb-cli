@@ -82,7 +82,7 @@ func TestDoctorChecksOAuthDataAccess(t *testing.T) {
 						return &http.Response{
 							StatusCode: phase.exchangeStatus,
 							Header:     header,
-							Body:       io.NopCloser(strings.NewReader(`{"message":"session expired"}`)),
+							Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"session expired"}}`)),
 							Request:    r,
 						}, nil
 					}
