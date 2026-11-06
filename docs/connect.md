@@ -92,20 +92,9 @@ jobs:
       - run: scope catalog apply --plan plan.json
 ```
 
-Each `scope` invocation exchanges the token for a short-lived workspace credential; nothing is written to disk. A stored login takes precedence when one exists, and management commands such as `scope workspace` and `scope api-key` still require one. A workspace owner must first create an OpenID Connect trust policy in the Console matching the token's `sub` claim, which the job's `environment` sets to `repo:acme/infra:environment:production` above (a ref-shaped subject when unset), so environment protection rules can gate the token before it is issued.
+Each `scope` invocation exchanges the token for a short-lived workspace credential; nothing is written to disk. A stored login takes precedence when one exists, and management commands such as `scope workspace` and `scope api-key` still require one. A workspace owner must first create an OpenID Connect trust policy in the Console matching the token's `sub` claim; on GitHub Actions the job's `environment` shapes that claim, so environment protection rules can gate the token before it is issued.
 
-Outside GitHub Actions, export `SCOPEDB_WORKSPACE_ID` plus an OIDC token in `SCOPEDB_OIDC_TOKEN`, requested with the control-plane origin as its audience. GitLab CI jobs mint one with `id_tokens`:
-
-```yaml
-plan:
-  id_tokens:
-    SCOPEDB_OIDC_TOKEN:
-      aud: https://control.scopedb.cloud
-  variables:
-    SCOPEDB_WORKSPACE_ID: "0123456789ab"
-  script:
-    - scope catalog plan --file catalog.yaml --format json > plan.json
-```
+Outside GitHub Actions, arrange for `SCOPEDB_WORKSPACE_ID` and `SCOPEDB_OIDC_TOKEN` to be set in the job environment, with the token requested for the control-plane origin as its audience.
 
 ## Connect an SDK
 
