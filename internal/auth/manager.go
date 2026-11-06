@@ -355,7 +355,10 @@ func (m *Manager) deleteIgnoringMissing() error {
 
 func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	account, state, err := m.Account(ctx)
-	if err != nil && oidcFallbackable(err) {
+	var keyringErr *credential.KeyringError
+	// An unreadable keyring means no usable login, not a user error: CI hosts
+	// often have no OS keyring at all, so the OIDC exchange may stand in.
+	if err != nil && (errors.Is(err, ErrNotLoggedIn) || errors.As(err, &keyringErr)) {
 		return m.exchangeAccessFromOIDC(ctx, err)
 	}
 	if err != nil {
@@ -435,14 +438,6 @@ func (m *Manager) saveDataToken(ctx context.Context, accessToken, workspaceID st
 		return fmt.Errorf("save short-lived data credential: %w", err)
 	}
 	return nil
-}
-
-// oidcFallbackable reports whether an unattended OIDC exchange may stand in
-// for a missing login: none is stored, or the credential store cannot be read
-// at all, as on a CI host without an OS keyring.
-func oidcFallbackable(err error) bool {
-	var keyringErr *credential.KeyringError
-	return errors.Is(err, ErrNotLoggedIn) || errors.As(err, &keyringErr)
 }
 
 func (m *Manager) exchangeAccessFromOIDC(ctx context.Context, cause error) (Access, error) {
