@@ -80,15 +80,19 @@ In GitHub Actions, the `scopedb/login-action` action signs data commands in with
 permissions:
   contents: read
   id-token: write
-steps:
-  - uses: scopedb/login-action@v1
-    with:
-      workspace-id: "0123456789ab"
-  - run: scope catalog plan --file catalog.yaml --format json > plan.json
-  - run: scope catalog apply --plan plan.json
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: scopedb/login-action@v1
+        with:
+          workspace-id: "0123456789ab"
+      - run: scope catalog plan --file catalog.yaml --format json > plan.json
+      - run: scope catalog apply --plan plan.json
 ```
 
-Each `scope` invocation exchanges the token for a short-lived workspace credential; nothing is written to disk. A stored login takes precedence when one exists, and management commands such as `scope workspace` and `scope api-key` still require one. A workspace owner must first create an OpenID Connect trust policy in the Console whose subject matches the token's `sub` claim; prefer a GitHub Environment subject such as `repo:acme/infra:environment:production` for applies, so environment protection rules gate the token before it is issued.
+Each `scope` invocation exchanges the token for a short-lived workspace credential; nothing is written to disk. A stored login takes precedence when one exists, and management commands such as `scope workspace` and `scope api-key` still require one. A workspace owner must first create an OpenID Connect trust policy in the Console matching the token's `sub` claim, which the job's `environment` sets to `repo:acme/infra:environment:production` above (a ref-shaped subject when unset), so environment protection rules can gate the token before it is issued.
 
 Outside GitHub Actions, export `SCOPEDB_WORKSPACE_ID` plus an OIDC token in `SCOPEDB_OIDC_TOKEN` or `SCOPEDB_OIDC_TOKEN_FILE`, requested with the control-plane origin as its audience. GitLab CI jobs mint one with `id_tokens`:
 
