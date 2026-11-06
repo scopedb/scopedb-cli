@@ -354,13 +354,19 @@ func (m *Manager) deleteIgnoringMissing() error {
 }
 
 func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
-	account, state, err := m.Account(ctx)
-	var keyringErr *credential.KeyringError
-	// An unreadable keyring means no usable login, not a user error: CI hosts
-	// often have no OS keyring at all, so the OIDC exchange may stand in.
-	if err != nil && (errors.Is(err, ErrNotLoggedIn) || errors.As(err, &keyringErr)) {
-		return m.exchangeAccessFromOIDC(ctx, err)
+	// Read the login before Account so that only this read can say "no usable login". Once a login has been
+	// selected, a refresh or save failure must surface instead of letting the OIDC exchange take over.
+	// Account loads it again; one extra credential-store read is the price of that separation.
+	if _, loadErr := m.load(); loadErr != nil {
+		// load reports a KeyringError only when the keyring service cannot be read, which leaves no stored
+		// login to use. CI hosts often have no keyring at all, so the OIDC exchange may stand in.
+		var keyringErr *credential.KeyringError
+		if errors.Is(loadErr, ErrNotLoggedIn) || errors.As(loadErr, &keyringErr) {
+			return m.exchangeAccessFromOIDC(ctx, loadErr)
+		}
+		return Access{}, loadErr
 	}
+	account, state, err := m.Account(ctx)
 	if err != nil {
 		return Access{}, err
 	}
