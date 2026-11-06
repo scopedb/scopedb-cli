@@ -85,6 +85,11 @@ jobs:
     runs-on: ubuntu-24.04
     environment: production
     steps:
+      - uses: actions/checkout@v7
+      - name: Install the ScopeDB CLI
+        run: |
+          curl -fsSL "https://github.com/scopedb/scopedb-cli/releases/download/v<version>/scope_<version>_linux_amd64.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/scope" /usr/local/bin/scope
       - uses: scopedb/login-action@v1
         with:
           workspace-id: "0123456789ab"
@@ -92,7 +97,9 @@ jobs:
       - run: scope catalog apply --plan plan.json
 ```
 
-Each `scope` invocation exchanges the token for a short-lived workspace credential; nothing is written to disk. A stored login takes precedence when one exists, and management commands such as `scope workspace` and `scope api-key` still require one. A workspace owner must first create an OpenID Connect trust policy in the Console matching the token's `sub` claim; on GitHub Actions the job's `environment` shapes that claim, so environment protection rules can gate the token before it is issued.
+`<version>` is a ScopeDB CLI release that supports OIDC sign-in, written without the leading `v`; see [Install](../README.md#install) for the release archives. The action only exports `SCOPEDB_WORKSPACE_ID` and `SCOPEDB_OIDC_TOKEN`; the job checks out the repository and installs the CLI itself.
+
+Each `scope` invocation exchanges the token for a short-lived workspace credential. The CLI persists neither the token nor the exchanged credential; the action hands the token to later steps through the runner's `$GITHUB_ENV` file, masked in logs. A stored login takes precedence when one exists, and management commands such as `scope workspace` and `scope api-key` still require one. A workspace owner must first create an OpenID Connect trust policy in the Console matching the token's `sub` claim; on GitHub Actions the job's `environment` shapes that claim, so environment protection rules can gate the token before it is issued.
 
 Outside GitHub Actions, arrange for `SCOPEDB_WORKSPACE_ID` and `SCOPEDB_OIDC_TOKEN` to be set in the job environment, with the token requested for the control-plane origin as its audience.
 
