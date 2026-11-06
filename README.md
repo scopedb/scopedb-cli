@@ -74,7 +74,7 @@ scope workspace use <id>
 scope auth status
 ```
 
-The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. Workspaces shared with you appear in `scope workspace list` alongside the ones you own; select either with `scope workspace use <id>`. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for deployment details and `scope doctor` to verify query access.
+The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. Workspaces shared with you appear in `scope workspace list` alongside the ones you own; select either with `scope workspace use <id>`. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for workspace details and `scope doctor` to verify query access.
 
 In CI jobs that issue OIDC tokens, `scope query`, `scope catalog`, and `scope doctor` can run without a login: set `SCOPEDB_WORKSPACE_ID` and `SCOPEDB_OIDC_TOKEN` (or `SCOPEDB_OIDC_TOKEN_FILE`), and each run exchanges the token for a short-lived workspace credential. In GitHub Actions, the `scopedb/actions-login` action supplies the token. The workspace needs a matching OpenID Connect trust policy, created by an owner in the Console. See [Run in CI without a login](docs/connect.md#run-in-ci-without-a-login).
 

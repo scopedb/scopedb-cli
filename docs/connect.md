@@ -29,7 +29,7 @@ Login keeps a valid workspace selection or automatically selects the first works
 
 If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id>`.
 
-`scope auth status` verifies your login against ScopeDB and reports its credential source, `keyring` or `plaintext`, the credential file path when using plaintext, and when the login expires. Use `scope workspace get` to inspect the selected login workspace and its deployment status.
+`scope auth status` verifies your login against ScopeDB and reports its credential source, `keyring` or `plaintext`, the credential file path when using plaintext, and when the login expires. Use `scope workspace get` to inspect the selected login workspace and its provisioning status.
 
 `scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
 

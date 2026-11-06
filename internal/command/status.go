@@ -45,7 +45,7 @@ func (a *app) newStatusCommand() *cobra.Command {
 		Use:   "status",
 		Short: "Show authentication source, identity, and connection target",
 		Long: "Show authentication source, identity, and connection target after verifying your CLI login.\n" +
-			"Run 'scope doctor' to verify query access or 'scope workspace get' for deployment details.",
+			"Run 'scope doctor' to verify query access or 'scope workspace get' for workspace details.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateStructuredFormat(format); err != nil {

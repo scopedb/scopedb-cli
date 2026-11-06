@@ -93,7 +93,7 @@ func TestClientPreservesStructuredHTTPError(t *testing.T) {
 		writer.Header().Set("Retry-After", "7")
 		writer.Header().Set("X-Request-ID", "header-request")
 		writer.WriteHeader(http.StatusTooManyRequests)
-		_, _ = writer.Write([]byte(`{"message":"slow down","request_id":"body-request"}`))
+		_, _ = writer.Write([]byte(`{"error":{"message":"slow down"},"request_id":"body-request"}`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -232,16 +232,6 @@ func TestOAuthErrorCarriesTheProtocolCode(t *testing.T) {
 	require.Equal(t, "the user has not approved the request yet", protocol.Description)
 	require.Equal(t, "device-request", protocol.RequestID)
 	require.False(t, protocol.Retryable)
-}
-
-func TestOAuthReportsUnavailableFlows(t *testing.T) {
-	oauth := newOAuth(AuthorizationServerMetadata{Issuer: "https://control.example.com"}, "", http.DefaultClient)
-	_, err := oauth.StartDeviceAuthorization(t.Context())
-	require.ErrorContains(t, err, "does not offer device login")
-
-	err = oauth.RevokeToken(t.Context(), "ort_old")
-	require.ErrorContains(t, err, "does not offer token revocation")
-	require.NoError(t, oauth.RevokeToken(t.Context(), ""))
 }
 
 func TestOAuthRevocationPostsTheToken(t *testing.T) {

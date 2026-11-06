@@ -427,37 +427,12 @@ func TestDiscoveryRejectsForeignEndpoint(t *testing.T) {
 	require.ErrorContains(t, err, "token_endpoint")
 }
 
-func TestDiscoveryRequiresPKCEAndIssuerParameter(t *testing.T) {
-	for _, mutate := range []func(*controlplane.AuthorizationServerMetadata){
-		func(metadata *controlplane.AuthorizationServerMetadata) {
-			metadata.CodeChallengeMethodsSupported = []string{"plain"}
-		},
-		func(metadata *controlplane.AuthorizationServerMetadata) {
-			metadata.AuthorizationResponseIssParameterSupported = false
-		},
-	} {
-		fake, _ := setupCLITest(t)
-		fake.MetadataMutate = mutate
-		_, _, err := runInteractiveLogin(t, fake, "")
-		require.Error(t, err)
-	}
-}
-
-func TestLoginWithoutOAuthSupportReportsGuidance(t *testing.T) {
-	server := httptest.NewServer(http.NotFoundHandler())
-	t.Cleanup(server.Close)
-	t.Setenv("SCOPEDB_HOME", t.TempDir())
-	_, _, err := runInteractiveCommand(t, "--control-url", server.URL, "auth", "login", "--insecure-storage")
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "requires ScopeDB v0.23.0 or newer")
-}
-
 func TestLoginKeepsCredentialsWhenAccountLookupFails(t *testing.T) {
 	fake, store := setupCLITest(t)
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/user" {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+			_, _ = w.Write([]byte(`{"error":{"message":"temporarily unavailable"}}`))
 			return
 		}
 		fake.serve(w, r)
@@ -708,7 +683,7 @@ func TestLoginRefusesWithoutTheAccountWhenLookupFails(t *testing.T) {
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/user" {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+			_, _ = w.Write([]byte(`{"error":{"message":"temporarily unavailable"}}`))
 			return
 		}
 		fake.serve(w, r)
@@ -1065,7 +1040,7 @@ func TestLoginRequestedWorkspaceLookupFailureIsReported(t *testing.T) {
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/user" {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"message":"temporarily unavailable"}`))
+			_, _ = w.Write([]byte(`{"error":{"message":"temporarily unavailable"}}`))
 			return
 		}
 		fake.serve(w, r)

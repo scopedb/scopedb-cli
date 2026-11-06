@@ -36,9 +36,9 @@ func TestCauseReachesDetailBelowARepetitiveWrapper(t *testing.T) {
 }
 
 func TestRenderPrintsCauseBeforeRequestIDAndHint(t *testing.T) {
-	err := WithHint(Wrap(ExitAuth, "not logged in", errors.New("session token rejected")), "run 'scope login'")
+	err := WithHint(Wrap(ExitAuth, "not logged in", errors.New("access token rejected")), "run 'scope auth login'")
 	err.RequestID = "req-1"
-	require.Equal(t, "Error: not logged in\nCaused by: session token rejected\nRequest ID: req-1\nHint: run 'scope login'\n", Render(err))
+	require.Equal(t, "Error: not logged in\nCaused by: access token rejected\nRequest ID: req-1\nHint: run 'scope auth login'\n", Render(err))
 }
 
 func TestRenderOmitsCauseWhenMessageRepeatsIt(t *testing.T) {
@@ -59,9 +59,9 @@ func TestRenderKeepsJoinedCauseOnOneLine(t *testing.T) {
 }
 
 func TestCompactJoinsPartsInOrder(t *testing.T) {
-	err := WithHint(Wrap(ExitAuth, "not logged in", errors.New("session token rejected")), "run 'scope login'")
+	err := WithHint(Wrap(ExitAuth, "not logged in", errors.New("access token rejected")), "run 'scope auth login'")
 	err.RequestID = "req-1"
-	require.Equal(t, "not logged in; session token rejected; request ID: req-1; run 'scope login'", Compact(err))
+	require.Equal(t, "not logged in; access token rejected; request ID: req-1; run 'scope auth login'", Compact(err))
 }
 
 func TestCompactOfPlainErrorIsItsMessage(t *testing.T) {
