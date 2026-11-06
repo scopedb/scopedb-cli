@@ -647,14 +647,12 @@ type fakeOIDC struct {
 	token       string
 	tokenErr    error
 	calls       int
-	audience    string
 }
 
 func (f *fakeOIDC) WorkspaceID() string { return f.workspaceID }
 
-func (f *fakeOIDC) Token(_ context.Context, audience string) (string, error) {
+func (f *fakeOIDC) Token() (string, error) {
 	f.calls++
-	f.audience = audience
 	if f.tokenErr != nil {
 		return "", f.tokenErr
 	}
@@ -687,8 +685,6 @@ func TestResolveDataAccessExchangesOIDCToken(t *testing.T) {
 	require.Equal(t, []string{"ci.jwt.token", "ws-1"}, control.oidcExchangeArg)
 	// The exchanged credential is never stored.
 	require.False(t, store.stored())
-	// The audience is the control-plane origin.
-	require.Equal(t, "https://control.example.com", signIn.audience)
 }
 
 func TestResolveDataAccessLoginTakesPrecedence(t *testing.T) {

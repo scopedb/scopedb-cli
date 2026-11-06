@@ -63,10 +63,8 @@ type fakeControlPlane struct {
 	RevokedAPIKeys      []string
 	TokenResponseMutate func(*controlplane.TokenSet)
 
-	OIDCToken          string
 	OIDCExchange       controlplane.OIDCExchangeResponse
 	OIDCExchangeStatus int
-	OIDCAudience       string
 	OIDCExchanges      int
 	OIDCTokens         []string
 
@@ -102,9 +100,8 @@ func newFakeControlPlane(t *testing.T) *fakeControlPlane {
 			VerificationURIComplete: "https://console.example.com/oauth/device#user_code=BCDF-GHJK-LMNP",
 			ExpiresIn:               600,
 		},
-		User:      controlplane.User{ID: "user-1", Email: "dev@example.com", Status: "active"},
-		Details:   map[string]controlplane.WorkspaceDetails{},
-		OIDCToken: "gha-oidc-token",
+		User:    controlplane.User{ID: "user-1", Email: "dev@example.com", Status: "active"},
+		Details: map[string]controlplane.WorkspaceDetails{},
 	}
 	fake.Server = httptest.NewServer(http.HandlerFunc(fake.serve))
 	fake.URL = fake.Server.URL
@@ -153,12 +150,6 @@ func (f *fakeControlPlane) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 	case r.URL.Path == "/oauth/device/authorization":
 		f.writeJSON(w, http.StatusOK, f.Device)
-	case r.URL.Path == "/gha/id-token":
-		f.mu.Lock()
-		f.OIDCAudience = r.URL.Query().Get("audience")
-		f.mu.Unlock()
-		assert.Equal(f.t, "Bearer gha-request-token", r.Header.Get("Authorization"))
-		f.writeJSON(w, http.StatusOK, map[string]any{"value": f.OIDCToken, "count": 1})
 	case r.URL.Path == "/api/user":
 		f.writeJSON(w, http.StatusOK, f.User)
 	case r.URL.Path == "/api/workspaces" && r.Method == http.MethodGet:
@@ -470,7 +461,7 @@ func runCommandWith(t *testing.T, deps Dependencies, args ...string) (string, st
 	if err != nil {
 		rendered += clierror.Render(err)
 	}
-	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret", "gha-oidc-token", "gha-request-token", "oidc-key"} {
+	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret", "ci.jwt.token", "oidc-key"} {
 		require.NotContains(t, rendered, secret)
 	}
 	return out.String(), diagnostics.String(), err

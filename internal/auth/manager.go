@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -81,8 +80,8 @@ type CredentialStore interface {
 type OIDCSignIn interface {
 	// WorkspaceID returns the configured exchange target; empty means unset.
 	WorkspaceID() string
-	// Token returns the provider-issued OIDC token for the audience.
-	Token(ctx context.Context, audience string) (string, error)
+	// Token returns the provider-issued OIDC token.
+	Token() (string, error)
 }
 
 type Manager struct {
@@ -468,7 +467,7 @@ func (m *Manager) resolveOIDCAccess(ctx context.Context, cause error) (Access, e
 	if workspaceID == "" {
 		return Access{}, ErrOIDCNoWorkspace
 	}
-	token, err := m.OIDC.Token(ctx, oidcAudience(m.ControlURL))
+	token, err := m.OIDC.Token()
 	if err != nil {
 		return Access{}, err
 	}
@@ -491,16 +490,6 @@ func (m *Manager) resolveOIDCAccess(ctx context.Context, cause error) (Access, e
 		return Access{}, fmt.Errorf("the OIDC exchange returned a credential for workspace %s", exchanged.WorkspaceID)
 	}
 	return Access{Endpoint: exchanged.Endpoint, APIKey: exchanged.AccessToken, WorkspaceID: workspaceID}, nil
-}
-
-// oidcAudience is the token audience the platform expects: the control-plane
-// origin without a path, query, or fragment.
-func oidcAudience(controlURL string) string {
-	parsed, err := url.Parse(controlURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return strings.TrimRight(controlURL, "/")
-	}
-	return parsed.Scheme + "://" + parsed.Host
 }
 
 func RequireWorkspace(account Account) error {

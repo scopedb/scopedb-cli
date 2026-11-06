@@ -30,12 +30,11 @@ import (
 )
 
 // oidcEnvironment puts the process inside a CI job: a workspace target plus a
-// token request endpoint served by the fake control plane.
-func oidcEnvironment(fake *fakeControlPlane) func(string) string {
+// provider-issued OIDC token.
+func oidcEnvironment() func(string) string {
 	values := map[string]string{
-		"SCOPEDB_WORKSPACE_ID":           "ws-1",
-		"ACTIONS_ID_TOKEN_REQUEST_URL":   fake.URL + "/gha/id-token",
-		"ACTIONS_ID_TOKEN_REQUEST_TOKEN": "gha-request-token",
+		"SCOPEDB_WORKSPACE_ID": "ws-1",
+		"SCOPEDB_OIDC_TOKEN":   "ci.jwt.token",
 	}
 	return func(name string) string { return values[name] }
 }
@@ -58,7 +57,7 @@ func TestQueryWithOIDCExchange(t *testing.T) {
 
 	var apiKeys []string
 	out, diagnostics, err := runCommandWith(t, Dependencies{
-		Getenv: oidcEnvironment(fake),
+		Getenv: oidcEnvironment(),
 		HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 			apiKeys = append(apiKeys, r.Header.Get("Authorization"))
 			return finishedQueryResponse(r), nil
@@ -67,9 +66,7 @@ func TestQueryWithOIDCExchange(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `[{"ready":1}]`, out)
 	require.Equal(t, 1, fake.OIDCExchanges)
-	require.Equal(t, []string{"gha-oidc-token"}, fake.OIDCTokens)
-	// The requested audience is the control-plane origin.
-	require.Equal(t, fake.URL, fake.OIDCAudience)
+	require.Equal(t, []string{"ci.jwt.token"}, fake.OIDCTokens)
 	// The data plane sees only the exchanged key.
 	require.Equal(t, []string{"Bearer oidc-key"}, apiKeys)
 	// Nothing is stored locally.
@@ -95,7 +92,7 @@ func TestQueryOIDCWithoutKeyring(t *testing.T) {
 
 	var apiKeys []string
 	out, _, err := runCommandWith(t, Dependencies{
-		Getenv: oidcEnvironment(fake),
+		Getenv: oidcEnvironment(),
 		CredentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
 			if kind == credential.SourceKeyring {
 				return &brokenStore{err: keyringFailure}, nil
@@ -117,7 +114,7 @@ func TestQueryOIDCLoginTakesPrecedence(t *testing.T) {
 	fake, _ := setupDataPlaneLogin(t, "https://data.example.com")
 	var apiKeys []string
 	_, _, err := runCommandWith(t, Dependencies{
-		Getenv: oidcEnvironment(fake),
+		Getenv: oidcEnvironment(),
 		HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 			apiKeys = append(apiKeys, r.Header.Get("Authorization"))
 			return finishedQueryResponse(r), nil
@@ -131,13 +128,10 @@ func TestQueryOIDCLoginTakesPrecedence(t *testing.T) {
 func TestQueryOIDCMissingWorkspace(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	getenv := func(name string) string {
-		if name == "SCOPEDB_WORKSPACE_ID" {
-			return ""
+		if name == "SCOPEDB_OIDC_TOKEN" {
+			return "ci.jwt.token"
 		}
-		return map[string]string{
-			"ACTIONS_ID_TOKEN_REQUEST_URL":   fake.URL + "/gha/id-token",
-			"ACTIONS_ID_TOKEN_REQUEST_TOKEN": "gha-request-token",
-		}[name]
+		return ""
 	}
 	_, _, err := runCommandWith(t, Dependencies{Getenv: getenv}, "--control-url", fake.URL, "query", "SELECT 1")
 	require.Error(t, err)
@@ -158,7 +152,7 @@ func TestQueryOIDCWithoutTokenSource(t *testing.T) {
 	}, "--control-url", fake.URL, "query", "SELECT 1")
 	require.Error(t, err)
 	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "id-token: write")
+	require.Contains(t, clierror.Render(err), "SCOPEDB_OIDC_TOKEN")
 	require.Zero(t, fake.OIDCExchanges)
 }
 
@@ -166,7 +160,7 @@ func TestQueryOIDCRejectedToken(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	fake.OIDCExchangeStatus = http.StatusUnauthorized
 	_, _, err := runCommandWith(t, Dependencies{
-		Getenv: oidcEnvironment(fake),
+		Getenv: oidcEnvironment(),
 	}, "--control-url", fake.URL, "query", "SELECT 1")
 	require.Error(t, err)
 	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
@@ -179,7 +173,7 @@ func TestQueryOIDCUnsupportedDeployment(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	fake.OIDCExchangeStatus = http.StatusNotFound
 	_, _, err := runCommandWith(t, Dependencies{
-		Getenv: oidcEnvironment(fake),
+		Getenv: oidcEnvironment(),
 	}, "--control-url", fake.URL, "query", "SELECT 1")
 	require.Error(t, err)
 	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
@@ -190,7 +184,7 @@ func TestDoctorWithOIDCExchange(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	fake.OIDCExchange = oidcExchangeFixture()
 	out, _, err := runCommandWith(t, Dependencies{
-		Getenv: oidcEnvironment(fake),
+		Getenv: oidcEnvironment(),
 		HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
 			assert.Equal(t, "Bearer oidc-key", r.Header.Get("Authorization"))
 			return finishedQueryResponse(r), nil
