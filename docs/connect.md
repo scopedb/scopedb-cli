@@ -68,9 +68,40 @@ Revoke a key with `scope api-key revoke <id>`, using the ID from `scope api-key 
 
 Copy the workspace's data-plane endpoint, without appending `/v1/statements`. The key only grants access to the workspace it was created in. The CLI does not read API keys: `scope query`, `scope catalog`, and `scope doctor` always use your login and the workspace selected with `scope workspace use`. The CLI ignores `SCOPEDB_ENDPOINT` and `SCOPEDB_API_KEY`, so you can keep them set for SDK applications, but they do not choose the CLI's workspace. Run `scope auth status` to confirm the target before changing the catalog.
 
-The CLI is meant for interactive use. In CI and other unattended jobs, connect through an SDK with an API key. Do not copy CLI login credentials to another host: the refresh token rotates on every use, and reusing an old one revokes the login.
+Do not copy CLI login credentials to another host: the refresh token rotates on every use, and reusing an old one revokes the login. For unattended jobs, see [Run in CI without a login](#run-in-ci-without-a-login); other automation connects through an SDK with an API key.
 
 To end your login session, run `scope auth logout`. Logout does not revoke application API keys.
+
+## Run in CI without a login
+
+In GitHub Actions, the `scopedb/login-action` action signs data commands in with the job's OIDC token, without `scope auth login` and without a stored credential:
+
+```yaml
+permissions:
+  contents: read
+  id-token: write
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the ScopeDB CLI
+        run: |
+          curl -fsSL "https://github.com/scopedb/scopedb-cli/releases/download/v<version>/scope_<version>_linux_amd64.tar.gz" | tar -xz -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/scope" /usr/local/bin/scope
+      - uses: scopedb/login-action@v1
+        with:
+          workspace-id: "0123456789ab"
+      - run: scope catalog plan --file catalog.yaml --format json > plan.json
+      - run: scope catalog apply --plan plan.json
+```
+
+`<version>` is a ScopeDB CLI release that supports OIDC sign-in, written without the leading `v`; see [Install](../README.md#install) for the release archives. The action only exports `SCOPEDB_WORKSPACE_ID` and `SCOPEDB_OIDC_TOKEN`; the job checks out the repository and installs the CLI itself.
+
+Each `scope` invocation exchanges the token for a short-lived workspace credential. The CLI persists neither the token nor the exchanged credential; the action hands the token to later steps through the runner's `$GITHUB_ENV` file, masked in logs. A stored login takes precedence when one exists, and management commands such as `scope workspace` and `scope api-key` still require one. A workspace owner must first create an OpenID Connect trust policy in the Console matching the token's `sub` claim; on GitHub Actions the job's `environment` shapes that claim, so environment protection rules can gate the token before it is issued.
+
+Outside GitHub Actions, arrange for `SCOPEDB_WORKSPACE_ID` and `SCOPEDB_OIDC_TOKEN` to be set in the job environment, with the token requested for the control-plane origin as its audience.
 
 ## Connect an SDK
 

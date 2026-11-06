@@ -79,8 +79,17 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			}
 
 			state, loadErr := runtime.credentials.Load(runtime.config.ControlURL)
-			if errors.Is(loadErr, credential.ErrNotFound) || errors.Is(loadErr, credential.ErrInvalidState) {
-				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login'"})
+			var keyringErr *credential.KeyringError
+			noLogin := errors.Is(loadErr, credential.ErrNotFound) || errors.Is(loadErr, credential.ErrInvalidState) ||
+				(errors.As(loadErr, &keyringErr) && runtime.auth.OIDC != nil)
+			if noLogin {
+				if runtime.auth.OIDC != nil {
+					details := "not logged in; using the CI OIDC exchange (workspace " + runtime.auth.OIDC.WorkspaceID + ")"
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: details})
+					a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
+				} else {
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login'"})
+				}
 			} else if loadErr != nil {
 				report.OK = false
 				report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "fail", Details: clierror.Compact(NormalizeError(loadErr))})

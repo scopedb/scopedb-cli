@@ -63,6 +63,12 @@ type fakeControlPlane struct {
 	RevokedAPIKeys      []string
 	TokenResponseMutate func(*controlplane.TokenSet)
 
+	OIDCExchange       controlplane.OIDCExchangeResponse
+	OIDCExchangeStatus int
+	OIDCRequestID      string
+	OIDCExchanges      int
+	OIDCTokens         []string
+
 	Issuer         string
 	MetadataMutate func(*controlplane.AuthorizationServerMetadata)
 	TokenStatus    int
@@ -158,6 +164,23 @@ func (f *fakeControlPlane) serve(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeControlPlane) serveWorkspace(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/workspaces/")
+	if strings.HasSuffix(path, "/workload-identity/exchange") {
+		f.mu.Lock()
+		f.OIDCExchanges++
+		f.OIDCTokens = append(f.OIDCTokens, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		status := f.OIDCExchangeStatus
+		requestID := f.OIDCRequestID
+		f.mu.Unlock()
+		if requestID != "" {
+			w.Header().Set("X-Request-ID", requestID)
+		}
+		if status != 0 {
+			f.writeJSON(w, status, map[string]string{"message": "the OIDC token was rejected"})
+			return
+		}
+		f.writeJSON(w, http.StatusOK, f.OIDCExchange)
+		return
+	}
 	if strings.HasSuffix(path, "/token-exchange") {
 		f.mu.Lock()
 		f.ExchangeCalls++
@@ -436,7 +459,7 @@ func runCommandWith(t *testing.T, deps Dependencies, args ...string) (string, st
 	if err != nil {
 		rendered += clierror.Render(err)
 	}
-	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret"} {
+	for _, secret := range []string{"oat_access", "ort_refresh", "code-1", "device-1", "oat_rotated", "ort_rotated", "private-access-secret", "private-refresh-secret", "legacy-secret", "ci.jwt.token", "oidc-key"} {
 		require.NotContains(t, rendered, secret)
 	}
 	return out.String(), diagnostics.String(), err

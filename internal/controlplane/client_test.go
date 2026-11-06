@@ -58,6 +58,32 @@ func TestClientUserAndWorkspaceContract(t *testing.T) {
 	require.False(t, workspaces[0].ScheduledForDeletion())
 }
 
+func TestClientExchangesOIDCToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, http.MethodPost, request.Method)
+		assert.Equal(t, "/api/workspaces/ws-1/workload-identity/exchange", request.URL.EscapedPath())
+		assert.Equal(t, "Bearer ci.jwt.token", request.Header.Get("Authorization"))
+		assert.Zero(t, request.ContentLength)
+		writer.Header().Set("Content-Type", "application/json")
+		writer.Header().Set("Cache-Control", "no-store")
+		_, _ = writer.Write([]byte(`{"access_token":"sk_exchange","token_type":"Bearer","expires_in":1800,"expires_at":"2026-11-05T12:30:00Z","workspace_id":"ws-1","endpoint":"https://ws-1.data.example.com"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewClient(server.URL, "scope/test", server.Client())
+	require.NoError(t, err)
+	response, err := client.ExchangeOIDC(t.Context(), "ci.jwt.token", "ws-1")
+	require.NoError(t, err)
+	require.Equal(t, OIDCExchangeResponse{
+		AccessToken: "sk_exchange",
+		TokenType:   "Bearer",
+		ExpiresIn:   1800,
+		ExpiresAt:   time.Date(2026, 11, 5, 12, 30, 0, 0, time.UTC),
+		WorkspaceID: "ws-1",
+		Endpoint:    "https://ws-1.data.example.com",
+	}, response)
+}
+
 func TestClientPreservesStructuredHTTPError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

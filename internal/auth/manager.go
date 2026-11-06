@@ -25,6 +25,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/scopedb/scopedb-cli/internal/filelock"
+	"github.com/scopedb/scopedb-cli/internal/oidc"
 )
 
 var (
@@ -36,6 +37,8 @@ var (
 	ErrWorkspaceUnavailable  = errors.New("selected workspace is no longer available")
 	ErrLoginExpired          = errors.New("login is no longer valid")
 	ErrCredentialsUnreadable = errors.New("existing credentials could not be read")
+
+	ErrOIDCRejected = errors.New("the OIDC token was rejected")
 )
 
 const (
@@ -56,6 +59,7 @@ type ControlPlane interface {
 	ListWorkspaces(context.Context, string) ([]controlplane.Workspace, error)
 	GetWorkspace(context.Context, string, string) (controlplane.WorkspaceDetails, error)
 	ExchangeToken(context.Context, string, string) (controlplane.TokenExchangeResponse, error)
+	ExchangeOIDC(context.Context, string, string) (controlplane.OIDCExchangeResponse, error)
 }
 
 type OAuthClient interface {
@@ -76,8 +80,11 @@ type Manager struct {
 	OAuth       OAuthClient
 	Credentials CredentialStore
 	LockFile    string
-	Now         func() time.Time
-	Sleep       func(time.Duration)
+	// OIDC, when set, is the CI environment's sign-in offer. It authenticates
+	// data commands that have no stored login; it never replaces one.
+	OIDC  *oidc.SignIn
+	Now   func() time.Time
+	Sleep func(time.Duration)
 }
 
 // Access contains everything needed to connect to the data plane.
@@ -347,6 +354,18 @@ func (m *Manager) deleteIgnoringMissing() error {
 }
 
 func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
+	// Read the login before Account so that only this read can say "no usable login". Once a login has been
+	// selected, a refresh or save failure must surface instead of letting the OIDC exchange take over.
+	// Account loads it again; one extra credential-store read is the price of that separation.
+	if _, loadErr := m.load(); loadErr != nil {
+		// load reports a KeyringError only when the keyring service cannot be read, which leaves no stored
+		// login to use. CI hosts often have no keyring at all, so the OIDC exchange may stand in.
+		var keyringErr *credential.KeyringError
+		if errors.Is(loadErr, ErrNotLoggedIn) || errors.As(loadErr, &keyringErr) {
+			return m.exchangeAccessFromOIDC(ctx, loadErr)
+		}
+		return Access{}, loadErr
+	}
 	account, state, err := m.Account(ctx)
 	if err != nil {
 		return Access{}, err
@@ -425,6 +444,33 @@ func (m *Manager) saveDataToken(ctx context.Context, accessToken, workspaceID st
 		return fmt.Errorf("save short-lived data credential: %w", err)
 	}
 	return nil
+}
+
+func (m *Manager) exchangeAccessFromOIDC(ctx context.Context, cause error) (Access, error) {
+	if m.OIDC == nil {
+		return Access{}, cause
+	}
+	workspaceID := m.OIDC.WorkspaceID
+	exchanged, err := m.Control.ExchangeOIDC(ctx, m.OIDC.Token, workspaceID)
+	if err != nil {
+		var controlErr *controlplane.Error
+		if errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized {
+			detail := ""
+			if controlErr.RequestID != "" {
+				detail = " (request ID: " + controlErr.RequestID + ")"
+			}
+			return Access{}, fmt.Errorf("%w for workspace %s%s", ErrOIDCRejected, workspaceID, detail)
+		}
+		return Access{}, err
+	}
+	if !strings.EqualFold(exchanged.TokenType, "Bearer") || exchanged.AccessToken == "" ||
+		exchanged.Endpoint == "" || exchanged.ExpiresAt.IsZero() {
+		return Access{}, errors.New("the OIDC exchange returned an invalid credential")
+	}
+	if exchanged.WorkspaceID != "" && exchanged.WorkspaceID != workspaceID {
+		return Access{}, fmt.Errorf("the OIDC exchange returned a credential for workspace %s", exchanged.WorkspaceID)
+	}
+	return Access{Endpoint: exchanged.Endpoint, APIKey: exchanged.AccessToken, WorkspaceID: workspaceID}, nil
 }
 
 func RequireWorkspace(account Account) error {

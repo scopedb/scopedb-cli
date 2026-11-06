@@ -34,6 +34,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/scopedb/scopedb-cli/internal/dataplane"
+	"github.com/scopedb/scopedb-cli/internal/oidc"
 	"github.com/scopedb/scopedb-cli/internal/version"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -222,6 +223,7 @@ func (a *app) newRuntime(paths config.Paths, cfg config.Config) (*runtimeContext
 		Now:         a.now,
 		Sleep:       a.sleep,
 	}
+	runtime.auth.OIDC = oidc.FromEnvironment(a.getenv)
 	return runtime, nil
 }
 
@@ -387,6 +389,9 @@ func NormalizeError(err error) error {
 	}
 	if errors.Is(err, auth.ErrLoginExpired) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "run 'scope auth login'")
+	}
+	if errors.Is(err, auth.ErrOIDCRejected) {
+		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "check the workspace's OpenID Connect trust policies in the Console")
 	}
 	if setupErr := workspaceSetupError(err); setupErr != nil {
 		return setupErr

@@ -79,6 +79,17 @@ type TokenExchangeResponse struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+// OIDCExchangeResponse is the short-lived data-plane credential issued for a
+// verified CI OIDC token, with the endpoint it belongs to.
+type OIDCExchangeResponse struct {
+	AccessToken string    `json:"access_token"`
+	TokenType   string    `json:"token_type"`
+	ExpiresIn   int       `json:"expires_in"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	WorkspaceID string    `json:"workspace_id"`
+	Endpoint    string    `json:"endpoint"`
+}
+
 type CreateAPIKeyRequest struct {
 	Name      string    `json:"name"`
 	Tags      []string  `json:"tags"`
