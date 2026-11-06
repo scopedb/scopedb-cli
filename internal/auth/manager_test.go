@@ -746,18 +746,6 @@ func TestResolveDataAccessOIDCErrors(t *testing.T) {
 		require.ErrorIs(t, err, ErrOIDCRejected)
 	})
 
-	t.Run("old deployment", func(t *testing.T) {
-		control := &fakeControl{
-			exchangeOIDC: func(string, string) (controlplane.OIDCExchangeResponse, error) {
-				return controlplane.OIDCExchangeResponse{}, &controlplane.Error{Status: http.StatusNotFound}
-			},
-		}
-		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
-		manager.OIDC = &fakeOIDC{workspaceID: "ws-1", token: "ci.jwt.token"}
-		_, err := manager.ResolveDataAccess(t.Context())
-		require.ErrorIs(t, err, ErrOIDCUnsupported)
-	})
-
 	t.Run("wrong workspace returned", func(t *testing.T) {
 		control := &fakeControl{
 			exchangeOIDC: func(_, workspaceID string) (controlplane.OIDCExchangeResponse, error) {

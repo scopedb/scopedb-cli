@@ -66,7 +66,7 @@ func TestClientExchangesOIDCToken(t *testing.T) {
 		assert.Zero(t, request.ContentLength)
 		writer.Header().Set("Content-Type", "application/json")
 		writer.Header().Set("Cache-Control", "no-store")
-		_, _ = writer.Write([]byte(`{"access_token":"sk_exchange","token_type":"Bearer","expires_in":1800,"expires_at":"2026-11-05T12:30:00Z","workspace_id":"ws-1","endpoint":"https://ws-1.data.example.com","identity":{"policy_id":"wip_1","name":"ci","provider":"github","subject":"repo:acme/infra:ref:refs/heads/main"}}`))
+		_, _ = writer.Write([]byte(`{"access_token":"sk_exchange","token_type":"Bearer","expires_in":1800,"expires_at":"2026-11-05T12:30:00Z","workspace_id":"ws-1","endpoint":"https://ws-1.data.example.com"}`))
 	}))
 	t.Cleanup(server.Close)
 
@@ -81,9 +81,6 @@ func TestClientExchangesOIDCToken(t *testing.T) {
 		ExpiresAt:   time.Date(2026, 11, 5, 12, 30, 0, 0, time.UTC),
 		WorkspaceID: "ws-1",
 		Endpoint:    "https://ws-1.data.example.com",
-		Identity: OIDCExchangeIdentity{
-			PolicyID: "wip_1", Name: "ci", Provider: "github", Subject: "repo:acme/infra:ref:refs/heads/main",
-		},
 	}, response)
 }
 

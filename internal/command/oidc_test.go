@@ -47,7 +47,6 @@ func oidcExchangeFixture() controlplane.OIDCExchangeResponse {
 		ExpiresAt:   time.Now().Add(30 * time.Minute).UTC(),
 		WorkspaceID: "ws-1",
 		Endpoint:    "https://data.example.com",
-		Identity:    controlplane.OIDCExchangeIdentity{PolicyID: "wip_1", Name: "ci", Provider: "github"},
 	}
 }
 
@@ -167,17 +166,6 @@ func TestQueryOIDCRejectedToken(t *testing.T) {
 	rendered := clierror.Render(err)
 	require.Contains(t, rendered, "OIDC token was rejected")
 	require.Contains(t, rendered, "trust policies")
-}
-
-func TestQueryOIDCUnsupportedDeployment(t *testing.T) {
-	fake, _ := setupCLITest(t)
-	fake.OIDCExchangeStatus = http.StatusNotFound
-	_, _, err := runCommandWith(t, Dependencies{
-		Getenv: oidcEnvironment(),
-	}, "--control-url", fake.URL, "query", "SELECT 1")
-	require.Error(t, err)
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "does not support OIDC sign-in")
 }
 
 func TestDoctorWithOIDCExchange(t *testing.T) {

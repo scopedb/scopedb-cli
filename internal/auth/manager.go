@@ -39,7 +39,6 @@ var (
 
 	ErrOIDCNoWorkspace = errors.New("SCOPEDB_WORKSPACE_ID is not set")
 	ErrOIDCRejected    = errors.New("the OIDC token was rejected")
-	ErrOIDCUnsupported = errors.New("this deployment does not support OIDC sign-in")
 )
 
 const (
@@ -474,10 +473,7 @@ func (m *Manager) resolveOIDCAccess(ctx context.Context, cause error) (Access, e
 	exchanged, err := m.Control.ExchangeOIDC(ctx, token, workspaceID)
 	if err != nil {
 		var controlErr *controlplane.Error
-		switch {
-		case errors.As(err, &controlErr) && controlErr.Status == http.StatusNotFound:
-			return Access{}, ErrOIDCUnsupported
-		case errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized:
+		if errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized {
 			return Access{}, fmt.Errorf("%w for workspace %s", ErrOIDCRejected, workspaceID)
 		}
 		return Access{}, err

@@ -401,9 +401,6 @@ func NormalizeError(err error) error {
 	if errors.Is(err, auth.ErrOIDCRejected) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "check the workspace's OpenID Connect trust policies in the Console")
 	}
-	if errors.Is(err, auth.ErrOIDCUnsupported) {
-		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, err.Error(), err), "upgrade the platform, or run 'scope auth login'")
-	}
 	if setupErr := workspaceSetupError(err); setupErr != nil {
 		return setupErr
 	}
