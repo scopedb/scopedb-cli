@@ -215,3 +215,35 @@ func TestDoctorWarnsUnavailableWorkspace(t *testing.T) {
 	require.Contains(t, out, `"status": "warn"`)
 	require.Zero(t, fake.ExchangeCalls)
 }
+
+func TestDoctorReportsRejectedOIDCExchange(t *testing.T) {
+	fake, _ := setupCLITest(t)
+	fake.OIDCExchangeStatus = http.StatusUnauthorized
+	fake.OIDCExchange = controlplane.OIDCExchangeResponse{
+		AccessToken: "oidc-key", TokenType: "Bearer", ExpiresIn: 1800,
+		ExpiresAt:   time.Now().Add(30 * time.Minute).UTC(),
+		WorkspaceID: "ws-1", Endpoint: "https://data.example.com",
+	}
+	queries := 0
+	out, _, err := runCommandWith(t, Dependencies{
+		Getenv: oidcEnvironment(),
+		HTTPClient: fake.dataClient(func(r *http.Request) (*http.Response, error) {
+			queries++
+			return finishedQueryResponse(r), nil
+		}),
+	}, "--control-url", fake.URL, "doctor", "--format", "json")
+
+	var report doctorReport
+	require.NoError(t, json.Unmarshal([]byte(out), &report))
+	checks := map[string]doctorCheck{}
+	for _, check := range report.Checks {
+		checks[check.Name] = check
+	}
+	require.Equal(t, clierror.ExitGeneral, clierror.ExitCode(err))
+	require.False(t, report.OK)
+	require.Zero(t, queries)
+	require.Equal(t, "warn", checks["authentication"].Status)
+	require.Contains(t, checks["authentication"].Details, "not logged in")
+	require.Equal(t, "fail", checks["data plane"].Status)
+	require.Contains(t, checks["data plane"].Details, "OpenID Connect trust policies")
+}

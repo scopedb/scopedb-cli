@@ -84,8 +84,8 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				(errors.As(loadErr, &keyringErr) && runtime.auth.OIDC != nil)
 			if noLogin {
 				if runtime.auth.OIDC != nil {
-					details := "OIDC exchange (workspace " + runtime.auth.OIDC.WorkspaceID + ")"
-					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: details})
+					details := "not logged in; using the CI OIDC exchange (workspace " + runtime.auth.OIDC.WorkspaceID + ")"
+					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: details})
 					a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 				} else {
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "warn", Details: "not logged in; run 'scope auth login'"})
