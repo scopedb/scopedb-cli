@@ -391,7 +391,12 @@ func NormalizeError(err error) error {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "run 'scope auth login'")
 	}
 	if errors.Is(err, auth.ErrOIDCRejected) {
-		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "check the workspace's OpenID Connect trust policies in the Console")
+		result := clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "check the workspace's OpenID Connect trust policies in the Console")
+		var rejection *auth.OIDCRejection
+		if errors.As(err, &rejection) {
+			result.RequestID = rejection.RequestID
+		}
+		return result
 	}
 	if setupErr := workspaceSetupError(err); setupErr != nil {
 		return setupErr

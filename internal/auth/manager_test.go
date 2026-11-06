@@ -711,13 +711,17 @@ func TestResolveDataAccessOIDCErrors(t *testing.T) {
 	t.Run("rejected token", func(t *testing.T) {
 		control := &fakeControl{
 			exchangeOIDC: func(string, string) (controlplane.OIDCExchangeResponse, error) {
-				return controlplane.OIDCExchangeResponse{}, &controlplane.Error{Status: http.StatusUnauthorized}
+				return controlplane.OIDCExchangeResponse{}, &controlplane.Error{Status: http.StatusUnauthorized, RequestID: "oidc-request"}
 			},
 		}
 		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
 		manager.OIDC = oidcEnv("ws-1", "ci.jwt.token")
 		_, err := manager.ResolveDataAccess(t.Context())
 		require.ErrorIs(t, err, ErrOIDCRejected)
+		var rejection *OIDCRejection
+		require.ErrorAs(t, err, &rejection)
+		require.Equal(t, "ws-1", rejection.WorkspaceID)
+		require.Equal(t, "oidc-request", rejection.RequestID)
 	})
 
 	t.Run("wrong workspace returned", func(t *testing.T) {

@@ -65,6 +65,7 @@ type fakeControlPlane struct {
 
 	OIDCExchange       controlplane.OIDCExchangeResponse
 	OIDCExchangeStatus int
+	OIDCRequestID      string
 	OIDCExchanges      int
 	OIDCTokens         []string
 
@@ -168,7 +169,11 @@ func (f *fakeControlPlane) serveWorkspace(w http.ResponseWriter, r *http.Request
 		f.OIDCExchanges++
 		f.OIDCTokens = append(f.OIDCTokens, strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		status := f.OIDCExchangeStatus
+		requestID := f.OIDCRequestID
 		f.mu.Unlock()
+		if requestID != "" {
+			w.Header().Set("X-Request-ID", requestID)
+		}
 		if status != 0 {
 			f.writeJSON(w, status, map[string]string{"message": "the OIDC token was rejected"})
 			return
