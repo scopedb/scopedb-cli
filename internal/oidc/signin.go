@@ -29,7 +29,7 @@ const (
 	// envToken carries an OIDC token issued by the CI environment's provider;
 	// envTokenFile points at a file holding one. Provider-specific token
 	// requests happen outside the CLI: GitHub Actions jobs use the
-	// scopedb/actions-login action, other CI systems export their provider's
+	// scopedb/login-action action, other CI systems export their provider's
 	// token directly.
 	envToken     = "SCOPEDB_OIDC_TOKEN"
 	envTokenFile = "SCOPEDB_OIDC_TOKEN_FILE"

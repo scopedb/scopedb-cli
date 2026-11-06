@@ -74,25 +74,23 @@ To end your login session, run `scope auth logout`. Logout does not revoke appli
 
 ## Run in CI without a login
 
-Data commands (`scope query`, `scope catalog`, and `scope doctor`) can authenticate with an OIDC token issued by the CI provider, without `scope auth login` and without a stored credential. When no login exists and the environment provides a token, the CLI exchanges it for a short-lived workspace credential; nothing is written to disk. A stored login takes precedence when one exists, and management commands such as `scope workspace` and `scope api-key` still require one.
-
-The exchange reads three variables: `SCOPEDB_WORKSPACE_ID`, the target workspace ID, and a provider-issued OIDC token from `SCOPEDB_OIDC_TOKEN` or `SCOPEDB_OIDC_TOKEN_FILE`. The token must be requested with the control-plane origin as its audience. A workspace owner must first create an OpenID Connect trust policy in the Console whose subject matches the token's `sub` claim; the exchange fails when no policy matches.
-
-In GitHub Actions, grant the job `id-token: write` and use the `scopedb/actions-login` action to supply the token:
+In GitHub Actions, the `scopedb/login-action` action signs data commands in with the job's OIDC token, without `scope auth login` and without a stored credential:
 
 ```yaml
 permissions:
   contents: read
   id-token: write
 steps:
-  - uses: scopedb/actions-login@v1
+  - uses: scopedb/login-action@v1
     with:
       workspace-id: "0123456789ab"
   - run: scope catalog plan --file catalog.yaml --format json > plan.json
   - run: scope catalog apply --plan plan.json
 ```
 
-Other CI providers expose their token directly. In GitLab CI, for example, request one with `id_tokens` and no extra step is needed:
+Each `scope` invocation exchanges the token for a short-lived workspace credential; nothing is written to disk. A stored login takes precedence when one exists, and management commands such as `scope workspace` and `scope api-key` still require one. A workspace owner must first create an OpenID Connect trust policy in the Console whose subject matches the token's `sub` claim; prefer a GitHub Environment subject such as `repo:acme/infra:environment:production` for applies, so environment protection rules gate the token before it is issued.
+
+Outside GitHub Actions, export `SCOPEDB_WORKSPACE_ID` plus an OIDC token in `SCOPEDB_OIDC_TOKEN` or `SCOPEDB_OIDC_TOKEN_FILE`, requested with the control-plane origin as its audience. GitLab CI jobs mint one with `id_tokens`:
 
 ```yaml
 plan:
@@ -104,8 +102,6 @@ plan:
   script:
     - scope catalog plan --file catalog.yaml --format json > plan.json
 ```
-
-Prefer a scoped subject, such as a GitHub Environment's `repo:acme/infra:environment:production`, for applies, so environment protection rules gate the token before it is issued. The exchanged credential is short-lived; a job that outlives it exchanges again on the next `scope` invocation.
 
 ## Connect an SDK
 
