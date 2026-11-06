@@ -120,18 +120,19 @@ func TestQueryOIDCLoginTakesPrecedence(t *testing.T) {
 	require.Equal(t, []string{"Bearer fixture-secret"}, apiKeys)
 }
 
-func TestQueryOIDCMissingWorkspace(t *testing.T) {
+func TestQueryOIDCTokenWithoutWorkspace(t *testing.T) {
 	fake, _ := setupCLITest(t)
-	getenv := func(name string) string {
-		if name == "SCOPEDB_OIDC_TOKEN" {
-			return "ci.jwt.token"
-		}
-		return ""
-	}
-	_, _, err := runCommandWith(t, Dependencies{Getenv: getenv}, "--control-url", fake.URL, "query", "SELECT 1")
+	_, _, err := runCommandWith(t, Dependencies{
+		Getenv: func(name string) string {
+			if name == "SCOPEDB_OIDC_TOKEN" {
+				return "ci.jwt.token"
+			}
+			return ""
+		},
+	}, "--control-url", fake.URL, "query", "SELECT 1")
 	require.Error(t, err)
-	require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
-	require.Contains(t, clierror.Render(err), "SCOPEDB_WORKSPACE_ID")
+	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
+	require.Contains(t, clierror.Render(err), "not logged in")
 	require.Zero(t, fake.OIDCExchanges)
 }
 

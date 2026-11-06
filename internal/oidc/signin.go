@@ -38,15 +38,13 @@ type SignIn struct {
 
 // FromEnvironment returns the CI sign-in the environment configures, or nil
 // in ordinary interactive environments, where data commands should keep
-// requiring a stored login. A blank token means no sign-in: without a token
-// there is nothing to exchange.
+// requiring a stored login. Both the workspace target and the token must be
+// set: either one alone is a misconfiguration the login flow cannot use.
 func FromEnvironment(getenv func(string) string) *SignIn {
+	workspaceID := strings.TrimSpace(getenv(envWorkspaceID))
 	token := strings.TrimSpace(getenv(envToken))
-	if token == "" {
+	if workspaceID == "" || token == "" {
 		return nil
 	}
-	return &SignIn{
-		WorkspaceID: strings.TrimSpace(getenv(envWorkspaceID)),
-		Token:       token,
-	}
+	return &SignIn{WorkspaceID: workspaceID, Token: token}
 }

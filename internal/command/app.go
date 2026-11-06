@@ -390,9 +390,6 @@ func NormalizeError(err error) error {
 	if errors.Is(err, auth.ErrLoginExpired) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "run 'scope auth login'")
 	}
-	if errors.Is(err, auth.ErrOIDCNoWorkspace) {
-		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, err.Error(), err), "set SCOPEDB_WORKSPACE_ID to the target workspace ID")
-	}
 	if errors.Is(err, auth.ErrOIDCRejected) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "check the workspace's OpenID Connect trust policies in the Console")
 	}

@@ -38,8 +38,7 @@ var (
 	ErrLoginExpired          = errors.New("login is no longer valid")
 	ErrCredentialsUnreadable = errors.New("existing credentials could not be read")
 
-	ErrOIDCNoWorkspace = errors.New("SCOPEDB_WORKSPACE_ID is not set")
-	ErrOIDCRejected    = errors.New("the OIDC token was rejected")
+	ErrOIDCRejected = errors.New("the OIDC token was rejected")
 )
 
 const (
@@ -357,7 +356,7 @@ func (m *Manager) deleteIgnoringMissing() error {
 func (m *Manager) ResolveDataAccess(ctx context.Context) (Access, error) {
 	account, state, err := m.Account(ctx)
 	if err != nil && oidcFallbackable(err) {
-		return m.resolveOIDCAccess(ctx, err)
+		return m.exchangeAccessFromOIDC(ctx, err)
 	}
 	if err != nil {
 		return Access{}, err
@@ -446,18 +445,11 @@ func oidcFallbackable(err error) bool {
 	return errors.Is(err, ErrNotLoggedIn) || errors.As(err, &keyringErr)
 }
 
-// resolveOIDCAccess exchanges a CI-issued OIDC token for a short-lived
-// workspace credential. Nothing is stored: each process exchanges its own
-// credential, which expires with the platform's credential TTL. When the
-// environment offers no OIDC sign-in, the original error stands.
-func (m *Manager) resolveOIDCAccess(ctx context.Context, cause error) (Access, error) {
+func (m *Manager) exchangeAccessFromOIDC(ctx context.Context, cause error) (Access, error) {
 	if m.OIDC == nil {
 		return Access{}, cause
 	}
 	workspaceID := m.OIDC.WorkspaceID
-	if workspaceID == "" {
-		return Access{}, ErrOIDCNoWorkspace
-	}
 	exchanged, err := m.Control.ExchangeOIDC(ctx, m.OIDC.Token, workspaceID)
 	if err != nil {
 		var controlErr *controlplane.Error

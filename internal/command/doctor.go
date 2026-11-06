@@ -84,10 +84,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 				(errors.As(loadErr, &keyringErr) && runtime.auth.OIDC != nil)
 			if noLogin {
 				if runtime.auth.OIDC != nil {
-					details := "OIDC exchange"
-					if workspaceID := runtime.auth.OIDC.WorkspaceID; workspaceID != "" {
-						details += " (workspace " + workspaceID + ")"
-					}
+					details := "OIDC exchange (workspace " + runtime.auth.OIDC.WorkspaceID + ")"
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: details})
 					a.checkDoctorDataPlane(cmd.Context(), runtime, timeout, &report)
 				} else {

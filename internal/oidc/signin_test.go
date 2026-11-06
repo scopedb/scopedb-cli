@@ -34,7 +34,7 @@ func TestFromEnvironment(t *testing.T) {
 		{"empty environment", map[string]string{}, false},
 		{"workspace only", map[string]string{"SCOPEDB_WORKSPACE_ID": "ws-1"}, false},
 		{"blank token", map[string]string{"SCOPEDB_OIDC_TOKEN": "  "}, false},
-		{"token only", map[string]string{"SCOPEDB_OIDC_TOKEN": "jwt"}, true},
+		{"token only", map[string]string{"SCOPEDB_OIDC_TOKEN": "jwt"}, false},
 		{"all set", map[string]string{
 			"SCOPEDB_WORKSPACE_ID": "ws-1",
 			"SCOPEDB_OIDC_TOKEN":   "jwt",

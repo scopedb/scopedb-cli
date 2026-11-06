@@ -708,15 +708,6 @@ func TestResolveDataAccessLoginTakesPrecedence(t *testing.T) {
 func TestResolveDataAccessOIDCErrors(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 
-	t.Run("missing workspace", func(t *testing.T) {
-		control := &fakeControl{}
-		manager := newManager(t, &memoryStore{}, control, &fakeOAuth{}, now)
-		manager.OIDC = oidcEnv("", "ci.jwt.token")
-		_, err := manager.ResolveDataAccess(t.Context())
-		require.ErrorIs(t, err, ErrOIDCNoWorkspace)
-		require.Empty(t, control.oidcExchangeArg)
-	})
-
 	t.Run("rejected token", func(t *testing.T) {
 		control := &fakeControl{
 			exchangeOIDC: func(string, string) (controlplane.OIDCExchangeResponse, error) {
