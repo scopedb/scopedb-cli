@@ -13,7 +13,7 @@ All significant changes to this project will be documented in this file.
 
 ### New features
 
-* `scope query`, `scope catalog`, and `scope doctor` authenticate in CI without a stored login: set `SCOPEDB_WORKSPACE_ID` plus `SCOPEDB_OIDC_TOKEN` or `SCOPEDB_OIDC_TOKEN_FILE`, and the CLI exchanges the provider-issued OIDC token for a short-lived workspace credential that is never written to disk. On GitHub Actions the `scopedb/login-action` action supplies the token. A workspace owner must first create a matching OpenID Connect trust policy in the Console.
+* `scope query`, `scope catalog`, and `scope doctor` authenticate in CI without a stored login: set `SCOPEDB_WORKSPACE_ID` plus `SCOPEDB_OIDC_TOKEN`, and the CLI exchanges the provider-issued OIDC token for a short-lived workspace credential that is never written to disk. On GitHub Actions the `scopedb/login-action` action supplies the token. A workspace owner must first create a matching OpenID Connect trust policy in the Console.
 
 ### Improvements
 

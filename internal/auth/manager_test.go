@@ -682,7 +682,6 @@ func TestResolveDataAccessExchangesOIDCToken(t *testing.T) {
 		WorkspaceID: "ws-1",
 	}, access)
 	require.Equal(t, []string{"ci.jwt.token", "ws-1"}, control.oidcExchangeArg)
-	// The exchanged credential is never stored.
 	require.False(t, store.stored())
 }
 

@@ -396,7 +396,7 @@ func NormalizeError(err error) error {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitUsage, err.Error(), err), "set SCOPEDB_WORKSPACE_ID to the target workspace ID")
 	}
 	if errors.Is(err, oidc.ErrNoToken) {
-		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "set SCOPEDB_OIDC_TOKEN or SCOPEDB_OIDC_TOKEN_FILE to a token trusted by the workspace")
+		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "set SCOPEDB_OIDC_TOKEN to a token trusted by the workspace")
 	}
 	if errors.Is(err, auth.ErrOIDCRejected) {
 		return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, err.Error(), err), "check the workspace's OpenID Connect trust policies in the Console")

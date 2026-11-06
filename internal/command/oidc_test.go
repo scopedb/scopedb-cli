@@ -29,8 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// oidcEnvironment puts the process inside a CI job: a workspace target plus a
-// provider-issued OIDC token.
 func oidcEnvironment() func(string) string {
 	values := map[string]string{
 		"SCOPEDB_WORKSPACE_ID": "ws-1",
@@ -66,9 +64,7 @@ func TestQueryWithOIDCExchange(t *testing.T) {
 	require.JSONEq(t, `[{"ready":1}]`, out)
 	require.Equal(t, 1, fake.OIDCExchanges)
 	require.Equal(t, []string{"ci.jwt.token"}, fake.OIDCTokens)
-	// The data plane sees only the exchanged key.
 	require.Equal(t, []string{"Bearer oidc-key"}, apiKeys)
-	// Nothing is stored locally.
 	paths, pathErr := config.ResolvePaths()
 	require.NoError(t, pathErr)
 	_, statErr := os.Stat(paths.CredentialsFile)
@@ -76,13 +72,13 @@ func TestQueryWithOIDCExchange(t *testing.T) {
 	require.NotContains(t, diagnostics, "oidc-key")
 }
 
-// brokenStore stands in for a credential backend the host cannot serve, such
-// as a CI runner without an OS keyring.
-type brokenStore struct{ err error }
+type keyringUnavailableStore struct{ err error }
 
-func (s *brokenStore) Load(string) (credential.State, error) { return credential.State{}, s.err }
-func (s *brokenStore) Save(string, credential.State) error   { return s.err }
-func (s *brokenStore) Delete(string) error                   { return s.err }
+func (s *keyringUnavailableStore) Load(string) (credential.State, error) {
+	return credential.State{}, s.err
+}
+func (s *keyringUnavailableStore) Save(string, credential.State) error { return s.err }
+func (s *keyringUnavailableStore) Delete(string) error                 { return s.err }
 
 func TestQueryOIDCWithoutKeyring(t *testing.T) {
 	fake, _ := setupCLITest(t)
@@ -94,7 +90,7 @@ func TestQueryOIDCWithoutKeyring(t *testing.T) {
 		Getenv: oidcEnvironment(),
 		CredentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
 			if kind == credential.SourceKeyring {
-				return &brokenStore{err: keyringFailure}, nil
+				return &keyringUnavailableStore{err: keyringFailure}, nil
 			}
 			return credential.NewPlaintextStore(paths.CredentialsFile), nil
 		},

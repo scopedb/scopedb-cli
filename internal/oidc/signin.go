@@ -17,24 +17,16 @@ package oidc
 
 import (
 	"errors"
-	"fmt"
-	"io"
-	"os"
 	"strings"
 )
 
 const (
-	// envWorkspaceID selects the workspace an unattended run authenticates to.
 	envWorkspaceID = "SCOPEDB_WORKSPACE_ID"
-	// envToken carries an OIDC token issued by the CI environment's provider;
-	// envTokenFile points at a file holding one. Provider-specific token
-	// requests happen outside the CLI: GitHub Actions jobs use the
-	// scopedb/login-action action, other CI systems export their provider's
-	// token directly.
-	envToken     = "SCOPEDB_OIDC_TOKEN"
-	envTokenFile = "SCOPEDB_OIDC_TOKEN_FILE"
-
-	maxTokenBytes = 64 << 10
+	// envToken carries an OIDC token issued by the CI environment's provider.
+	// Provider-specific token requests happen outside the CLI: GitHub Actions
+	// jobs use the scopedb/login-action action, other CI systems export their
+	// provider's token directly.
+	envToken = "SCOPEDB_OIDC_TOKEN"
 )
 
 // ErrNoToken reports that the environment cannot provide an OIDC token.
@@ -45,20 +37,18 @@ var ErrNoToken = errors.New("the environment did not provide an OIDC token")
 type SignIn struct {
 	workspaceID string
 	token       string
-	tokenFile   string
 }
 
 // FromEnvironment returns a SignIn when the environment asks for OIDC
-// exchange: a workspace target or a token source is set. ok is false in
-// ordinary interactive environments, where data commands should keep
-// requiring a stored login.
+// exchange: a workspace target or a token is set. ok is false in ordinary
+// interactive environments, where data commands should keep requiring a
+// stored login.
 func FromEnvironment(getenv func(string) string) (*SignIn, bool) {
 	signIn := &SignIn{
 		workspaceID: strings.TrimSpace(getenv(envWorkspaceID)),
 		token:       strings.TrimSpace(getenv(envToken)),
-		tokenFile:   strings.TrimSpace(getenv(envTokenFile)),
 	}
-	if signIn.workspaceID == "" && signIn.token == "" && signIn.tokenFile == "" {
+	if signIn.workspaceID == "" && signIn.token == "" {
 		return nil, false
 	}
 	return signIn, true
@@ -67,30 +57,11 @@ func FromEnvironment(getenv func(string) string) (*SignIn, bool) {
 // WorkspaceID returns the configured exchange target; empty means unset.
 func (s *SignIn) WorkspaceID() string { return s.workspaceID }
 
-// Token returns the provider-issued OIDC token: SCOPEDB_OIDC_TOKEN when set,
-// otherwise the contents of the SCOPEDB_OIDC_TOKEN_FILE. The token is used
-// once, for the credential exchange, and is never stored.
+// Token returns the provider-issued OIDC token. The token is used once, for
+// the credential exchange, and is never stored.
 func (s *SignIn) Token() (string, error) {
-	if s.token != "" {
-		return s.token, nil
-	}
-	if s.tokenFile == "" {
+	if s.token == "" {
 		return "", ErrNoToken
 	}
-	file, err := os.Open(s.tokenFile)
-	if err != nil {
-		return "", fmt.Errorf("%w: %s", ErrNoToken, err)
-	}
-	defer func() { _ = file.Close() }()
-	data, err := io.ReadAll(io.LimitReader(file, maxTokenBytes+1))
-	if err != nil {
-		return "", fmt.Errorf("%w: %s", ErrNoToken, err)
-	}
-	if len(data) > maxTokenBytes {
-		return "", fmt.Errorf("%w: the token file is too large", ErrNoToken)
-	}
-	if token := strings.TrimSpace(string(data)); token != "" {
-		return token, nil
-	}
-	return "", fmt.Errorf("%w: %s contains no token", ErrNoToken, s.tokenFile)
+	return s.token, nil
 }
