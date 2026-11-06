@@ -57,7 +57,7 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.Err }
 
-// Client is the typed boundary around the ScopeDB SaaS control-plane API.
+// Client is the typed boundary around the ScopeDB control-plane API.
 type Client struct {
 	baseURL   string
 	http      *http.Client
