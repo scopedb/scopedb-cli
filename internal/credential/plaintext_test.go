@@ -43,7 +43,6 @@ func TestPlaintextStoreRoundTripAndDelete(t *testing.T) {
 	require.NoError(t, store.Save(controlURL, want))
 	got, err := store.Load(controlURL)
 	require.NoError(t, err)
-	want.Version = currentStateVersion
 	want.ControlURL = controlURL
 	require.Equal(t, want, got)
 	if runtime.GOOS != "windows" {
@@ -72,14 +71,13 @@ func TestPlaintextStoreRejectsOlderState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credentials.json")
 	const controlURL = "https://control.example.com"
 	document := fmt.Sprintf(
-		`{"version":1,"profiles":{%q:{"version":1,"control_url":%q,"access_token":"oat","refresh_token":"ort"}}}`,
+		`{"version":1,"profiles":{%q:{"version":1,"control_url":%q,"session_token":"legacy-secret"}}}`,
 		profileKey(controlURL), controlURL,
 	)
 	require.NoError(t, os.WriteFile(path, []byte(document), 0o600))
 
 	_, err := NewPlaintextStore(path).Load(controlURL)
 	require.ErrorIs(t, err, ErrInvalidState)
-	require.Contains(t, err.Error(), "log in again")
 }
 
 func TestPlaintextStoreRejectsBroadPermissions(t *testing.T) {

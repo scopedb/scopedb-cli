@@ -17,7 +17,6 @@ package auth
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -46,7 +45,7 @@ func (s *memoryStore) Load(string) (credential.State, error) {
 		return credential.State{}, s.loadErr
 	}
 	if s.invalidHi {
-		return credential.State{}, fmt.Errorf("%w: unsupported version 1; log in again", credential.ErrInvalidState)
+		return credential.State{}, credential.ErrInvalidState
 	}
 	if !s.present {
 		return credential.State{}, credential.ErrNotFound

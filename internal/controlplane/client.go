@@ -198,25 +198,17 @@ func decodeError(response *http.Response) error {
 	}
 	requestID := response.Header.Get("X-Request-ID")
 	var payload struct {
-		Message   json.RawMessage `json:"message"`
-		RequestID string          `json:"request_id"`
+		RequestID string `json:"request_id"`
 		Error     *struct {
-			Message   string `json:"message"`
-			RequestID string `json:"request_id"`
+			Message string `json:"message"`
 		} `json:"error"`
 	}
 	if readErr == nil && json.Unmarshal(data, &payload) == nil {
-		var plainMessage string
-		if json.Unmarshal(payload.Message, &plainMessage) == nil && plainMessage != "" {
-			message = plainMessage
-		}
 		if payload.Error != nil && payload.Error.Message != "" {
 			message = payload.Error.Message
 		}
 		if payload.RequestID != "" {
 			requestID = payload.RequestID
-		} else if payload.Error != nil && payload.Error.RequestID != "" {
-			requestID = payload.Error.RequestID
 		}
 	}
 	if message == "" {

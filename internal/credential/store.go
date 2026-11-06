@@ -24,10 +24,6 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/config"
 )
 
-// Version 1 held a browser session token that an OAuth login can never use, so an older document is
-// invalid rather than migrated.
-const currentStateVersion = 2
-
 const (
 	SourceKeyring   = "keyring"
 	SourcePlaintext = "plaintext"
@@ -46,7 +42,6 @@ type State struct {
 	// Cleared suppresses an inaccessible keyring entry after local logout. A
 	// plaintext tombstone contains no tokens and is replaced by the next login.
 	Cleared               bool      `json:"cleared,omitempty"`
-	Version               int       `json:"version"`
 	ControlURL            string    `json:"control_url"`
 	AccessToken           string    `json:"access_token"`
 	AccessTokenExpiresAt  time.Time `json:"access_token_expires_at"`
@@ -78,15 +73,11 @@ func New(kind string, paths config.Paths) (Store, error) {
 }
 
 func prepare(controlURL string, state State) State {
-	state.Version = currentStateVersion
 	state.ControlURL = controlURL
 	return state
 }
 
 func validate(controlURL string, state State) error {
-	if state.Version != currentStateVersion {
-		return fmt.Errorf("%w: unsupported version %d; log in again", ErrInvalidState, state.Version)
-	}
 	if state.ControlURL != controlURL {
 		return fmt.Errorf("%w: credential origin mismatch", ErrInvalidState)
 	}
