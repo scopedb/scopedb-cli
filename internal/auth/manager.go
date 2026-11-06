@@ -454,11 +454,11 @@ func (m *Manager) resolveOIDCAccess(ctx context.Context, cause error) (Access, e
 	if m.OIDC == nil {
 		return Access{}, cause
 	}
-	workspaceID := strings.TrimSpace(m.OIDC.WorkspaceID())
+	workspaceID := m.OIDC.WorkspaceID
 	if workspaceID == "" {
 		return Access{}, ErrOIDCNoWorkspace
 	}
-	exchanged, err := m.Control.ExchangeOIDC(ctx, m.OIDC.Token(), workspaceID)
+	exchanged, err := m.Control.ExchangeOIDC(ctx, m.OIDC.Token, workspaceID)
 	if err != nil {
 		var controlErr *controlplane.Error
 		if errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized {

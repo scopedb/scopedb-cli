@@ -32,8 +32,8 @@ const (
 // provider-issued OIDC token. The token is used once, for the credential
 // exchange, and is never stored.
 type SignIn struct {
-	workspaceID string
-	token       string
+	WorkspaceID string
+	Token       string
 }
 
 // FromEnvironment returns the CI sign-in the environment configures, or nil
@@ -46,13 +46,7 @@ func FromEnvironment(getenv func(string) string) *SignIn {
 		return nil
 	}
 	return &SignIn{
-		workspaceID: strings.TrimSpace(getenv(envWorkspaceID)),
-		token:       token,
+		WorkspaceID: strings.TrimSpace(getenv(envWorkspaceID)),
+		Token:       token,
 	}
 }
-
-// WorkspaceID returns the configured exchange target; empty means unset.
-func (s *SignIn) WorkspaceID() string { return s.workspaceID }
-
-// Token returns the provider-issued OIDC token.
-func (s *SignIn) Token() string { return s.token }

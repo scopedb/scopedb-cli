@@ -44,8 +44,8 @@ func TestFromEnvironment(t *testing.T) {
 			signIn := FromEnvironment(environment(tc.values))
 			require.Equal(t, tc.want, signIn != nil)
 			if signIn != nil {
-				require.Equal(t, strings.TrimSpace(tc.values["SCOPEDB_WORKSPACE_ID"]), signIn.WorkspaceID())
-				require.Equal(t, strings.TrimSpace(tc.values["SCOPEDB_OIDC_TOKEN"]), signIn.Token())
+				require.Equal(t, strings.TrimSpace(tc.values["SCOPEDB_WORKSPACE_ID"]), signIn.WorkspaceID)
+				require.Equal(t, strings.TrimSpace(tc.values["SCOPEDB_OIDC_TOKEN"]), signIn.Token)
 			}
 		})
 	}

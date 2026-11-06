@@ -85,7 +85,7 @@ func (a *app) newDoctorCommand() *cobra.Command {
 			if noLogin {
 				if runtime.auth.OIDC != nil {
 					details := "OIDC exchange"
-					if workspaceID := runtime.auth.OIDC.WorkspaceID(); workspaceID != "" {
+					if workspaceID := runtime.auth.OIDC.WorkspaceID; workspaceID != "" {
 						details += " (workspace " + workspaceID + ")"
 					}
 					report.Checks = append(report.Checks, doctorCheck{Name: "authentication", Status: "pass", Details: details})
