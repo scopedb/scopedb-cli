@@ -41,19 +41,6 @@ var (
 	ErrOIDCRejected = errors.New("the OIDC token was rejected")
 )
 
-// OIDCRejection reports a CI token the control plane rejected. RequestID identifies the request in
-// the control-plane logs, where an expired token and a trust-policy mismatch look the same.
-type OIDCRejection struct {
-	WorkspaceID string
-	RequestID   string
-}
-
-func (e *OIDCRejection) Error() string {
-	return fmt.Sprintf("%s for workspace %s", ErrOIDCRejected, e.WorkspaceID)
-}
-
-func (e *OIDCRejection) Unwrap() error { return ErrOIDCRejected }
-
 const (
 	// accessRefreshAhead renews an access token before it expires, so a command never starts with
 	// a credential that dies mid-flight.
@@ -468,7 +455,7 @@ func (m *Manager) exchangeAccessFromOIDC(ctx context.Context, cause error) (Acce
 	if err != nil {
 		var controlErr *controlplane.Error
 		if errors.As(err, &controlErr) && controlErr.Status == http.StatusUnauthorized {
-			return Access{}, &OIDCRejection{WorkspaceID: workspaceID, RequestID: controlErr.RequestID}
+			return Access{}, fmt.Errorf("%w for workspace %s", ErrOIDCRejected, workspaceID)
 		}
 		return Access{}, err
 	}

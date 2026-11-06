@@ -219,7 +219,6 @@ func TestDoctorWarnsUnavailableWorkspace(t *testing.T) {
 func TestDoctorReportsRejectedOIDCExchange(t *testing.T) {
 	fake, _ := setupCLITest(t)
 	fake.OIDCExchangeStatus = http.StatusUnauthorized
-	fake.OIDCRequestID = "oidc-request"
 	fake.OIDCExchange = controlplane.OIDCExchangeResponse{
 		AccessToken: "oidc-key", TokenType: "Bearer", ExpiresIn: 1800,
 		ExpiresAt:   time.Now().Add(30 * time.Minute).UTC(),
@@ -247,5 +246,4 @@ func TestDoctorReportsRejectedOIDCExchange(t *testing.T) {
 	require.Contains(t, checks["authentication"].Details, "not logged in")
 	require.Equal(t, "fail", checks["data plane"].Status)
 	require.Contains(t, checks["data plane"].Details, "OpenID Connect trust policies")
-	require.Contains(t, checks["data plane"].Details, "oidc-request")
 }
