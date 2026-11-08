@@ -4,6 +4,8 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+## v0.3.0 (2026-11-08)
+
 ### Breaking changes
 
 * `scope workspace use <id>` and `scope auth login --workspace <id>` now require a workspace ID. Display names are no longer accepted; use `scope workspace list` to find the ID and update commands and scripts that select workspaces by name.
