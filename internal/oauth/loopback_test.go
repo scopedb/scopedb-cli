@@ -68,23 +68,24 @@ func TestLoopbackAcceptsOneCallback(t *testing.T) {
 	assert.Equal(t, "/callback", parsed.Path)
 	assert.NotEmpty(t, parsed.Port())
 
-	callbackURL := func(code, state string) string {
+	sendCallback := func(code, state string) {
+		t.Helper()
 		copied := *parsed
 		query := parsed.Query()
 		query.Set("code", code)
 		query.Set("state", state)
 		query.Set("iss", "https://control.example.com")
 		copied.RawQuery = query.Encode()
-		return copied.String()
-	}
-	for _, target := range []string{callbackURL("code-1", "state-1"), callbackURL("code-2", "state-2")} {
-		response, err := http.Get(target)
+		response, err := http.Get(copied.String())
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, response.StatusCode)
 		assert.Equal(t, "no-store", response.Header.Get("Cache-Control"))
+		_, readErr := io.Copy(io.Discard, response.Body)
 		_ = response.Body.Close()
+		require.NoError(t, readErr)
 	}
 
+	sendCallback("code-1", "state-1")
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	callback, err := listener.Wait(ctx)
@@ -95,6 +96,8 @@ func TestLoopbackAcceptsOneCallback(t *testing.T) {
 		Issuer: "https://control.example.com",
 	}, callback)
 
+	sendCallback("code-2", "state-2")
+	require.NoError(t, listener.Close())
 	select {
 	case other := <-listener.results:
 		t.Fatalf("listener delivered a second callback: %+v", other)

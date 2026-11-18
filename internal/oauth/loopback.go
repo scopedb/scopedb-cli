@@ -37,11 +37,12 @@ type Callback struct {
 // Loopback is a one-shot HTTP listener on a loopback address that receives the authorization
 // redirect. It binds 127.0.0.1 so the redirect never depends on name resolution (RFC 8252 §8.3).
 type Loopback struct {
-	listener net.Listener
-	server   *http.Server
-	results  chan Callback
-	serveErr chan error
-	once     sync.Once
+	listener    net.Listener
+	server      *http.Server
+	results     chan Callback
+	serveErr    chan error
+	deliverOnce sync.Once
+	closeOnce   sync.Once
 }
 
 const callbackPath = "/callback"
@@ -91,7 +92,7 @@ func (l *Loopback) Wait(ctx context.Context) (Callback, error) {
 
 func (l *Loopback) Close() error {
 	var err error
-	l.once.Do(func() {
+	l.closeOnce.Do(func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 		err = l.server.Shutdown(shutdownCtx)
@@ -118,10 +119,9 @@ func (l *Loopback) handle(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")
 	// The page acknowledges the redirect; validation, token exchange, and storage finish in the CLI.
 	_ = callbackPage.Execute(writer, callback.Error == "" && callback.Code != "")
-	select {
-	case l.results <- callback:
-	default:
-	}
+	l.deliverOnce.Do(func() {
+		l.results <- callback
+	})
 }
 
 //go:embed callback.html
