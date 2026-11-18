@@ -119,7 +119,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
-	command.Flags().StringVar(&workspace, "workspace", "", "select a workspace by ID")
+	command.Flags().StringVar(&workspace, "workspace", "", "select a workspace by ID after a new login; ignored if the existing login is kept")
 	command.Flags().BoolVar(&noBrowser, "no-browser", false, "print the approval link without opening a browser")
 	command.Flags().BoolVar(&useDeviceCode, "use-device-code", false, "approve login from any device with a device code")
 	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a file for this login")
