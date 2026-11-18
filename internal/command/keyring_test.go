@@ -25,6 +25,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/auth"
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/config"
+	"github.com/scopedb/scopedb-cli/internal/controlplane"
 	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/stretchr/testify/require"
 	keyring "github.com/zalando/go-keyring"
@@ -237,21 +238,53 @@ func TestDefaultLoginFallsBackFromUnavailableKeyringAndLogsOut(t *testing.T) {
 	require.ErrorIs(t, err, credential.ErrNotFound)
 }
 
-func TestLoginRefusesRenewableCredentialsInEitherStore(t *testing.T) {
+func TestLoginHandlesRenewableCredentialsInEitherStore(t *testing.T) {
 	for _, source := range []string{credential.SourceKeyring, credential.SourcePlaintext} {
 		t.Run(source, func(t *testing.T) {
 			fake, plaintext := setupCLITest(t)
-			state := saveStoredLogin(t, plaintext, fake.URL, "")
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+			keyringStore := credential.NewKeyringStore()
+			state := saveStoredLogin(t, plaintext, fake.URL, "ws-1")
+			state.RefreshToken = "private-refresh-secret"
+			require.NoError(t, plaintext.Save(fake.URL, state))
+			var oldStore, newStore credential.Store = plaintext, keyringStore
 			args := []string{"auth", "login"}
 			if source == credential.SourceKeyring {
-				require.NoError(t, credential.NewKeyringStore().Save(fake.URL, state))
+				oldStore, newStore = keyringStore, plaintext
+				require.NoError(t, keyringStore.Save(fake.URL, state))
 				require.NoError(t, plaintext.Delete(fake.URL))
 				args = append(args, "--insecure-storage")
 			}
-			_, _, err := runLoginScenario(t, fake, loginScenario{args: args})
-			require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
-			require.ErrorContains(t, err, "already logged in")
+
+			out, diagnostics, err := runLoginScenario(t, fake, loginScenario{args: args})
+			require.NoError(t, err)
+			require.Equal(t, "Already logged in as dev@example.com.\nKeeping workspace Alpha (ws-1).\n", out)
+			require.Empty(t, diagnostics)
 			require.Empty(t, fake.TokenForms)
+			require.Empty(t, fake.RevokedTokens)
+			kept, err := oldStore.Load(fake.URL)
+			require.NoError(t, err)
+			require.Equal(t, "private-refresh-secret", kept.RefreshToken)
+			require.Equal(t, "ws-1", kept.WorkspaceID)
+			_, err = newStore.Load(fake.URL)
+			require.ErrorIs(t, err, credential.ErrNotFound)
+
+			out, diagnostics, err = runLoginScenario(t, fake, loginScenario{
+				input:         "y\n",
+				inputTerminal: true,
+				errorTerminal: true,
+				args:          args,
+			})
+			require.NoError(t, err)
+			require.Equal(t, "Logged in as dev@example.com.\nKeeping workspace Alpha (ws-1).\n", out)
+			require.Contains(t, diagnostics, "Already logged in as dev@example.com. Re-authenticate? [y/N] ")
+			require.Equal(t, []string{"private-refresh-secret"}, fake.RevokedTokens)
+			replaced, err := newStore.Load(fake.URL)
+			require.NoError(t, err)
+			require.Equal(t, fake.RefreshToken, replaced.RefreshToken)
+			require.Equal(t, "ws-1", replaced.WorkspaceID)
+			_, err = oldStore.Load(fake.URL)
+			require.ErrorIs(t, err, credential.ErrNotFound)
 		})
 	}
 }
@@ -260,7 +293,9 @@ func TestLoginRestoresPreviousStoreWhenConfigurationSaveFails(t *testing.T) {
 	for _, previousSource := range []string{credential.SourceKeyring, credential.SourcePlaintext} {
 		t.Run(previousSource, func(t *testing.T) {
 			fake, plaintext := setupCLITest(t)
-			previous := saveExpiredLogin(t, plaintext, fake.URL, "ws-previous")
+			previous := saveStoredLogin(t, plaintext, fake.URL, "ws-previous")
+			previous.RefreshToken = "private-refresh-secret"
+			require.NoError(t, plaintext.Save(fake.URL, previous))
 			target := credential.SourceKeyring
 			var oldStore credential.Store = plaintext
 			var newStore credential.Store = credential.NewKeyringStore()
@@ -273,7 +308,10 @@ func TestLoginRestoresPreviousStoreWhenConfigurationSaveFails(t *testing.T) {
 				args = append(args, "--insecure-storage")
 			}
 			_, _, err := runLoginScenario(t, fake, loginScenario{
-				args: args,
+				input:         "y\n",
+				inputTerminal: true,
+				errorTerminal: true,
+				args:          args,
 				credentialStore: func(kind string, paths config.Paths) (credential.Store, error) {
 					store, err := credential.New(kind, paths)
 					if kind == target {

@@ -26,6 +26,7 @@ import (
 	"github.com/scopedb/scopedb-cli/internal/clierror"
 	"github.com/scopedb/scopedb-cli/internal/config"
 	"github.com/scopedb/scopedb-cli/internal/controlplane"
+	"github.com/scopedb/scopedb-cli/internal/credential"
 	"github.com/scopedb/scopedb-cli/internal/oauth"
 	"github.com/spf13/cobra"
 )
@@ -52,7 +53,8 @@ func (a *app) newLoginCommand() *cobra.Command {
 			"from another device, or --no-browser to skip opening a browser automatically in either flow.\n\n" +
 			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
 			"name and ID. Use 'scope workspace use <id>' to switch afterwards.\n" +
-			"Login does not require an interactive terminal.\n\n" +
+			"When already logged in, prompts on an interactive terminal to re-authenticate and keeps the\n" +
+			"current login otherwise; initial login does not require an interactive terminal.\n\n" +
 			"Prefers the OS keyring, with a warning and plaintext fallback if storage fails.\n" +
 			"On Linux, keyring access requires a D-Bus session and Secret Service.\n" +
 			"--insecure-storage chooses an unencrypted file for this login only.",
@@ -71,12 +73,18 @@ func (a *app) newLoginCommand() *cobra.Command {
 				return err
 			}
 			runtime.credentials.InsecureStorage = insecureStorage
+			replaceExisting := false
 			if _, stored, err := runtime.auth.RenewableLogin(); err != nil {
 				return clierror.Wrap(clierror.ExitGeneral, "existing credentials could not be read", err)
 			} else if stored {
-				if err := refuseSecondLogin(cmd.Context(), runtime); err != nil {
+				keep, replace, account, err := a.resolveExistingLogin(cmd.Context(), runtime)
+				if err != nil {
 					return err
 				}
+				if keep {
+					return a.renderExistingLogin(account, format)
+				}
+				replaceExisting = replace
 			}
 			client, err := runtime.oauthClient(cmd.Context())
 			if err != nil {
@@ -92,7 +100,7 @@ func (a *app) newLoginCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := runtime.persistLogin(cmd.Context(), tokens); err != nil {
+			if err := runtime.persistLogin(cmd.Context(), tokens, replaceExisting); err != nil {
 				return err
 			}
 
@@ -122,22 +130,84 @@ func (a *app) newLoginCommand() *cobra.Command {
 	return command
 }
 
-// A second login would leave the first grant active in ScopeDB with no local credential left to end it.
-func refuseSecondLogin(ctx context.Context, runtime *runtimeContext) error {
+func (a *app) resolveExistingLogin(ctx context.Context, runtime *runtimeContext) (keep, replace bool, account auth.Account, err error) {
 	accountCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	account, _, err := runtime.auth.Account(accountCtx)
+	account, _, err = runtime.auth.Account(accountCtx)
 	cancel()
 	if err == nil {
-		return clierror.WithHint(clierror.New(clierror.ExitAuth, "already logged in as "+account.User.Email), "run 'scope auth logout' first")
+		if !a.isInputTerminal() {
+			return true, false, account, nil
+		}
+		prompt := "Already logged in. Re-authenticate? [y/N] "
+		if account.User.Email != "" {
+			prompt = fmt.Sprintf("Already logged in as %s. Re-authenticate? [y/N] ", account.User.Email)
+		}
+		confirmed, readErr := a.confirmReauthentication(ctx, prompt)
+		if readErr != nil {
+			return false, false, auth.Account{}, readErr
+		}
+		if confirmed {
+			return false, true, auth.Account{}, nil
+		}
+		return true, false, account, nil
 	}
 	if ctx.Err() != nil {
-		return ctx.Err()
+		return false, false, auth.Account{}, ctx.Err()
 	}
-	// A login whose refresh token is rejected can never work again, so a new login replaces it instead of demanding a logout.
+	// A login whose refresh token is rejected can never work again, so a new login replaces it without prompting.
 	if errors.Is(err, auth.ErrNotLoggedIn) || errors.Is(err, auth.ErrLoginExpired) {
-		return nil
+		return false, false, auth.Account{}, nil
 	}
-	return clierror.WithHint(clierror.New(clierror.ExitAuth, "already logged in"), "run 'scope auth status' to see the account, or 'scope auth logout' to sign out first")
+	normalized := NormalizeError(err)
+	if clierror.ExitCode(normalized) == clierror.ExitAuth {
+		if a.isInputTerminal() {
+			confirmed, readErr := a.confirmReauthentication(ctx, "Already logged in. Re-authenticate? [y/N] ")
+			if readErr != nil {
+				return false, false, auth.Account{}, readErr
+			}
+			if confirmed {
+				return false, true, auth.Account{}, nil
+			}
+		}
+		var failure *clierror.Error
+		if errors.As(normalized, &failure) {
+			failure.Hint = "run 'scope auth logout' first"
+		}
+		return false, false, auth.Account{}, normalized
+	}
+	return false, false, auth.Account{}, err
+}
+
+func (a *app) confirmReauthentication(ctx context.Context, prompt string) (bool, error) {
+	answer, err := a.readLine(ctx, prompt)
+	if err != nil {
+		return false, err
+	}
+	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes"), nil
+}
+
+func (a *app) renderExistingLogin(account auth.Account, format string) error {
+	selection := loginSelection{email: account.User.Email}
+	if workspace, accessible := workspaceByID(account.Workspaces, account.SelectedWorkspaceID); account.SelectedWorkspaceID != "" && accessible && !workspace.ScheduledForDeletion() {
+		selection.workspace = &workspace
+		selection.kept = true
+	}
+	if selection.workspace == nil {
+		if err := a.writeWorkspaceSetup(account); err != nil {
+			return err
+		}
+	}
+	if format == structuredFormatJSON {
+		return writeJSON(a.out, selection.result())
+	}
+	if selection.email != "" {
+		if _, err := fmt.Fprintf(a.out, "Already logged in as %s.\n", selection.email); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintln(a.out, "Already logged in."); err != nil {
+		return err
+	}
+	return a.renderLoginSelection(selection)
 }
 
 type loginSelection struct {
@@ -473,8 +543,8 @@ func describeAuthorizationError(callback oauth.Callback) string {
 	return "the login request failed; no credentials were saved"
 }
 
-func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.TokenSet) error {
-	savedPrevious, savedFound, writtenAccessToken, saveErr := r.auth.SaveLogin(ctx, tokens)
+func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.TokenSet, replaceExisting bool) error {
+	saved, saveErr := r.auth.SaveLogin(ctx, tokens, replaceExisting)
 	if saveErr != nil {
 		r.revokeIssuedLogin(tokens)
 		if ctx.Err() != nil {
@@ -484,18 +554,16 @@ func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.T
 			return saveErr
 		}
 		if errors.Is(saveErr, auth.ErrAlreadyLoggedIn) {
-			return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "another login completed while authorization was in progress", saveErr), "run 'scope auth status' to inspect it, or 'scope auth logout' before logging in again")
+			return clierror.WithHint(clierror.Wrap(clierror.ExitAuth, "another login completed while authorization was in progress", saveErr), "run 'scope auth status' to inspect it, or 'scope auth login' to replace it")
 		}
 		if errors.Is(saveErr, auth.ErrCredentialsUnreadable) {
 			return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but existing credentials could not be read", saveErr)
 		}
 		return clierror.Wrap(clierror.ExitGeneral, "login succeeded, but credentials could not be stored", saveErr)
 	}
-	if err := config.Save(r.paths, r.config); err == nil {
-		return nil
-	} else {
+	if err := config.Save(r.paths, r.config); err != nil {
 		result := clierror.WithHint(clierror.Wrap(clierror.ExitGeneral, "login succeeded, but configuration could not be stored", err), "check config directory access and retry")
-		rollbackErr := r.auth.RestoreLogin(ctx, savedPrevious, savedFound, writtenAccessToken)
+		rollbackErr := r.auth.RestoreLogin(ctx, saved)
 		r.revokeIssuedLogin(tokens)
 		if rollbackErr != nil {
 			result.Message += " and previous credentials could not be restored"
@@ -504,6 +572,10 @@ func (r *runtimeContext) persistLogin(ctx context.Context, tokens controlplane.T
 		}
 		return result
 	}
+	if saved.PreviousRenewable {
+		r.revokeReplacedLogin(saved.Previous, tokens)
+	}
+	return nil
 }
 
 // revokeIssuedLogin tries to revoke a login the CLI could not store.
@@ -513,6 +585,23 @@ func (r *runtimeContext) revokeIssuedLogin(tokens controlplane.TokenSet) {
 	if token == "" {
 		token = tokens.AccessToken
 	}
+	r.revokeToken(token)
+}
+
+// revokeReplacedLogin tries to end the grant a completed re-authentication replaced,
+// after the new login and configuration are safely persisted.
+func (r *runtimeContext) revokeReplacedLogin(previous credential.State, current controlplane.TokenSet) {
+	token := previous.RefreshToken
+	if token == "" {
+		token = previous.AccessToken
+	}
+	if token == "" || token == current.RefreshToken || token == current.AccessToken {
+		return
+	}
+	r.revokeToken(token)
+}
+
+func (r *runtimeContext) revokeToken(token string) {
 	if token == "" {
 		return
 	}

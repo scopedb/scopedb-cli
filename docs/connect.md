@@ -23,7 +23,7 @@ For SSH, containers, or approval from another device, select device authorizatio
 scope auth login --use-device-code --no-browser
 ```
 
-Open the printed verification link on any device and approve the request. `--use-device-code` selects device authorization; `--no-browser` independently disables automatic browser opening. Omit `--no-browser` to also open the verification link in a local browser. Neither flow requires an interactive terminal.
+Open the printed verification link on any device and approve the request. `--use-device-code` selects device authorization; `--no-browser` independently disables automatic browser opening. Omit `--no-browser` to also open the verification link in a local browser. Neither flow requires an interactive terminal when no login is active; if already logged in, an interactive terminal asks whether to re-authenticate, and non-interactive runs keep and report the active login.
 
 Login keeps a valid workspace selection or automatically selects the first workspace that is not scheduled for deletion, and prints its name and ID. Workspaces shared with you are listed and selected the same way as workspaces you own. Use `scope workspace use <id>` to switch, or `scope auth login --workspace <id>` to select a workspace during login. Both commands require an ID from `scope workspace list`; display names are not accepted.
 
@@ -49,7 +49,7 @@ Approve the printed device code in a browser on another device. `--use-device-co
 
 Queries and other commands discover the existing login, and refresh writes back to the same store without automatic downgrade. A fallback file takes precedence over an old keyring entry for the same control-plane URL. Logout revokes the active login and clears both stores. If the keyring cannot be cleared, the command reports the failure and removes local file tokens while retaining a non-secret logout marker so an old keyring entry cannot become active again. Restore keyring access and rerun `scope auth logout` to finish cleanup.
 
-To return to keyring storage, restore keyring access, run `scope auth logout`, then run `scope auth login` without `--insecure-storage`. Each new login tries the keyring again. `config.toml` stores service addresses, not a credential-store preference; legacy `credential_store` entries and `SCOPEDB_CREDENTIAL_STORE` are ignored.
+To return to keyring storage, restore keyring access and re-authenticate with `scope auth login` without `--insecure-storage` (or run `scope auth logout` first). Each new login tries the keyring again. `config.toml` stores service addresses, not a credential-store preference; legacy `credential_store` entries and `SCOPEDB_CREDENTIAL_STORE` are ignored.
 
 ## Get application credentials
 

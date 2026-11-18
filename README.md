@@ -58,7 +58,7 @@ scope query 'FROM system.tables LIMIT 10'
 
 `scope auth login` opens your browser and asks you to approve the request in the ScopeDB Console. If the browser does not open, open the printed URL on the same device. For approval from another device, such as when using SSH or a container, run `scope auth login --use-device-code`. Add `--no-browser` to either flow to skip opening the browser automatically. A browser-launch failure leaves the selected flow waiting for approval.
 
-Login does not require an interactive terminal. Authorization instructions and progress go to stderr; `--format text|json` selects the result format on stdout.
+Initial login does not require an interactive terminal. When already logged in, an interactive terminal asks whether to re-authenticate and replace the current login, while non-interactive runs keep and report the current login. Authorization instructions, prompts, and progress go to stderr; `--format text|json` selects the result format on stdout.
 
 Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves credentials unencrypted in a file (`0600` on Unix); `scope auth status` shows its location. `--insecure-storage` selects plaintext for that login only. On servers and other hosts without a browser, use device authorization. See [headless Linux setup](docs/connect.md#use-headless-linux).
 

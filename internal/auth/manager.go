@@ -157,12 +157,21 @@ func (m *Manager) load() (credential.State, error) {
 	return state, nil
 }
 
+// SavedLogin records the credential SaveLogin wrote and any stored login it replaced,
+// so callers can roll back a failed configuration write or revoke a replaced grant afterwards.
+type SavedLogin struct {
+	Previous          credential.State
+	HadPrevious       bool
+	PreviousRenewable bool
+	AccessToken       string
+}
+
 // The selection survives a login, because signing in again does not change which workspace the profile uses.
-// The lock serializes login with refresh and prevents replacing a concurrent login.
-func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (credential.State, bool, string, error) {
+// The lock serializes login with refresh and prevents replacing a concurrent login unless replacement was confirmed.
+func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet, replaceExisting bool) (SavedLogin, error) {
 	lock, err := filelock.Acquire(ctx, m.LockFile)
 	if err != nil {
-		return credential.State{}, false, "", err
+		return SavedLogin{}, err
 	}
 	defer func() { _ = lock.Close() }()
 
@@ -173,26 +182,32 @@ func (m *Manager) SaveLogin(ctx context.Context, tokens controlplane.TokenSet) (
 	case errors.Is(err, credential.ErrNotFound), errors.Is(err, credential.ErrInvalidState), errors.As(err, &keyringErr):
 		previous = credential.State{}
 	case err != nil:
-		return credential.State{}, false, "", fmt.Errorf("%w: %w", ErrCredentialsUnreadable, err)
+		return SavedLogin{}, fmt.Errorf("%w: %w", ErrCredentialsUnreadable, err)
 	}
-	if previousFound && (previous.RefreshTokenExpiresAt.IsZero() || previous.RefreshTokenExpiresAt.After(m.now())) {
-		return credential.State{}, false, "", ErrAlreadyLoggedIn
+	previousRenewable := previousFound && (previous.RefreshTokenExpiresAt.IsZero() || previous.RefreshTokenExpiresAt.After(m.now()))
+	if previousRenewable && !replaceExisting {
+		return SavedLogin{}, ErrAlreadyLoggedIn
 	}
 	state, err := m.tokenState(credential.State{}, tokens)
 	if err != nil {
-		return credential.State{}, false, "", err
+		return SavedLogin{}, err
 	}
 	state.WorkspaceID = previous.WorkspaceID
 	if err := m.Credentials.Replace(m.ControlURL, state); err != nil {
-		return credential.State{}, false, "", err
+		return SavedLogin{}, err
 	}
-	return previous, previousFound, state.AccessToken, nil
+	return SavedLogin{
+		Previous:          previous,
+		HadPrevious:       previousFound,
+		PreviousRenewable: previousRenewable,
+		AccessToken:       state.AccessToken,
+	}, nil
 }
 
 // RestoreLogin puts back the login SaveLogin replaced, under the same lock, when the surrounding
 // configuration write fails. It only acts while the record still holds the login SaveLogin wrote, so
 // a concurrent logout or newer login is never overwritten or deleted.
-func (m *Manager) RestoreLogin(ctx context.Context, state credential.State, found bool, writtenAccessToken string) error {
+func (m *Manager) RestoreLogin(ctx context.Context, saved SavedLogin) error {
 	lock, err := filelock.Acquire(ctx, m.LockFile)
 	if err != nil {
 		return err
@@ -206,11 +221,11 @@ func (m *Manager) RestoreLogin(ctx context.Context, state credential.State, foun
 	case err != nil:
 		return err
 	}
-	if current.AccessToken != writtenAccessToken {
+	if current.AccessToken != saved.AccessToken {
 		return nil
 	}
-	if found {
-		return m.Credentials.Replace(m.ControlURL, state)
+	if saved.HadPrevious {
+		return m.Credentials.Replace(m.ControlURL, saved.Previous)
 	}
 	return m.deleteIgnoringMissing()
 }
