@@ -4,6 +4,10 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Improvements
+
+* Running `scope auth login` while already logged in now prompts to re-authenticate on interactive terminals (revoking the replaced session once the new login is saved) and otherwise keeps and reports the active login with exit code 0, instead of failing with `already logged in`.
+
 ## v0.3.0 (2026-11-08)
 
 ### Breaking changes

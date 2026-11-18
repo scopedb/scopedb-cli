@@ -821,7 +821,7 @@ func TestSaveLoginRejectsIncompleteTokenResponse(t *testing.T) {
 		{AccessToken: "oat_new", ExpiresIn: 3600},
 		{AccessToken: "oat_new", RefreshToken: "ort_new"},
 	} {
-		_, _, _, err := manager.SaveLogin(t.Context(), tokens)
+		_, err := manager.SaveLogin(t.Context(), tokens, false)
 		require.Error(t, err)
 	}
 	require.False(t, store.stored())
@@ -832,8 +832,10 @@ func TestSaveLoginStoresBothTokens(t *testing.T) {
 	store := &memoryStore{}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	saved, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"), false)
 	require.NoError(t, err)
+	require.False(t, saved.HadPrevious)
+	require.False(t, saved.PreviousRenewable)
 	require.Equal(t, "oat_new", store.saved().AccessToken)
 	require.Equal(t, "ort_new", store.saved().RefreshToken)
 	require.Equal(t, now.Add(time.Hour), store.saved().AccessTokenExpiresAt)
@@ -850,8 +852,10 @@ func TestSaveLoginReplacesExpiredLoginAndKeepsSelection(t *testing.T) {
 	store := &memoryStore{present: true, state: state}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	saved, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"), false)
 	require.NoError(t, err)
+	require.True(t, saved.HadPrevious)
+	require.False(t, saved.PreviousRenewable)
 	require.Equal(t, "ws-1", store.saved().WorkspaceID)
 	require.Equal(t, "oat_new", store.saved().AccessToken)
 	require.Empty(t, store.saved().DataToken)
@@ -859,12 +863,35 @@ func TestSaveLoginReplacesExpiredLoginAndKeepsSelection(t *testing.T) {
 	require.True(t, store.saved().DataTokenExpiresAt.IsZero())
 }
 
+func TestSaveLoginReplacesActiveLoginOnlyWhenConfirmed(t *testing.T) {
+	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	state := loginState(now, now.Add(time.Hour))
+	state.DataToken = "data-token"
+	state.DataTokenWorkspaceID = "ws-1"
+	state.DataTokenExpiresAt = now.Add(time.Hour)
+	store := &memoryStore{present: true, state: state}
+	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
+
+	_, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"), false)
+	require.ErrorIs(t, err, ErrAlreadyLoggedIn)
+	require.Equal(t, "oat_old", store.saved().AccessToken)
+
+	saved, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"), true)
+	require.NoError(t, err)
+	require.True(t, saved.HadPrevious)
+	require.True(t, saved.PreviousRenewable)
+	require.Equal(t, "ort_old", saved.Previous.RefreshToken)
+	require.Equal(t, "ws-1", store.saved().WorkspaceID)
+	require.Equal(t, "oat_new", store.saved().AccessToken)
+	require.Empty(t, store.saved().DataToken)
+}
+
 func TestSaveLoginReplacesUnreadableStoredState(t *testing.T) {
 	now := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
 	store := &memoryStore{invalidHi: true}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	_, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"), false)
 	require.NoError(t, err)
 	require.Equal(t, "oat_new", store.saved().AccessToken)
 	require.Empty(t, store.saved().WorkspaceID)
@@ -875,7 +902,7 @@ func TestSaveLoginReportsCredentialLoadFailure(t *testing.T) {
 	store := &memoryStore{loadErr: errors.New("credential store unavailable")}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	_, _, _, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"))
+	_, err := manager.SaveLogin(t.Context(), accessTokens("oat_new", "ort_new"), false)
 	require.ErrorContains(t, err, "credential store unavailable")
 	require.False(t, store.stored())
 }
@@ -885,17 +912,17 @@ func TestRestoreLoginDoesNotReplaceANewerLogin(t *testing.T) {
 	store := &memoryStore{}
 	manager := newManager(t, store, &fakeControl{}, &fakeOAuth{}, now)
 
-	previous, found, written, err := manager.SaveLogin(t.Context(), accessTokens("oat_login", "ort_login"))
+	saved, err := manager.SaveLogin(t.Context(), accessTokens("oat_login", "ort_login"), false)
 	require.NoError(t, err)
-	require.False(t, found)
-	require.Equal(t, "oat_login", written)
+	require.False(t, saved.HadPrevious)
+	require.Equal(t, "oat_login", saved.AccessToken)
 
 	newer := loginState(now, now.Add(time.Hour))
 	newer.AccessToken = "oat_newer"
 	newer.RefreshToken = "ort_newer"
 	require.NoError(t, store.Save(manager.ControlURL, newer))
 
-	require.NoError(t, manager.RestoreLogin(t.Context(), previous, found, written))
+	require.NoError(t, manager.RestoreLogin(t.Context(), saved))
 	require.Equal(t, "oat_newer", store.saved().AccessToken)
 }
 

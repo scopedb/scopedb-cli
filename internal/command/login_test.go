@@ -566,23 +566,156 @@ func TestLoginSelectsTheOnlyWorkspaceOfTheNewAccount(t *testing.T) {
 	require.Equal(t, "ws-2", state.WorkspaceID)
 }
 
-func TestLoginRefusesWhileALoginIsStored(t *testing.T) {
+type unexpectedInputReader struct {
+	t *testing.T
+}
+
+func (r unexpectedInputReader) Read([]byte) (int, error) {
+	r.t.Error("non-interactive login must not read from standard input")
+	return 0, errors.New("unexpected stdin read")
+}
+
+func TestLoginPromptsAndKeepsStoredLoginByDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		input  string
+		format string
+		want   string
+	}{
+		{"default enter", "\n", "text", "Already logged in as dev@example.com.\nKeeping workspace Alpha (ws-1).\n"},
+		{"explicit no", "n\n", "text", "Already logged in as dev@example.com.\nKeeping workspace Alpha (ws-1).\n"},
+		{"json output", "no\n", "json", `{"email":"dev@example.com","workspace":{"id":"ws-1","display_name":"Alpha","status":"ready","current":true}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+			saveStoredLogin(t, store, fake.URL, "ws-1")
+
+			out, diagnostics, err := runInteractiveLogin(t, fake, tc.input, "--format", tc.format)
+			require.NoError(t, err)
+			if tc.format == "json" {
+				require.JSONEq(t, tc.want, out)
+			} else {
+				require.Equal(t, tc.want, out)
+			}
+			require.Equal(t, "Already logged in as dev@example.com. Re-authenticate? [y/N] ", diagnostics)
+			require.Empty(t, fake.AuthorizationQuery)
+			require.Empty(t, fake.TokenForms)
+			require.Empty(t, fake.RevokedTokens)
+			state, err := store.Load(fake.URL)
+			require.NoError(t, err)
+			require.Equal(t, "ort_refresh", state.RefreshToken)
+			require.Equal(t, "ws-1", state.WorkspaceID)
+		})
+	}
+}
+
+func TestLoginNonInteractiveKeepsStoredLoginWithoutReadingInput(t *testing.T) {
+	for _, format := range []string{"text", "json"} {
+		t.Run(format, func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+			saveStoredLogin(t, store, fake.URL, "ws-1")
+
+			out, diagnostics, err := runCommandWith(t, Dependencies{
+				In:              unexpectedInputReader{t: t},
+				IsInputTerminal: func() bool { return false },
+				IsErrorTerminal: func() bool { return false },
+				OpenURL: func(string) error {
+					t.Fatal("non-interactive stored login must not open a browser")
+					return nil
+				},
+			}, "--control-url", fake.URL, "auth", "login", "--insecure-storage", "--format", format)
+			require.NoError(t, err)
+			require.Empty(t, diagnostics)
+			if format == "json" {
+				require.JSONEq(t, `{"email":"dev@example.com","workspace":{"id":"ws-1","display_name":"Alpha","status":"ready","current":true}}`, out)
+			} else {
+				require.Equal(t, "Already logged in as dev@example.com.\nKeeping workspace Alpha (ws-1).\n", out)
+			}
+			require.Empty(t, fake.TokenForms)
+			require.Empty(t, fake.RevokedTokens)
+		})
+	}
+}
+
+func TestLoginReauthenticatesAndRevokesPreviousGrant(t *testing.T) {
+	for _, answer := range []string{"y\n", "YES\n"} {
+		t.Run(strings.TrimSpace(answer), func(t *testing.T) {
+			fake, store := setupCLITest(t)
+			fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Alpha")}
+			previous := saveStoredLogin(t, store, fake.URL, "ws-1")
+			previous.AccessToken = "private-access-secret"
+			previous.RefreshToken = "private-refresh-secret"
+			require.NoError(t, store.Save(fake.URL, previous))
+
+			out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+				input:         answer,
+				inputTerminal: true,
+				errorTerminal: true,
+				openURL: func(target string) error {
+					fake.User = controlplane.User{ID: "user-2", Email: "other@example.com", Status: "active"}
+					fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-2", "Beta")}
+					return fake.authorizationURL(t)(target)
+				},
+			})
+			require.NoError(t, err)
+			require.Equal(t, "Logged in as other@example.com.\nUsing workspace Beta (ws-2).\n", out)
+			require.Contains(t, diagnostics, "Already logged in as dev@example.com. Re-authenticate? [y/N] ")
+			require.Equal(t, []string{"private-refresh-secret"}, fake.RevokedTokens)
+			state, err := store.Load(fake.URL)
+			require.NoError(t, err)
+			require.Equal(t, "oat_access", state.AccessToken)
+			require.Equal(t, "ort_refresh", state.RefreshToken)
+			require.Equal(t, "ws-2", state.WorkspaceID)
+		})
+	}
+}
+
+func TestLoginPromptInterruptExitsImmediately(t *testing.T) {
 	fake, store := setupCLITest(t)
 	saveStoredLogin(t, store, fake.URL, "ws-1")
 
-	out, diagnostics, err := runInteractiveLogin(t, fake, "")
-	require.Error(t, err)
-	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(NormalizeError(err)))
-	require.Contains(t, clierror.Render(err), "already logged in as dev@example.com")
-	require.Contains(t, clierror.Render(err), "run 'scope auth logout' first")
-	require.Empty(t, out)
-	require.NotContains(t, diagnostics, "Open this URL to approve the login")
-	require.Empty(t, fake.AuthorizationQuery)
-	require.Empty(t, fake.TokenForms)
-	state, err := store.Load(fake.URL)
-	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(t.Context())
+	prompted := make(chan struct{})
+	var out, diagnostics bytes.Buffer
+	reader, writer := net.Pipe()
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+	root := NewRoot(Dependencies{
+		In:  reader,
+		Out: &out,
+		ErrOut: writerFunc(func(p []byte) (int, error) {
+			n, err := diagnostics.Write(p)
+			if strings.Contains(diagnostics.String(), "Re-authenticate?") {
+				select {
+				case <-prompted:
+				default:
+					close(prompted)
+				}
+			}
+			return n, err
+		}),
+		Getenv:          func(string) string { return "" },
+		IsInputTerminal: func() bool { return true },
+		IsErrorTerminal: func() bool { return true },
+	})
+	root.SetArgs([]string{"--control-url", fake.URL, "auth", "login"})
+	done := make(chan error, 1)
+	go func() {
+		done <- NormalizeError(root.ExecuteContext(ctx))
+	}()
+	<-prompted
+	cancel()
+	err := <-done
+	require.Equal(t, clierror.ExitInterrupted, clierror.ExitCode(err))
+	require.Empty(t, out.String())
+	require.Empty(t, fake.RevokedTokens)
+	state, loadErr := store.Load(fake.URL)
+	require.NoError(t, loadErr)
 	require.Equal(t, "ort_refresh", state.RefreshToken)
-	require.Equal(t, "ws-1", state.WorkspaceID)
 }
 
 func TestLoginPreservesAnotherLoginCompletedDuringAuthorization(t *testing.T) {
@@ -678,28 +811,67 @@ func TestLoginRefreshRecoversTruncatedResponse(t *testing.T) {
 	}
 }
 
-func TestLoginRefusesWithoutTheAccountWhenLookupFails(t *testing.T) {
-	fake, store := setupCLITest(t)
-	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/user" {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte(`{"error":{"message":"temporarily unavailable"}}`))
-			return
-		}
-		fake.serve(w, r)
-	}))
-	t.Cleanup(controlServer.Close)
-	fake.URL = controlServer.URL
-	fake.Issuer = controlServer.URL
-	saveStoredLogin(t, store, fake.URL, "ws-1")
+func TestLoginReportsAccountLookupFailures(t *testing.T) {
+	t.Run("transient server failure", func(t *testing.T) {
+		fake, store := setupCLITest(t)
+		controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/user" {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":{"message":"temporarily unavailable"}}`))
+				return
+			}
+			fake.serve(w, r)
+		}))
+		t.Cleanup(controlServer.Close)
+		fake.URL = controlServer.URL
+		fake.Issuer = controlServer.URL
+		saveStoredLogin(t, store, fake.URL, "ws-1")
 
-	out, _, err := runInteractiveLogin(t, fake, "")
-	require.Error(t, err)
-	require.Equal(t, clierror.ExitAuth, clierror.ExitCode(NormalizeError(err)))
-	require.Contains(t, clierror.Render(err), "already logged in")
-	require.NotContains(t, clierror.Render(err), "as dev@example.com")
-	require.Contains(t, clierror.Render(err), "scope auth status")
-	require.Empty(t, out)
+		out, _, err := runInteractiveLogin(t, fake, "")
+		require.Error(t, err)
+		require.Equal(t, clierror.ExitTemporary, clierror.ExitCode(NormalizeError(err)))
+		require.Contains(t, clierror.Render(err), "temporarily unavailable")
+		require.Empty(t, out)
+		require.Empty(t, fake.RevokedTokens)
+	})
+
+	t.Run("forbidden account can reauthenticate interactively", func(t *testing.T) {
+		fake, store := setupCLITest(t)
+		var reauthenticated atomic.Bool
+		controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/user" && !reauthenticated.Load() {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"error":{"message":"account disabled"}}`))
+				return
+			}
+			fake.serve(w, r)
+		}))
+		t.Cleanup(controlServer.Close)
+		fake.URL = controlServer.URL
+		fake.Issuer = controlServer.URL
+		previous := saveStoredLogin(t, store, fake.URL, "ws-1")
+		previous.RefreshToken = "private-refresh-secret"
+		require.NoError(t, store.Save(fake.URL, previous))
+
+		_, _, err := runLoginScenario(t, fake, loginScenario{inputTerminal: false})
+		require.Equal(t, clierror.ExitAuth, clierror.ExitCode(err))
+		require.Contains(t, clierror.Render(err), "run 'scope auth logout' first")
+		require.NotContains(t, clierror.Render(err), "run 'scope auth login'")
+
+		out, diagnostics, err := runLoginScenario(t, fake, loginScenario{
+			input:         "y\n",
+			inputTerminal: true,
+			errorTerminal: true,
+			openURL: func(target string) error {
+				reauthenticated.Store(true)
+				return fake.authorizationURL(t)(target)
+			},
+		})
+		require.NoError(t, err)
+		require.Contains(t, diagnostics, "Already logged in. Re-authenticate? [y/N] ")
+		require.Contains(t, out, "Logged in as dev@example.com.")
+		require.Equal(t, []string{"private-refresh-secret"}, fake.RevokedTokens)
+	})
 }
 
 func TestLoginReplacesALoginThatScopeDBRejects(t *testing.T) {
