@@ -47,19 +47,15 @@ func (a *app) newLoginCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "login",
 		Short: "Log in through the ScopeDB Console",
-		Long: "Log in by approving a Scope CLI request in the ScopeDB Console.\n" +
-			"Opens your browser and completes the login through a callback on this device. If the browser\n" +
-			"does not open, open the printed URL on the same device. Use --use-device-code to approve\n" +
-			"from another device, or --no-browser to skip opening a browser automatically in either flow.\n\n" +
-			"Keeps your selected workspace or selects the first available workspace by ID and prints its\n" +
-			"name and ID. Use 'scope workspace use <id>' to switch afterwards.\n" +
-			"When already logged in, prompts on an interactive terminal to re-authenticate and keeps the\n" +
-			"current login otherwise; initial login does not require an interactive terminal.\n\n" +
-			"Prefers the OS keyring, with a warning and plaintext fallback if storage fails.\n" +
-			"On Linux, keyring access requires a D-Bus session and Secret Service.\n" +
-			"--insecure-storage chooses an unencrypted file for this login only.",
-		Example: "  scope auth login\n  scope auth login --use-device-code --no-browser",
-		Args:    cobra.NoArgs,
+		Long: "Authenticate with ScopeDB Cloud in your browser.\n" +
+			"For SSH, containers, or approval from another device, pass --use-device-code.\n\n" +
+			"Credentials are saved in the OS keyring when available, falling back to a local file.\n" +
+			"Login keeps your selected workspace or selects an available one; run 'scope workspace use <id>'\n" +
+			"to switch afterwards.",
+		Example: "  scope auth login\n" +
+			"  scope auth login --use-device-code --no-browser\n" +
+			"  scope auth login --workspace 0123456789ab",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := validateTextFormat(format); err != nil {
 				return err
@@ -123,10 +119,10 @@ func (a *app) newLoginCommand() *cobra.Command {
 		},
 	}
 	command.Flags().StringVar(&format, "format", structuredFormatText, "output format: text or json")
-	command.Flags().StringVar(&workspace, "workspace", "", "select this workspace by ID; defaults to the first available workspace by ID")
-	command.Flags().BoolVar(&noBrowser, "no-browser", false, "do not open the browser automatically")
-	command.Flags().BoolVar(&useDeviceCode, "use-device-code", false, "use a device code to approve login from any device")
-	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store this login's credentials unencrypted in a file")
+	command.Flags().StringVar(&workspace, "workspace", "", "select a workspace by ID")
+	command.Flags().BoolVar(&noBrowser, "no-browser", false, "print the approval link without opening a browser")
+	command.Flags().BoolVar(&useDeviceCode, "use-device-code", false, "approve login from any device with a device code")
+	command.Flags().BoolVar(&insecureStorage, "insecure-storage", false, "store credentials unencrypted in a file for this login")
 	return command
 }
 

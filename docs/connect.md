@@ -2,7 +2,7 @@
 
 This guide follows the selected repository revision; `main` can include unreleased changes. For an installed release, browse the guide at its matching [release tag](https://github.com/scopedb/scopedb-cli/tags). Run `scope version` to identify your version and `scope --help` to check its commands. See the [changelog](../CHANGELOG.md) for migration steps when upgrading.
 
-Use `scope auth login` for the CLI. Use a workspace endpoint and API key for application SDKs. The CLI login is stored in your OS keyring when available, with a plaintext fallback; SDKs do not read it.
+Use `scope auth login` for the CLI. Use a workspace endpoint and API key for application SDKs. The CLI stores its login in your OS keyring when available, with a local file fallback; SDKs do not read it.
 
 ## Verify your login
 
@@ -13,31 +13,23 @@ scope doctor
 scope query 'SELECT 1 AS ready'
 ```
 
-Login opens your browser by default and waits for a callback on the same device. The CLI prints the approval URL before opening the browser, so you can open it manually if the browser does not launch. A browser-launch failure does not switch authorization flows. `--no-browser` skips the automatic launch and keeps the same-device callback.
+`scope auth login` prints an approval URL, opens your browser, and completes sign-in through a local callback once approved in the ScopeDB Console (pass `--no-browser` to open the printed URL yourself). Running `scope auth login` again lets you re-authenticate or switch accounts.
 
-After approval, the browser acknowledges receipt of authorization. Return to your terminal for the final login result or error details; you can close the browser window.
-
-For SSH, containers, or approval from another device, select device authorization explicitly:
+For SSH, containers, or approval from another device, use device authorization:
 
 ```sh
 scope auth login --use-device-code --no-browser
 ```
 
-Open the printed verification link on any device and approve the request. `--use-device-code` selects device authorization; `--no-browser` independently disables automatic browser opening. Omit `--no-browser` to also open the verification link in a local browser. Neither flow requires an interactive terminal when no login is active; if already logged in, an interactive terminal asks whether to re-authenticate, and non-interactive runs keep and report the active login.
+Open the printed verification link in any browser to approve the request (omit `--no-browser` to also launch a local browser).
 
-Login keeps a valid workspace selection or automatically selects the first workspace that is not scheduled for deletion, and prints its name and ID. Workspaces shared with you are listed and selected the same way as workspaces you own. Use `scope workspace use <id>` to switch, or `scope auth login --workspace <id>` to select a workspace during login. Both commands require an ID from `scope workspace list`; display names are not accepted.
+Login keeps your selected workspace or picks an available one automatically; pass `--workspace <id>` during login or run `scope workspace list` and `scope workspace use <id>` to switch (both owned and shared workspaces require IDs, not display names). If your account still needs approval or has no workspace yet, open the Console with `scope console --open` and run `scope workspace use <id>` once one is ready.
 
-If your account is awaiting approval or has no workspace, follow the instructions from `scope auth status`. Use `scope console --open` to open the Console. Once a workspace is available, select it with `scope workspace list` and `scope workspace use <id>`.
-
-`scope auth status` verifies your login against ScopeDB and reports its credential source, `keyring` or `plaintext`, the credential file path when using plaintext, and when the login expires. Use `scope workspace get` to inspect the selected login workspace and its provisioning status.
-
-`scope doctor` runs a small read-only query when a workspace is selected. It reports incomplete account setup as a warning; exit code 0 alone does not mean you can query. A passing `data plane` check confirms query access. Use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts.
+`scope auth status` checks your login against ScopeDB and shows the credential source (`keyring` or `plaintext`, including the file path), expiration, and target workspace. `scope workspace get` inspects workspace details and provisioning status, and `scope doctor` runs connectivity plus a read-only data-plane query check (use `scope query 'SELECT 1 AS ready'` as a readiness gate in scripts, since `doctor` reports incomplete account setup as a warning).
 
 ## Use headless Linux
 
-On Linux, the OS keyring requires a working D-Bus session and a Secret Service provider, such as GNOME Keyring, with an accessible login collection. Servers, SSH sessions, and containers may not have these services available. If keyring storage fails during a new login, the CLI prints a warning to stderr and saves the credentials unencrypted in `credentials.json`. Device authorization and storage selection are independent.
-
-For a CLI login on a host without a usable keyring:
+On Linux, the OS keyring requires D-Bus and a Secret Service provider such as GNOME Keyring. On servers, SSH sessions, and containers without one, `scope auth login` warns on stderr and saves credentials unencrypted in `credentials.json` (`0600` on Unix, under `$XDG_CONFIG_HOME/scopedb` or `~/.config/scopedb` unless `SCOPEDB_HOME` is set):
 
 ```sh
 scope auth login --use-device-code --no-browser
@@ -45,11 +37,7 @@ scope auth status
 scope query 'SELECT 1 AS ready'
 ```
 
-Approve the printed device code in a browser on another device. `--use-device-code` selects that authorization flow, and `--no-browser` skips opening a browser on the host. Add `--insecure-storage` to choose plaintext directly for this login. It does not change future login defaults. Plaintext credentials use permissions `0600` on Unix. On Linux, `credentials.json` and `config.toml` default to `$XDG_CONFIG_HOME/scopedb` or `~/.config/scopedb`; `SCOPEDB_HOME` overrides their directory.
-
-Queries and other commands discover the existing login, and refresh writes back to the same store without automatic downgrade. A fallback file takes precedence over an old keyring entry for the same control-plane URL. Logout revokes the active login and clears both stores. If the keyring cannot be cleared, the command reports the failure and removes local file tokens while retaining a non-secret logout marker so an old keyring entry cannot become active again. Restore keyring access and rerun `scope auth logout` to finish cleanup.
-
-To return to keyring storage, restore keyring access and re-authenticate with `scope auth login` without `--insecure-storage` (or run `scope auth logout` first). Each new login tries the keyring again. `config.toml` stores service addresses, not a credential-store preference; legacy `credential_store` entries and `SCOPEDB_CREDENTIAL_STORE` are ignored.
+Pass `--insecure-storage` to write `credentials.json` directly without trying the keyring for that login. Subsequent commands and token refreshes stay on whichever store holds the active login; to return to the keyring after restoring access, re-authenticate with `scope auth login` without `--insecure-storage`.
 
 ## Get application credentials
 

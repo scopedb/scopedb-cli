@@ -56,29 +56,11 @@ scope query 'SELECT 1 AS ready'
 scope query 'FROM system.tables LIMIT 10'
 ```
 
-`scope auth login` opens your browser and asks you to approve the request in the ScopeDB Console. If the browser does not open, open the printed URL on the same device. For approval from another device, such as when using SSH or a container, run `scope auth login --use-device-code`. Add `--no-browser` to either flow to skip opening the browser automatically. A browser-launch failure leaves the selected flow waiting for approval.
+`scope auth login` opens your browser to approve sign-in in the ScopeDB Console and stores credentials in the OS keyring, falling back to a local file when unavailable (`SCOPEDB_HOME` overrides the config directory). Over SSH, in containers, or when approving from another device, run `scope auth login --use-device-code` (add `--no-browser` to print the link without launching a browser). See [headless Linux setup](docs/connect.md#use-headless-linux) for servers without a keyring.
 
-Initial login does not require an interactive terminal. When already logged in, an interactive terminal asks whether to re-authenticate and replace the current login, while non-interactive runs keep and report the current login. Authorization instructions, prompts, and progress go to stderr; `--format text|json` selects the result format on stdout.
+Login keeps your active workspace or picks an available one automatically. Pass `--workspace <id>` during login, or run `scope workspace list` and `scope workspace use <id>` to switch between workspaces you own or share (workspace commands take IDs, not display names). If a new account still needs approval or its first workspace, open the Console with `scope console --open`, then select the workspace with `scope workspace use <id>`. `scope console [page]` also provides shortcuts to `home`, `query`, `data`, `keys`, and `connect`.
 
-Login prefers the OS keyring. If keyring storage fails, the CLI warns and saves credentials unencrypted in a file (`0600` on Unix); `scope auth status` shows its location. `--insecure-storage` selects plaintext for that login only. On servers and other hosts without a browser, use device authorization. See [headless Linux setup](docs/connect.md#use-headless-linux).
-
-Set `SCOPEDB_HOME` to override the directory used for configuration and plaintext credentials. Otherwise, the CLI uses a `scopedb` subdirectory of your operating system's user configuration directory.
-
-Pass `--workspace <id>` to select a workspace explicitly. Without it, the login keeps the workspace already selected for the profile if the account can still access it and it is not scheduled for deletion. Otherwise, it selects the first available workspace by ID, even when several workspaces are available. Use `scope workspace use <id>` to switch afterwards. Both commands require an ID from `scope workspace list`; display names are not accepted.
-
-A pending account or an account without a workspace can stay logged in; `scope auth status` shows the account status and next steps. Run `scope console --open` to check approval status and create your first workspace in the Console. Once a workspace is available, select it without logging in again:
-
-```sh
-scope workspace list
-scope workspace use <id>
-scope auth status
-```
-
-The workspace selection is stored locally for the current login, so it does not affect your Console session or another machine. Workspaces shared with you appear in `scope workspace list` alongside the ones you own; select either with `scope workspace use <id>`. `scope auth status` shows the credential source, identity, and connection target. Use `scope workspace get` for workspace details and `scope doctor` to verify query access.
-
-In CI jobs that issue OIDC tokens, `scope query`, `scope catalog`, and `scope doctor` can run without a login: set `SCOPEDB_WORKSPACE_ID` and `SCOPEDB_OIDC_TOKEN`, and each run exchanges the token for a short-lived workspace credential. In GitHub Actions, the `scopedb/login-action` action supplies the token. The workspace needs a matching OpenID Connect trust policy, created by an owner in the Console. See [Run in CI without a login](docs/connect.md#run-in-ci-without-a-login).
-
-`scope console [page]` provides shortcuts to Console pages: `home` (default), `query`, `data`, `keys`, and `connect`. For example, `scope console query` prints the query page URL; add `--open` to also open it in your browser.
+In CI jobs that issue OIDC tokens, `scope query`, `scope catalog`, and `scope doctor` can run without `scope auth login`: set `SCOPEDB_WORKSPACE_ID` and `SCOPEDB_OIDC_TOKEN` (supplied on GitHub Actions by `scopedb/login-action`) against a workspace with a matching OpenID Connect trust policy. See [Run in CI without a login](docs/connect.md#run-in-ci-without-a-login).
 
 ## Query output
 

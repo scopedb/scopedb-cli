@@ -6,7 +6,7 @@ All significant changes to this project will be documented in this file.
 
 ### Improvements
 
-* When a login is already active, `scope auth login` now asks on an interactive terminal whether to re-authenticate (`[y/N]`) instead of failing with an `already logged in` error: confirming saves the new login and revokes the replaced grant, while declining or running without an interactive terminal keeps and reports the current login with exit code 0.
+* Running `scope auth login` while already logged in now prompts to re-authenticate on interactive terminals (revoking the replaced session once the new login is saved) and otherwise keeps and reports the active login with exit code 0, instead of failing with `already logged in`.
 
 ## v0.3.0 (2026-11-08)
 
