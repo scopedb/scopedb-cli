@@ -9,7 +9,7 @@
 
 ### Prebuilt binaries
 
-Download the most recently published release, including release candidates, from [GitHub Releases](https://github.com/scopedb/scopedb-cli/releases). GitHub's `/releases/latest` shortcut excludes prereleases. Choose your platform's archive under **Assets**; `<version>` is the release tag without its leading `v`:
+Prebuilt release archives are the recommended way to install and upgrade `scope`. Download the most recently published release, including release candidates, from [GitHub Releases](https://github.com/scopedb/scopedb-cli/releases). GitHub's `/releases/latest` shortcut excludes prereleases. Choose your platform's archive under **Assets**; `<version>` is the release tag without its leading `v`:
 
 | Platform               | Archive pattern                       |
 | ---------------------- | ------------------------------------- |
@@ -34,13 +34,13 @@ Ensure `$HOME/.local/bin` is on your `PATH` before running `scope`.
 
 ### Install from source
 
-With Go 1.27.3 or newer:
+If you prefer to build from source instead of using a prebuilt archive, install a specific release tag with Go 1.27.3 or newer (where `<version>` is the release tag without its leading `v`):
 
 ```sh
-go install github.com/scopedb/scopedb-cli/cmd/scope@latest
+go install github.com/scopedb/scopedb-cli/cmd/scope@v<version>
 ```
 
-Go's `@latest` selects the highest release version, or the highest prerelease when no release version exists; it does not follow `main`. To opt into a newer prerelease, download its archive from GitHub Releases or replace `@latest` with its exact tag. Run the same command again to update, and ensure Go's binary directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) is on your `PATH`.
+Ensure Go's binary directory (`GOBIN`, or `$(go env GOPATH)/bin` by default) is on your `PATH`. For ongoing upgrades, prefer the prebuilt release archives or check the [installation guide](https://www.scopedb.io/docs/guides/scopedb-cli#install) for the current install command.
 
 ## Get started
 
