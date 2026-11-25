@@ -144,6 +144,33 @@ func TestAPIKeyCreateSendsRequestedExpiration(t *testing.T) {
 	}
 }
 
+func TestAPIKeyCreateSendsPermissions(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Shared")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	permissions := `[{"resource":"table","database":"scopedb","schema":"public","tables":["events"],"access":["read"]},{"resource":"statement","access":["read","write"]}]`
+	_, _, err := runCommand(t, "--control-url", fake.URL, "api-key", "create", "ingest", "--permissions", permissions)
+	require.NoError(t, err)
+	require.Len(t, fake.APIKeyRequests, 1)
+	require.JSONEq(t, permissions, string(fake.APIKeyRequests[0].Permissions))
+
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{name: "not json", value: "not-json"},
+		{name: "json object", value: `{"resource":"table"}`},
+		{name: "json null", value: `null`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := runCommand(t, "--control-url", fake.URL, "api-key", "create", "ingest", "--permissions", tc.value)
+			require.Error(t, err)
+		})
+	}
+	require.Len(t, fake.APIKeyRequests, 1)
+}
+
 func TestAPIKeyRevokeResolvesIDOrUniqueName(t *testing.T) {
 	fullKey := "sk_" + strings.Repeat("a", 16) + strings.Repeat("b", 48)
 	for _, tc := range []struct {

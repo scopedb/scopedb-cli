@@ -4,6 +4,10 @@ All significant changes to this project will be documented in this file.
 
 ## Unreleased
 
+### New features
+
+* `scope api-key create` accepts `--permissions` with a JSON array of permission rules to create a restricted key, matching the console's restricted-key flow. Rules are fixed at creation; omit the flag for an unrestricted key.
+
 ### Improvements
 
 * Running `scope auth login` while already logged in now prompts to re-authenticate on interactive terminals (revoking the replaced session once the new login is saved) and otherwise keeps and reports the active login with exit code 0, instead of failing with `already logged in`.
