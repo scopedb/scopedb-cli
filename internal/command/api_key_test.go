@@ -15,6 +15,7 @@
 package command
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"regexp"
@@ -153,10 +154,10 @@ func TestAPIKeyCreateSendsPermissions(t *testing.T) {
 	_, _, err := runCommand(t, "--control-url", fake.URL, "api-key", "create", "ingest", "--permissions", permissions)
 	require.NoError(t, err)
 	require.Len(t, fake.APIKeyRequestBodies, 1)
-	// The wire contract is the literal key name; decoding into the same struct that marshaled the
-	// request would not catch a renamed or dropped tag.
-	require.Contains(t, string(fake.APIKeyRequestBodies[0]), `"permissions":[`)
-	require.JSONEq(t, permissions, string(fake.APIKeyRequests[0].Permissions))
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(fake.APIKeyRequestBodies[0], &wire))
+	require.Equal(t, "ingest", wire["name"])
+	require.JSONEq(t, permissions, string(mustMarshalJSON(t, wire["permissions"])))
 
 	_, _, err = runCommand(t, "--control-url", fake.URL, "api-key", "create", "open")
 	require.NoError(t, err)
@@ -225,4 +226,11 @@ func TestAPIKeyRevokeResolvesIDOrUniqueName(t *testing.T) {
 			require.Contains(t, out, tc.wantID)
 		})
 	}
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	require.NoError(t, err)
+	return encoded
 }
