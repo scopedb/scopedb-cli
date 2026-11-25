@@ -15,6 +15,7 @@
 package command
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -119,6 +120,7 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 	var tags []string
 	var expiresIn time.Duration
 	var expiresAtValue string
+	var permissionsValue string
 	var format string
 	command := &cobra.Command{
 		Use:   "create <name>",
@@ -136,6 +138,20 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			var permissions json.RawMessage
+			if cmd.Flags().Changed("permissions") {
+				var rules []any
+				if err := json.Unmarshal([]byte(permissionsValue), &rules); err != nil {
+					return usageError("--permissions must be valid JSON")
+				}
+				if rules == nil {
+					return usageError("--permissions must be a JSON array of permission rules")
+				}
+				if len(rules) == 0 {
+					return usageError("--permissions must contain at least one rule; omit the flag for an unrestricted key")
+				}
+				permissions = json.RawMessage(permissionsValue)
+			}
 			runtime, err := a.runtime(cmd)
 			if err != nil {
 				return err
@@ -145,9 +161,10 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 				return err
 			}
 			created, err := runtime.control.CreateAPIKey(cmd.Context(), state.AccessToken, state.WorkspaceID, controlplane.CreateAPIKeyRequest{
-				Name:      name,
-				Tags:      tags,
-				ExpiresAt: expiresAt,
+				Name:        name,
+				Tags:        tags,
+				ExpiresAt:   expiresAt,
+				Permissions: permissions,
 			})
 			if err != nil {
 				return err
@@ -170,6 +187,7 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 	command.Flags().StringArrayVar(&tags, "tag", nil, "tag to attach; may be repeated")
 	command.Flags().DurationVar(&expiresIn, "expires-in", 0, "relative expiration such as 720h or 12h")
 	command.Flags().StringVar(&expiresAtValue, "expires-at", "", "absolute RFC3339 expiration")
+	command.Flags().StringVar(&permissionsValue, "permissions", "", "permission rules as a JSON array; omit for an unrestricted key")
 	command.Flags().StringVar(&format, "format", "value", "output format: value or json")
 	return command
 }

@@ -50,6 +50,15 @@ scope api-key create my-app --expires-in 720h
 
 Keys created without `--expires-in` or `--expires-at` get a default expiration. Pass `--expires-in` with a duration such as `720h`, or `--expires-at` with an RFC3339 timestamp, to choose the expiration. The command reports the expiration on stderr; create a replacement key and update your application before the old key expires.
 
+Pass `--permissions` with a JSON array to restrict what the key can do; omit it for full workspace access. The array must contain at least one rule — an empty array is rejected because it would create an unrestricted key, which the omitted flag already expresses. Each rule names a `resource` (`table`, `statement`, or `catalog`) and its `access` (`read`, `write`, or both); table rules also scope the rule to `database`, `schema`, and a list of `tables` patterns where `*` matches any sequence. Permissions are fixed at creation and cannot change later, so decide them before creating the key. For example, a key that can only read matching tables and run statements:
+
+```sh
+scope api-key create ingest --permissions '[
+  {"resource":"table","database":"scopedb","schema":"public","tables":["events","logs_*"],"access":["read"]},
+  {"resource":"statement","access":["read","write"]}
+]'
+```
+
 The key is shown only once on stdout. Store it in your application's secret manager. The command requires a CLI login; an existing API key cannot manage keys through the CLI. The workspace owner sees every key in the workspace, while a member sees and manages only keys they created. `scope api-key list` shows each key's creator to help distinguish keys with the same name. Use separate keys for development, staging, and production.
 
 Revoke a key with `scope api-key revoke <id>`, using the ID from `scope api-key list`. A unique name also works, but repeated names require an ID; if an ID also matches another key's name, the ID wins. The confirmation shows the selected name and ID, and declining it sends no deletion.

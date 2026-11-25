@@ -15,6 +15,7 @@
 package command
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"regexp"
@@ -144,6 +145,47 @@ func TestAPIKeyCreateSendsRequestedExpiration(t *testing.T) {
 	}
 }
 
+func TestAPIKeyCreateSendsPermissions(t *testing.T) {
+	fake, store := setupCLITest(t)
+	fake.Workspaces = []controlplane.Workspace{workspaceFixture("ws-1", "Shared")}
+	saveStoredLogin(t, store, fake.URL, "ws-1")
+
+	permissions := `[{"resource":"table","database":"scopedb","schema":"public","tables":["events"],"access":["read"]},{"resource":"statement","access":["read","write"]}]`
+	_, _, err := runCommand(t, "--control-url", fake.URL, "api-key", "create", "ingest", "--permissions", permissions)
+	require.NoError(t, err)
+	require.Len(t, fake.APIKeyRequestBodies, 1)
+	var wire map[string]any
+	require.NoError(t, json.Unmarshal(fake.APIKeyRequestBodies[0], &wire))
+	require.Equal(t, "ingest", wire["name"])
+	require.JSONEq(t, permissions, string(mustMarshalJSON(t, wire["permissions"])))
+
+	_, _, err = runCommand(t, "--control-url", fake.URL, "api-key", "create", "open")
+	require.NoError(t, err)
+	require.Len(t, fake.APIKeyRequestBodies, 2)
+	require.NotContains(t, string(fake.APIKeyRequestBodies[1]), "permissions")
+
+	for _, tc := range []struct {
+		name    string
+		value   string
+		message string
+	}{
+		{name: "not json", value: "not-json", message: "valid JSON"},
+		{name: "json object", value: `{"resource":"table"}`, message: "valid JSON"},
+		{name: "json null", value: `null`, message: "array of permission rules"},
+		{name: "empty array", value: `[]`, message: "at least one rule"},
+		{name: "whitespace", value: " ", message: "valid JSON"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := runCommand(t, "--control-url", fake.URL, "api-key", "create", "ingest", "--permissions", tc.value)
+			require.Error(t, err)
+			require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+			require.Contains(t, clierror.Render(err), "--permissions")
+			require.Contains(t, clierror.Render(err), tc.message)
+		})
+	}
+	require.Len(t, fake.APIKeyRequestBodies, 2)
+}
+
 func TestAPIKeyRevokeResolvesIDOrUniqueName(t *testing.T) {
 	fullKey := "sk_" + strings.Repeat("a", 16) + strings.Repeat("b", 48)
 	for _, tc := range []struct {
@@ -184,4 +226,11 @@ func TestAPIKeyRevokeResolvesIDOrUniqueName(t *testing.T) {
 			require.Contains(t, out, tc.wantID)
 		})
 	}
+}
+
+func mustMarshalJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	require.NoError(t, err)
+	return encoded
 }

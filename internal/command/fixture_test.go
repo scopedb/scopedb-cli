@@ -20,6 +20,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -60,6 +61,7 @@ type fakeControlPlane struct {
 	Exchange            controlplane.TokenExchangeResponse
 	APIKeys             []controlplane.APIKey
 	APIKeyRequests      []controlplane.CreateAPIKeyRequest
+	APIKeyRequestBodies [][]byte
 	RevokedAPIKeys      []string
 	TokenResponseMutate func(*controlplane.TokenSet)
 
@@ -219,10 +221,13 @@ func (f *fakeControlPlane) serveAPIKeys(w http.ResponseWriter, r *http.Request) 
 		copy(keys, f.APIKeys)
 		f.writeJSON(w, http.StatusOK, keys)
 	case http.MethodPost:
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(f.t, err)
 		var request controlplane.CreateAPIKeyRequest
-		assert.NoError(f.t, json.NewDecoder(r.Body).Decode(&request))
+		assert.NoError(f.t, json.Unmarshal(body, &request))
 		f.mu.Lock()
 		f.APIKeyRequests = append(f.APIKeyRequests, request)
+		f.APIKeyRequestBodies = append(f.APIKeyRequestBodies, body)
 		f.mu.Unlock()
 		expiresAt := request.ExpiresAt
 		f.writeJSON(w, http.StatusCreated, controlplane.APIKey{

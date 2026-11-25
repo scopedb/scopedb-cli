@@ -14,7 +14,10 @@
 
 package controlplane
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type User struct {
 	ID           string `json:"id"`
@@ -91,9 +94,10 @@ type OIDCExchangeResponse struct {
 }
 
 type CreateAPIKeyRequest struct {
-	Name      string    `json:"name"`
-	Tags      []string  `json:"tags"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Name        string          `json:"name"`
+	Tags        []string        `json:"tags"`
+	ExpiresAt   time.Time       `json:"expires_at"`
+	Permissions json.RawMessage `json:"permissions,omitempty"`
 }
 
 type APIKey struct {
