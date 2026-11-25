@@ -50,7 +50,7 @@ scope api-key create my-app --expires-in 720h
 
 Keys created without `--expires-in` or `--expires-at` get a default expiration. Pass `--expires-in` with a duration such as `720h`, or `--expires-at` with an RFC3339 timestamp, to choose the expiration. The command reports the expiration on stderr; create a replacement key and update your application before the old key expires.
 
-Pass `--permissions` with a JSON array to restrict what the key can do; omit it for full workspace access. Each rule names a `resource` (`table`, `statement`, or `catalog`) and its `access` (`read`, `write`, or both); table rules also scope the rule to `database`, `schema`, and a list of `tables` patterns where `*` matches any sequence. Permissions are fixed at creation and cannot change later, so decide them before creating the key. For example, a key that can only read matching tables and run statements:
+Pass `--permissions` with a JSON array to restrict what the key can do; omit it for full workspace access. The array must contain at least one rule — an empty array is rejected because it would create an unrestricted key, which the omitted flag already expresses. Each rule names a `resource` (`table`, `statement`, or `catalog`) and its `access` (`read`, `write`, or both); table rules also scope the rule to `database`, `schema`, and a list of `tables` patterns where `*` matches any sequence. Permissions are fixed at creation and cannot change later, so decide them before creating the key. For example, a key that can only read matching tables and run statements:
 
 ```sh
 scope api-key create ingest --permissions '[

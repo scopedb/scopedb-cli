@@ -152,23 +152,37 @@ func TestAPIKeyCreateSendsPermissions(t *testing.T) {
 	permissions := `[{"resource":"table","database":"scopedb","schema":"public","tables":["events"],"access":["read"]},{"resource":"statement","access":["read","write"]}]`
 	_, _, err := runCommand(t, "--control-url", fake.URL, "api-key", "create", "ingest", "--permissions", permissions)
 	require.NoError(t, err)
-	require.Len(t, fake.APIKeyRequests, 1)
+	require.Len(t, fake.APIKeyRequestBodies, 1)
+	// The wire contract is the literal key name; decoding into the same struct that marshaled the
+	// request would not catch a renamed or dropped tag.
+	require.Contains(t, string(fake.APIKeyRequestBodies[0]), `"permissions":[`)
 	require.JSONEq(t, permissions, string(fake.APIKeyRequests[0].Permissions))
 
+	_, _, err = runCommand(t, "--control-url", fake.URL, "api-key", "create", "open")
+	require.NoError(t, err)
+	require.Len(t, fake.APIKeyRequestBodies, 2)
+	require.NotContains(t, string(fake.APIKeyRequestBodies[1]), "permissions")
+
 	for _, tc := range []struct {
-		name  string
-		value string
+		name    string
+		value   string
+		message string
 	}{
-		{name: "not json", value: "not-json"},
-		{name: "json object", value: `{"resource":"table"}`},
-		{name: "json null", value: `null`},
+		{name: "not json", value: "not-json", message: "valid JSON"},
+		{name: "json object", value: `{"resource":"table"}`, message: "valid JSON"},
+		{name: "json null", value: `null`, message: "array of permission rules"},
+		{name: "empty array", value: `[]`, message: "at least one rule"},
+		{name: "whitespace", value: " ", message: "valid JSON"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, err := runCommand(t, "--control-url", fake.URL, "api-key", "create", "ingest", "--permissions", tc.value)
 			require.Error(t, err)
+			require.Equal(t, clierror.ExitUsage, clierror.ExitCode(err))
+			require.Contains(t, clierror.Render(err), "--permissions")
+			require.Contains(t, clierror.Render(err), tc.message)
 		})
 	}
-	require.Len(t, fake.APIKeyRequests, 1)
+	require.Len(t, fake.APIKeyRequestBodies, 2)
 }
 
 func TestAPIKeyRevokeResolvesIDOrUniqueName(t *testing.T) {

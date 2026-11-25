@@ -139,13 +139,16 @@ func (a *app) newAPIKeyCreateCommand() *cobra.Command {
 				return err
 			}
 			var permissions json.RawMessage
-			if strings.TrimSpace(permissionsValue) != "" {
+			if cmd.Flags().Changed("permissions") {
 				var rules []any
 				if err := json.Unmarshal([]byte(permissionsValue), &rules); err != nil {
 					return usageError("--permissions must be valid JSON")
 				}
 				if rules == nil {
 					return usageError("--permissions must be a JSON array of permission rules")
+				}
+				if len(rules) == 0 {
+					return usageError("--permissions must contain at least one rule; omit the flag for an unrestricted key")
 				}
 				permissions = json.RawMessage(permissionsValue)
 			}
